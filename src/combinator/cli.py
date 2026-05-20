@@ -39,15 +39,37 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="Run a configured agent session.")
     run_p.add_argument("config", type=Path, help="Path to a YAML config file.")
 
+    check_p = sub.add_parser(
+        "check", help="Validate a config without spawning agents or calling LLMs."
+    )
+    check_p.add_argument("config", type=Path, help="Path to a YAML config file.")
+
+    config_p = sub.add_parser(
+        "config", help="Manage the user-global .env file used for API keys."
+    )
+    config_sub = config_p.add_subparsers(dest="subcmd", required=True)
+    config_sub.add_parser("list", help="List values from the user .env (redacted).")
+    set_p = config_sub.add_parser("set", help="Set a value in the user .env.")
+    set_p.add_argument("key")
+    set_p.add_argument("value")
+    unset_p = config_sub.add_parser("unset", help="Remove a value from the user .env.")
+    unset_p.add_argument("key")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run":
         return _cmd_run(args.config)
+    if args.cmd == "check":
+        return _cmd_check(args.config)
+    if args.cmd == "config":
+        return _cmd_config(args)
     parser.print_help()
     return 2
 
 
 def _cmd_run(config_path: Path) -> int:
+    from combinator.env import load_env_files
+    load_env_files()
     cfg = load_config(config_path)
     runtime, root = build_runtime(cfg)
 
@@ -218,6 +240,98 @@ def _send(runtime: Runtime, addr_id: str, body: str, *, out: TextIO) -> None:
 def _body_preview(body) -> str:
     s = json.dumps(body, default=str) if not isinstance(body, str) else body
     return s if len(s) <= 200 else s[:197] + "..."
+
+
+def _cmd_check(config_path: Path) -> int:
+    """Load + validate a config without instantiating LLMs. Reports any
+    missing API keys per the provider registry."""
+    from combinator.env import load_env_files
+    from combinator.llm import api_key_present, key_env_for
+
+    load_env_files()
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:
+        print(f"[combinator] config invalid: {e}", file=sys.stderr)
+        return 2
+
+    print(f"[combinator] config: {config_path}")
+    print(f"  mode:        {cfg.mode}")
+    print(f"  root.engine: {cfg.root.engine}")
+    print(f"  root.llm:    {cfg.root.llm}")
+    print(f"  root.tools:  {cfg.root.tools}")
+    print()
+    print("[combinator] LLMs:")
+    missing = []
+    for name, llm_cfg in cfg.llms.items():
+        env_var = llm_cfg.api_key_env or key_env_for(llm_cfg.provider)
+        present = api_key_present(llm_cfg.provider) or not env_var
+        status = "ok" if present else "MISSING"
+        env_display = env_var or "(no key needed)"
+        print(f"  {name}: provider={llm_cfg.provider} env={env_display} [{status}]")
+        if not present:
+            missing.append(env_var)
+    if missing:
+        print()
+        print(
+            f"[combinator] {len(missing)} required env var(s) missing: "
+            f"{', '.join(missing)}",
+            file=sys.stderr,
+        )
+        print(
+            "  Set them in your shell, in ~/.config/combinator/.env via "
+            "`combinator config set`, or in a project-local ./.env",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _cmd_config(args) -> int:
+    from combinator.env import (
+        USER_ENV_PATH,
+        list_user_env,
+        redact,
+        set_user_env,
+        unset_user_env,
+    )
+
+    if args.subcmd == "list":
+        try:
+            values = list_user_env()
+        except ImportError:
+            print(
+                "[combinator] python-dotenv is not installed; cannot read .env files",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"# {USER_ENV_PATH}")
+        for k, v in sorted(values.items()):
+            print(f"{k}={redact(k, v)}")
+        return 0
+    if args.subcmd == "set":
+        try:
+            path = set_user_env(args.key, args.value)
+        except ImportError:
+            print(
+                "[combinator] python-dotenv required: pip install python-dotenv",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"[combinator] set {args.key} in {path}")
+        return 0
+    if args.subcmd == "unset":
+        try:
+            path = unset_user_env(args.key)
+        except ImportError:
+            print(
+                "[combinator] python-dotenv required: pip install python-dotenv",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"[combinator] unset {args.key} in {path}")
+        return 0
+    return 2
 
 
 if __name__ == "__main__":

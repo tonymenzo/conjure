@@ -16,9 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+env = [
+    "python-dotenv>=1.0",
+]
 test = [
     "pytest>=7",
     "sympy>=1.12",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]

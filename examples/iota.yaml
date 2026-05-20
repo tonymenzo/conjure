@@ -3,8 +3,14 @@
 # Run with:
 #   combinator run examples/iota.yaml
 #
-# Requires ANTHROPIC_API_KEY in the environment. Adjust the `llms`
-# block for OpenAI / Google / Groq / Ollama as needed.
+# Verify keys + config first:
+#   combinator check examples/iota.yaml
+#
+# Set API keys via shell, ~/.config/combinator/.env, or:
+#   combinator config set ANTHROPIC_API_KEY sk-...
+#
+# Provider defaults: anthropic → ANTHROPIC_API_KEY, openai → OPENAI_API_KEY,
+# google → GOOGLE_API_KEY, groq → GROQ_API_KEY, ollama → (none).
 
 runtime:
   store_dir: ./.combinator/store
@@ -13,8 +19,9 @@ runtime:
 llms:
   default:
     provider: anthropic
-    model: claude-sonnet-4-6
-    api_key_env: ANTHROPIC_API_KEY
+    # model and api_key_env both default per-provider; uncomment to override.
+    # model: claude-sonnet-4-6
+    # api_key_env: ANTHROPIC_API_KEY
 
 root:
   role_prompt: |
