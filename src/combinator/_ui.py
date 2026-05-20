@@ -34,6 +34,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
+from combinator.events import serialize_message
 from combinator.record import AgentRecord
 
 
@@ -63,7 +64,8 @@ def make_display_hook_builder(
         def hook(context: Any) -> None:
             messages = getattr(context, "messages", None) or []
             for msg in messages[state["seen"]:]:
-                _render_message(console, label, msg)
+                event = serialize_message(msg)
+                render_event(console, label, event)
             state["seen"] = len(messages)
 
         return hook
@@ -71,34 +73,48 @@ def make_display_hook_builder(
     return build
 
 
-def _render_message(console: Console, label: str, msg: Any) -> None:
-    """Format and print one orchestral context entry."""
-    inner = getattr(msg, "message", None)
+def render_event(console: Console, label: str, event: dict[str, Any]) -> None:
+    """Render one event dict.
 
-    if inner is not None:
-        # Response object: assistant text + optional tool_calls — render
-        # together as a single labeled panel so multi-agent output is
-        # visually parseable when agents interleave.
-        text = getattr(inner, "text", None) or ""
-        tool_calls = getattr(inner, "tool_calls", None) or []
+    The single rendering entrypoint used by both the in-process REPL
+    display hook AND the per-agent renderer that powers tmux windows.
+    Dispatches on ``event["kind"]``; unknown kinds are silently skipped
+    rather than dumped raw, because the schema may add new kinds the
+    renderer doesn't yet know about.
+    """
+    kind = event.get("kind")
+    if kind == "response":
+        text = event.get("text", "") or ""
+        tool_calls = event.get("tool_calls", []) or []
         if text or tool_calls:
             _print_agent_panel(console, label, text, tool_calls)
         return
-
-    role = getattr(msg, "role", None)
-    text = getattr(msg, "text", "") or ""
-    if role == "tool":
-        failed = getattr(msg, "failed", False)
-        summary = _summarize_tool_result(text)
-        if failed:
+    if kind == "tool":
+        summary = _summarize_tool_result(event.get("text", ""))
+        if event.get("failed"):
             console.print(f"  [red]✗ {summary}[/]")
         else:
             console.print(f"  [dim cyan]✓ {summary}[/]")
         return
-    if role == "user":
+    if kind == "assistant":
+        text = event.get("text", "") or ""
+        if text:
+            _print_agent_panel(console, label, text, [])
         return
-    if role == "assistant" and text:
-        _print_agent_panel(console, label, text, [])
+    if kind == "spawned":
+        addr = event.get("addr", "")
+        spawned_label = event.get("label", "") or addr
+        parent = event.get("parent")
+        if parent:
+            console.print(f"  [dim]+ spawned {spawned_label} ({addr}) under {parent}[/]")
+        else:
+            console.print(f"  [dim]+ root {spawned_label} ({addr})[/]")
+        return
+    if kind == "terminated":
+        addr = event.get("addr", "")
+        console.print(f"  [red dim]× terminated {addr}[/]")
+        return
+    # user / unknown — skip silently.
 
 
 def _print_agent_panel(
@@ -108,7 +124,8 @@ def _print_agent_panel(
     tool_calls: list[Any],
 ) -> None:
     """Render one agent's response (prose + tool calls) inside a
-    labeled rounded panel."""
+    labeled rounded panel. ``tool_calls`` is a list of plain dicts
+    ``{"name": ..., "args": ...}`` matching the event schema."""
     pieces: list[Any] = []
     if text:
         pieces.append(Text(text, no_wrap=False))
@@ -117,8 +134,8 @@ def _print_agent_panel(
             pieces.append(Text(""))  # blank line between prose and calls
         for tc in tool_calls:
             line = Text("  ← ", style="cyan")
-            line.append(_tool_name(tc), style="bold cyan")
-            line.append(f"({_args_preview(_tool_args(tc))})", style="cyan")
+            line.append(_tool_name_from_dict(tc), style="bold cyan")
+            line.append(f"({_args_preview(_tool_args_from_dict(tc))})", style="cyan")
             pieces.append(line)
     body = Group(*pieces) if pieces else Text("")
     panel = Panel(
@@ -131,6 +148,14 @@ def _print_agent_panel(
         expand=True,
     )
     console.print(panel)
+
+
+def _tool_name_from_dict(tc: dict[str, Any]) -> str:
+    return tc.get("name") or tc.get("tool_name") or "?"
+
+
+def _tool_args_from_dict(tc: dict[str, Any]) -> Any:
+    return tc.get("args") or tc.get("arguments") or {}
 
 
 def _summarize_tool_result(text: str) -> str:
@@ -173,14 +198,6 @@ def _parse_dict(text: str) -> Any:
             return json.loads(text)
         except (ValueError, TypeError):
             return None
-
-
-def _tool_name(tc: Any) -> str:
-    return getattr(tc, "tool_name", None) or getattr(tc, "name", "?")
-
-
-def _tool_args(tc: Any) -> Any:
-    return getattr(tc, "arguments", None) or {}
 
 
 def _args_preview(args: Any) -> str:
