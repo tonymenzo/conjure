@@ -29,23 +29,39 @@ from combinator.tools._base import (
 )
 
 
+_TERSE_SUFFIX = (
+    "\n\nRespond tersely: do the work and reply via ``send``. Do not "
+    "narrate or restate your reasoning. One short sentence plus the "
+    "result is plenty."
+)
+
+
 def _build_factory(spec_template: dict[str, Any]) -> Callable[[Any], AgentSpec]:
     """Build a ``spec_factory`` from an LLM-supplied dict template.
 
     ``role_prompt`` and ``initial_message`` strings are
     ``str.format``-interpolated with the item (under ``{item}``) and
-    (for fixed-point usage) ``{value}``.
+    (for fixed-point usage) ``{value}``. The role prompt is
+    auto-augmented with a terseness clause so combinator workers don't
+    drown the REPL in narration. The label is auto-suffixed with the
+    worker's per-call index so siblings are distinguishable
+    (``square-1``, ``square-2``, ...).
     """
-    role_prompt = spec_template.get("role_prompt", "")
-    label = spec_template.get("label", "")
+    role_prompt = spec_template.get("role_prompt", "") or ""
+    base_label = spec_template.get("label", "") or "worker"
     tools = list(spec_template.get("tools") or [])
     llm = spec_template.get("llm", "default")
     initial_message = spec_template.get("initial_message", "") or ""
 
+    counter = {"n": 0}
+
     def factory(item: Any) -> AgentSpec:
+        counter["n"] += 1
+        idx = counter["n"]
+        augmented_role = _safe_format(role_prompt, item=item, value=item) + _TERSE_SUFFIX
         return AgentSpec(
-            role_prompt=_safe_format(role_prompt, item=item, value=item),
-            label=label,
+            role_prompt=augmented_role,
+            label=f"{base_label}-{idx}",
             tools=tools,
             llm=llm,
             initial_message=(

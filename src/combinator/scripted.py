@@ -88,14 +88,21 @@ class BehaviorRegistry:
 
     def factory(self):
         def make(record: "AgentRecord", runtime: "Runtime") -> ScriptedEngine:
-            behavior = self._behaviors.get(
-                record.spec.role_prompt,
-                _default_behavior,
-            )
+            behavior = self._lookup(record.spec.role_prompt)
             return ScriptedEngine(
                 record=record, runtime=runtime, behavior=behavior
             )
         return make
+
+    def _lookup(self, role: str) -> Behavior:
+        """Longest-prefix match against registered keys. Supports the
+        combinator tool wrappers' auto-augmented role prompts (which
+        append a terseness clause after the user-provided role)."""
+        best_key: str | None = None
+        for key in self._behaviors:
+            if role.startswith(key) and (best_key is None or len(key) > len(best_key)):
+                best_key = key
+        return self._behaviors[best_key] if best_key else _default_behavior
 
 
 def _default_behavior(

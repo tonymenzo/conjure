@@ -26,6 +26,8 @@ import sys
 import time
 from pathlib import Path
 
+from rich.rule import Rule
+
 from combinator import _ui
 from combinator.address import USER, Address
 from combinator.config import load_config
@@ -118,8 +120,12 @@ def _run_one_shot(console, runtime: Runtime, root: Address, task: str) -> int:
 def _run_repl(console, runtime: Runtime, root: Address) -> int:
     label = root.label or "root"
     user_cursor = 0
+    first = True
     try:
         while True:
+            if not first:
+                console.print(Rule(style="dim"))
+            first = False
             try:
                 line = console.input("[bold cyan]you[/] [dim]›[/] ").strip()
             except EOFError:
