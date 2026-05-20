@@ -21,7 +21,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TYPE_CHECKING
 
 from combinator.address import SYSTEM, USER, Address
 from combinator.capability import CapabilitySet
@@ -32,6 +32,11 @@ from combinator.mailbox import Mailbox
 from combinator.persistence import Journal
 from combinator.record import AgentRecord, AgentSpec
 
+if TYPE_CHECKING:
+    from combinator.agent import Engine
+
+EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
+
 
 class Runtime:
 
@@ -39,6 +44,7 @@ class Runtime:
         self,
         *,
         store_dir: Path | None = None,
+        engine_factory: EngineFactory | None = None,
         max_workers: int = 32,
     ) -> None:
         self._lock = threading.RLock()
@@ -48,6 +54,7 @@ class Runtime:
         self._journal = Journal(store_dir)
         self._shutdown = False
         self._max_workers = max_workers
+        self._engine_factory = engine_factory
 
     # ----- Public API -----
 
@@ -67,7 +74,8 @@ class Runtime:
             self._tokens[record.token] = addr
             self._root_addr = addr
             self._journal_spawn(record)
-            return addr
+        self._maybe_start_driver(record)
+        return addr
 
     def send_external(self, to: Address, body: Any, *, sender: str = "user") -> str:
         """Inject a message into ``to``'s inbox from outside the agent
@@ -88,9 +96,13 @@ class Runtime:
                 body=body,
                 ts=time.time(),
             )
-            stored = self._records[to].inbox.put(env)
+            target_record = self._records[to]
+            stored = target_record.inbox.put(env)
             self._journal_send(stored)
-            return stored.msg_id
+            wakeup = target_record.wakeup
+        if wakeup is not None:
+            wakeup.set()
+        return stored.msg_id
 
     def read_inbox(self, addr: Address, *, since_seq: int = 0) -> list[Envelope]:
         with self._lock:
@@ -121,18 +133,26 @@ class Runtime:
             )
             return terminated
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, driver_join_timeout: float = 2.0) -> None:
         """Stop the runtime. All non-terminated agents become
-        ``terminated``; the journal is closed.
+        ``terminated``; drivers are signaled and joined; the journal
+        is closed.
         """
         with self._lock:
             if self._shutdown:
                 return
+            drivers_to_stop: list[Any] = []
             for record in self._records.values():
                 if record.status != "terminated":
                     record.status = "terminated"
+                if record.wakeup is not None:
+                    record.wakeup.set()
+                if record.driver is not None:
+                    drivers_to_stop.append(record.driver)
             self._journal.close()
             self._shutdown = True
+        for d in drivers_to_stop:
+            d.stop(timeout=driver_join_timeout)
 
     @property
     def root_addr(self) -> Address | None:
@@ -168,7 +188,8 @@ class Runtime:
             self._tokens[record.token] = addr
             self._records[parent].children.add(addr)
             self._journal_spawn(record)
-            return addr
+        self._maybe_start_driver(record)
+        return addr
 
     # ----- Replay -----
 
@@ -233,6 +254,8 @@ class Runtime:
             return
         record.status = "terminated"
         terminated.append(addr)
+        if record.wakeup is not None:
+            record.wakeup.set()
         if cascade:
             for child in list(record.children):
                 self._terminate_locked(
@@ -276,6 +299,24 @@ class Runtime:
 
     def _journal_send(self, env: Envelope) -> None:
         self._journal.write("send", {"envelope": env.model_dump(by_alias=True)})
+
+    def _maybe_start_driver(self, record: AgentRecord) -> None:
+        """Build an engine and start a driver for ``record`` unless its
+        spec marks it ``lazy`` or no engine factory is configured."""
+        if self._engine_factory is None or record.spec.lazy:
+            if record.wakeup is None:
+                record.wakeup = threading.Event()
+            return
+        from combinator.agent import Agent as AgentWrapper
+        from combinator.driver import Driver
+
+        record.wakeup = threading.Event()
+        engine = self._engine_factory(record, self)
+        wrapper = AgentWrapper(record=record, engine=engine)
+        driver = Driver(agent=wrapper, runtime=self)
+        record.agent = wrapper
+        record.driver = driver
+        driver.start()
 
     def _replay_spawn(self, payload: dict[str, Any]) -> None:
         addr = Address.model_validate(payload["addr"])

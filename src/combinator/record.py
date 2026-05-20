@@ -64,7 +64,9 @@ class AgentRecord:
     cost_used: int = 0
     spawned_at: float = field(default_factory=time.time)
 
-    # Added in Step 5 when the driver loop lands:
-    driver_thread: Any = None
+    # Driver-side state — populated when a driver thread is attached.
+    # The wakeup event is created up front so messages arriving for a
+    # lazy agent can be queued and signaled when the driver starts.
     wakeup: Any = None
-    orchestral_agent: Any = None
+    driver: Any = None
+    agent: Any = None
