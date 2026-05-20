@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0",
     "libtmux>=0.39",
+    "textual>=0.40",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,7 @@ test = [
 combinator = "combinator.cli:main"
 combinator-render = "combinator.render:main"
 combinator-input = "combinator.cli_input:main"
+combinator-meta = "combinator.meta:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
