@@ -157,6 +157,11 @@ def send_impl(
     )
     stored = target_record.inbox.put(env)
     runtime._journal_send(stored)
+    # Reciprocal capability: the recipient may now reply to the sender.
+    # Without this, common request/response patterns require explicit
+    # introductions for every reply path, which doesn't scale across a
+    # recursive spawn tree.
+    target_record.capabilities.extend(caller_addr)
     if target_record.wakeup is not None:
         target_record.wakeup.set()
 
