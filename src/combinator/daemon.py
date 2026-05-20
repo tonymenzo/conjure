@@ -43,6 +43,10 @@ def log_path_for(session: str) -> Path:
     return session_dir() / f"{session}.log"
 
 
+def socket_path_for(session: str) -> Path:
+    return session_dir() / f"{session}.sock"
+
+
 def list_session_names() -> list[str]:
     """Return ``combinator-*`` session names with live PID files."""
     d = session_dir()

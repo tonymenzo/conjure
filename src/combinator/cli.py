@@ -39,12 +39,14 @@ from rich.rule import Rule
 from combinator import _ui
 from combinator.address import USER, Address
 from combinator.config import load_config
+from combinator.control import ControlServer
 from combinator.daemon import (
     daemonize,
     is_daemon_running,
     list_session_names,
     log_path_for,
     pid_path_for,
+    socket_path_for,
     stop_daemon,
 )
 from combinator.event_log import EventLog
@@ -266,12 +268,25 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         shutdown_event=shutdown_event,
     )
 
+    # Start the JSON-RPC control server so the meta-view popup can
+    # query state and inject commands.
+    control_path = socket_path_for(session_name)
+    control_server = ControlServer(runtime=runtime, socket_path=control_path)
+    try:
+        control_server.start()
+    except Exception as exc:
+        print(f"daemon: control server failed to start: {exc}", file=sys.stderr)
+
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
 
     # Block until SIGTERM / SIGINT / :quit.
     shutdown_event.wait()
 
+    try:
+        control_server.stop()
+    except Exception:
+        pass
     _shutdown(runtime, tmux)
     _remove_pid(pid_path)
     return 0
