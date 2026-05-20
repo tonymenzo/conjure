@@ -102,11 +102,13 @@ class Driver:
         lines = [f"You have {len(envelopes)} new message(s):"]
         for env in envelopes:
             lines.append(
-                f"  [seq={env.seq} thread={env.thread_id} from={env.from_}]: "
+                f"  [seq={env.seq} thread={env.thread_id} from={env.from_.id}]: "
                 f"{env.body!r}"
             )
         lines.append(
-            "\nProcess them using your tools (send, recv, spawn, terminate, "
-            "introduce) as appropriate."
+            "\nProcess them as appropriate. Your final assistant text is shown "
+            "to whoever sent the message; you do not need to ``send`` a reply "
+            "for natural-language responses. Use ``send`` only to communicate "
+            "with other agents in the graph."
         )
         return "\n".join(lines)

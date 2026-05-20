@@ -114,5 +114,44 @@ def test_hook_renders_failed_tool_in_red():
     failed = Message(role="tool", text="capability missing", tool_call_id="tc-1", failed=True)
     hook(_Ctx([failed]))
     out = console.file.getvalue()
-    assert "tool error" in out
+    assert "capability missing" in out
+    rt.shutdown()
+
+
+def test_hook_summarizes_ok_dict_result():
+    """A success result with an 'address' key collapses to 'address=...'."""
+    console = _captured_console()
+    builder = make_display_hook_builder(console)
+    rt, rec = _make_record()
+    hook = builder(rec)
+
+    tool_msg = Message(
+        role="tool",
+        text="{'ok': True, 'address': 'ag-abc', 'label': 'sub'}",
+        tool_call_id="tc-1",
+    )
+    hook(_Ctx([tool_msg]))
+    out = console.file.getvalue()
+    assert "address" in out
+    assert "ag-abc" in out
+    rt.shutdown()
+
+
+def test_hook_summarizes_failed_dict_result():
+    """A failure with code/error becomes 'code: error'."""
+    console = _captured_console()
+    builder = make_display_hook_builder(console)
+    rt, rec = _make_record()
+    hook = builder(rec)
+
+    tool_msg = Message(
+        role="tool",
+        text="{'ok': False, 'code': 'not_permitted', 'error': 'caller cannot send to ag-xyz'}",
+        tool_call_id="tc-1",
+        failed=True,
+    )
+    hook(_Ctx([tool_msg]))
+    out = console.file.getvalue()
+    assert "not_permitted" in out
+    assert "caller cannot send" in out
     rt.shutdown()

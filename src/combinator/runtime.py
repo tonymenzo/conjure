@@ -68,6 +68,28 @@ class Runtime:
         self._shutdown = False
         self._max_workers = max_workers
         self._engine_factory = engine_factory
+        self._install_sentinels()
+
+    def _install_sentinels(self) -> None:
+        """Register passive ``@user`` / ``@system`` records so agents can
+        send to them via the normal capability machinery. These records
+        carry an inbox but no engine or driver — messages just collect
+        there until the CLI / runtime owner reads them out.
+        """
+        for sentinel in (USER, SYSTEM):
+            self._records[sentinel] = AgentRecord(
+                addr=sentinel,
+                spec=AgentSpec(
+                    role_prompt=f"(sentinel: {sentinel.label})",
+                    label=sentinel.label,
+                    lazy=True,
+                ),
+                inbox=Mailbox(),
+                capabilities=CapabilitySet(self_addr=sentinel),
+                token="",  # never used; sentinels can't be tool callers
+                parent=None,
+                status="idle",
+            )
 
     # ----- Public API -----
 
@@ -307,19 +329,28 @@ class Runtime:
         parent: Address | None,
         spec: AgentSpec,
     ) -> AgentRecord:
-        initial: list[Address] = []
-        if parent is not None:
-            initial.append(parent)
-        initial.extend(spec.capabilities)
-        capabilities = CapabilitySet(self_addr=addr, initial=initial)
         return AgentRecord(
             addr=addr,
             spec=spec,
             inbox=Mailbox(),
-            capabilities=capabilities,
+            capabilities=self._initial_caps(addr=addr, parent=parent, spec=spec),
             token=new_runtime_token(),
             parent=parent,
         )
+
+    def _initial_caps(
+        self,
+        *,
+        addr: Address,
+        parent: Address | None,
+        spec: AgentSpec,
+    ) -> CapabilitySet:
+        # USER + SYSTEM are universal — every agent can reach them.
+        initial: list[Address] = [USER, SYSTEM]
+        if parent is not None:
+            initial.append(parent)
+        initial.extend(spec.capabilities)
+        return CapabilitySet(self_addr=addr, initial=initial)
 
     def _terminate_locked(
         self,
@@ -406,16 +437,11 @@ class Runtime:
         parent_data = payload.get("parent")
         parent = Address.model_validate(parent_data) if parent_data else None
         spec = AgentSpec.model_validate(payload["spec"])
-        initial: list[Address] = []
-        if parent is not None:
-            initial.append(parent)
-        initial.extend(spec.capabilities)
-        capabilities = CapabilitySet(self_addr=addr, initial=initial)
         record = AgentRecord(
             addr=addr,
             spec=spec,
             inbox=Mailbox(),
-            capabilities=capabilities,
+            capabilities=self._initial_caps(addr=addr, parent=parent, spec=spec),
             token=new_runtime_token(),
             parent=parent,
         )

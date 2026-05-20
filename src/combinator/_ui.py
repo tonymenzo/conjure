@@ -7,23 +7,29 @@ messages it has already rendered so each call only prints the *new*
 ones — preventing duplicates when the agent makes multiple tool calls
 during a single ``step``.
 
+Render order matches the narrative the LLM produces: its prose first,
+then the tool calls that operationalize that prose, then the result of
+those calls (compacted to a one-line summary). This avoids the
+text-after-call inversion that makes the output read like a stream of
+unrelated events.
+
 Visual conventions:
 
 - ``[bold cyan]you ›[/bold cyan]`` — the user prompt.
 - ``[bold magenta]<label>[/bold magenta]`` — an agent's spoken text.
-- ``[dim cyan]← tool_name(args)[/dim cyan]`` — outgoing tool call.
-- ``[dim]→ result preview[/dim]`` — tool result.
-- ``[dim]…[/dim]`` — internal status (spinner, etc.).
-- ``[red]error: ...[/red]`` — errors surfaced from drivers.
+- ``[cyan]← tool_name(args)[/cyan]`` — outgoing tool call.
+- ``[dim cyan]✓ summary[/dim cyan]`` — tool result (success).
+- ``[red]✗ code: reason[/red]`` — tool result (failure).
+- ``[red]error: ...[/red]`` — runtime errors surfaced from drivers.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 from typing import Any, Callable
 
 from rich.console import Console
-from rich.text import Text
 
 from combinator.record import AgentRecord
 
@@ -68,32 +74,76 @@ def _render_message(console: Console, label: str, msg: Any) -> None:
 
     if inner is not None:
         # Response object: assistant text + optional tool_calls.
-        tool_calls = getattr(inner, "tool_calls", None) or []
-        for tc in tool_calls:
-            console.print(
-                f"  [cyan dim]←[/] [cyan]{_tool_name(tc)}[/]"
-                f"({_args_preview(_tool_args(tc))})"
-            )
+        # Render text BEFORE tool calls so the narrative reads top-to-
+        # bottom (the model usually says "I'll do X" then calls X).
         text = getattr(inner, "text", None)
         if text:
             console.print(f"[bold magenta]{label}[/]  {text}")
+        tool_calls = getattr(inner, "tool_calls", None) or []
+        for tc in tool_calls:
+            console.print(
+                f"  [cyan]←[/] [cyan]{_tool_name(tc)}[/]"
+                f"({_args_preview(_tool_args(tc))})"
+            )
         return
 
     role = getattr(msg, "role", None)
     text = getattr(msg, "text", "") or ""
     if role == "tool":
         failed = getattr(msg, "failed", False)
-        preview = _truncate(text, _BODY_PREVIEW_LEN)
+        summary = _summarize_tool_result(text)
         if failed:
-            console.print(f"  [red]→ tool error:[/] {preview}")
+            console.print(f"  [red]✗ {summary}[/]")
         else:
-            console.print(f"  [dim]→ {preview}[/]")
+            console.print(f"  [dim cyan]✓ {summary}[/]")
         return
     if role == "user":
         # The REPL prints the user's input itself; skip the echo from context.
         return
     if role == "assistant" and text:
         console.print(f"[bold magenta]{label}[/]  {text}")
+
+
+def _summarize_tool_result(text: str) -> str:
+    """Compact a tool's return value (a stringified dict) to one line.
+
+    Tools return ``{"ok": True, ...}`` or
+    ``{"ok": False, "code": ..., "error": ...}``. The summary surfaces
+    the success/failure and the most-meaningful one field. Falls back
+    to a truncated raw preview when the body isn't a parseable dict.
+    """
+    parsed = _parse_dict(text)
+    if not isinstance(parsed, dict):
+        return _truncate(text, _BODY_PREVIEW_LEN)
+
+    ok = parsed.get("ok")
+    if ok is False:
+        code = parsed.get("code") or "error"
+        msg = parsed.get("error") or ""
+        if msg:
+            return f"{code}: {_truncate(str(msg), 80)}"
+        return str(code)
+
+    # Success — pick the most informative field to surface.
+    for key in ("address", "result", "msg_id", "terminated", "envelopes", "next_seq"):
+        if key in parsed:
+            value = parsed[key]
+            if isinstance(value, list):
+                return f"{key}=[{len(value)} item(s)]"
+            return f"{key}={_truncate(repr(value), 80)}"
+    return "ok"
+
+
+def _parse_dict(text: str) -> Any:
+    if not text or not text.strip().startswith("{"):
+        return None
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        try:
+            return json.loads(text)
+        except (ValueError, TypeError):
+            return None
 
 
 def _tool_name(tc: Any) -> str:

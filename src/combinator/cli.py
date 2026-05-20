@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 from combinator import _ui
-from combinator.address import Address
+from combinator.address import USER, Address
 from combinator.config import load_config
 from combinator.runner import build_runtime
 from combinator.runtime import Runtime
@@ -117,6 +117,7 @@ def _run_one_shot(console, runtime: Runtime, root: Address, task: str) -> int:
 
 def _run_repl(console, runtime: Runtime, root: Address) -> int:
     label = root.label or "root"
+    user_cursor = 0
     try:
         while True:
             try:
@@ -133,12 +134,37 @@ def _run_repl(console, runtime: Runtime, root: Address) -> int:
             runtime.send_external(to=root, body=line)
             target_seq = runtime.record_for(root).inbox.latest_seq()
             _wait_for_idle(console, runtime, root, target_seq, label=label)
+            user_cursor = _flush_user_inbox(console, runtime, since_seq=user_cursor)
     except KeyboardInterrupt:
         console.print()
         _ui.print_system(console, "interrupt — shutting down")
     finally:
         runtime.shutdown()
     return 0
+
+
+def _flush_user_inbox(console, runtime: Runtime, *, since_seq: int) -> int:
+    """Print any structured messages agents have sent to ``@user`` since
+    ``since_seq`` and return the new cursor."""
+    envelopes = runtime.read_inbox(USER, since_seq=since_seq)
+    if not envelopes:
+        return since_seq
+    for env in envelopes:
+        sender = env.from_.label or env.from_.id
+        body = env.body
+        if isinstance(body, str):
+            preview = body
+        else:
+            try:
+                preview = json.dumps(body, ensure_ascii=False, default=str)
+            except Exception:
+                preview = repr(body)
+        if len(preview) > 1000:
+            preview = preview[:997] + "…"
+        console.print(
+            f"  [bold magenta]{sender}[/] [dim]→ you[/]  {preview}"
+        )
+    return envelopes[-1].seq
 
 
 def _wait_for_idle(
