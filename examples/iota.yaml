@@ -1,7 +1,19 @@
 # Example configuration: minimal iota root agent.
 #
-# Run with:
-#   combinator run examples/iota.yaml
+# Two ways to run:
+#
+#   combinator run examples/iota.yaml      # tmux mode: each agent gets a
+#                                          # window; attach + detach.
+#                                          # MVP only supports one-shot
+#                                          # (set mode: one-shot below).
+#
+#   combinator repl examples/iota.yaml     # single-pane interactive REPL
+#                                          # (no tmux); good for chat-style
+#                                          # use, scripting, and tests.
+#
+# Reattach to a running tmux session:
+#   combinator run --attach                # newest combinator-* session
+#   combinator run --attach combinator-abc # named session
 #
 # Verify keys + config first:
 #   combinator check examples/iota.yaml
@@ -44,4 +56,6 @@ root:
   label: iota
 
 mode: repl
-# initial_task: "describe yourself"   # uncomment for one-shot mode
+# initial_task: "describe yourself"   # required for tmux mode (combinator run);
+                                      # also works in `combinator repl` to
+                                      # auto-send on startup.
