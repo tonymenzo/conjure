@@ -114,30 +114,47 @@ class OrchestralEngine:
 
 def make_orchestral_engine_factory(
     *,
-    llms: dict[str, Any],
+    llm_factories: dict[str, Callable[[], Any]] | None = None,
+    llms: dict[str, Any] | None = None,
     tool_registry: ToolGroupRegistry | None = None,
     max_tool_iterations: int = 8,
     display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None = None,
 ) -> EngineFactory:
     """Build an ``engine_factory`` suitable for ``Runtime(engine_factory=...)``.
 
-    ``llms`` maps LLM names (referenced by ``AgentSpec.llm``) to live
-    LLM client instances (e.g., ``orchestral.llm.GPT(...)``).
+    ``llm_factories`` maps LLM names (referenced by ``AgentSpec.llm``)
+    to zero-arg builders that produce a fresh LLM client each call.
+    Each spawned agent gets its own client — orchestral mutates the
+    client's tool router via ``set_tools``, so sharing the client
+    across agents corrupts everyone's routing.
+
+    ``llms`` (legacy) accepts pre-built client instances. Kept for
+    tests that use a FakeLLM single-threadedly. Production code should
+    pass ``llm_factories``.
 
     ``display_hook_builder``: if given, called once per spawned agent
     with the agent's ``AgentRecord``; it returns a ``DisplayHook``
     closure that the engine passes through to ``orchestral.Agent``.
     This is how the CLI surfaces live tool calls and responses.
     """
+    if llm_factories is None and llms is None:
+        raise ValueError("must provide one of llm_factories or llms")
     registry = tool_registry if tool_registry is not None else DEFAULT_TOOL_GROUPS
 
     def factory(record: "AgentRecord", runtime: "Runtime") -> OrchestralEngine:
         llm_name = record.spec.llm or "default"
-        if llm_name not in llms:
-            raise KeyError(
-                f"LLM {llm_name!r} not configured (known: {sorted(llms)})"
-            )
-        llm = llms[llm_name]
+        if llm_factories is not None:
+            if llm_name not in llm_factories:
+                raise KeyError(
+                    f"LLM {llm_name!r} not configured (known: {sorted(llm_factories)})"
+                )
+            llm = llm_factories[llm_name]()
+        else:
+            if llm_name not in llms:
+                raise KeyError(
+                    f"LLM {llm_name!r} not configured (known: {sorted(llms)})"
+                )
+            llm = llms[llm_name]
         tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
         tools = build_tools(record.token, tool_names, registry)
         hook = display_hook_builder(record) if display_hook_builder else None

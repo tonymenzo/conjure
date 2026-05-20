@@ -13,7 +13,7 @@ from typing import Callable, Any
 from combinator.address import Address
 from combinator.config import Config
 from combinator.engines.orchestral import make_orchestral_engine_factory
-from combinator.llm import build_llms
+from combinator.llm import build_llm
 from combinator.record import AgentRecord, AgentSpec
 from combinator.runtime import Runtime
 
@@ -25,11 +25,20 @@ def build_runtime(
 ) -> tuple[Runtime, Address]:
     """Build a ``Runtime`` and spawn the root agent per ``config``.
 
+    Each spawned agent gets its own freshly-constructed LLM client —
+    orchestral mutates the client's tool router on Agent construction,
+    so sharing clients across agents cross-wires their tools.
+
     ``display_hook_builder`` is an optional factory that returns a
     per-agent display hook (used by the CLI to render tool calls and
     assistant text in real time).
     """
-    llms = build_llms({name: c.model_dump() for name, c in config.llms.items()})
+    # Capture each LLM config as a default arg so the lambda closes
+    # over the right value (avoid the classic late-binding bug).
+    llm_factories = {
+        name: (lambda c=cfg.model_dump(): build_llm(c))
+        for name, cfg in config.llms.items()
+    }
 
     if config.root.engine != "orchestral":
         raise NotImplementedError(
@@ -38,7 +47,7 @@ def build_runtime(
         )
 
     engine_factory = make_orchestral_engine_factory(
-        llms=llms,
+        llm_factories=llm_factories,
         display_hook_builder=display_hook_builder,
     )
 
