@@ -44,6 +44,9 @@ class ScriptedEngine:
         self.behavior = behavior
         self._cursor = 0
         self.calls: int = 0
+        # Per-agent state slot for event-driven behaviors that span
+        # multiple ``step`` calls (e.g. spawn-and-await-reply patterns).
+        self.state: dict[str, Any] = {}
 
     @property
     def addr(self) -> Address:
