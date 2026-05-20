@@ -197,10 +197,8 @@ def _handle_command(line: str, *, console, runtime: Runtime, root: Address) -> b
         _print_cost(runtime, console=console)
         return False
     if cmd == ":inbox":
-        if len(parts) < 2:
-            console.print("[dim]usage:[/] :inbox <addr_id>")
-            return False
-        _print_inbox(runtime, parts[1], console=console)
+        target = parts[1] if len(parts) >= 2 else "@user"
+        _print_inbox(runtime, target, console=console)
         return False
     if cmd == ":send":
         if len(parts) < 3:
@@ -219,7 +217,7 @@ def _print_help(console) -> None:
         "  [cyan]:tree[/]                 show the spawn tree\n"
         "  [cyan]:status[/]               show each agent's status\n"
         "  [cyan]:cost[/]                 show LLM spend (per agent + total)\n"
-        "  [cyan]:inbox <addr>[/]         list envelopes in an agent's inbox\n"
+        "  [cyan]:inbox [addr][/]         list envelopes (default: @user — your inbox)\n"
         "  [cyan]:send <addr> <body>[/]   send a message to any known agent\n"
         "  [cyan]:quit[/]                 terminate and exit\n\n"
         "[dim]Anything else is sent as a user message to the root.[/]",
