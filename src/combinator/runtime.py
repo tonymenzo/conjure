@@ -31,6 +31,7 @@ from combinator.ids import new_agent_id, new_message_id, new_runtime_token
 from combinator.mailbox import Mailbox
 from combinator.persistence import Journal
 from combinator.record import AgentRecord, AgentSpec
+from combinator.tools._base import register_token, unregister_token
 
 if TYPE_CHECKING:
     from combinator.agent import Engine
@@ -73,6 +74,7 @@ class Runtime:
             self._records[addr] = record
             self._tokens[record.token] = addr
             self._root_addr = addr
+            register_token(record.token, self, addr)
             self._journal_spawn(record)
         self._maybe_start_driver(record)
         return addr
@@ -149,6 +151,7 @@ class Runtime:
                     record.wakeup.set()
                 if record.driver is not None:
                     drivers_to_stop.append(record.driver)
+                unregister_token(record.token)
             self._journal.close()
             self._shutdown = True
         for d in drivers_to_stop:
@@ -173,12 +176,26 @@ class Runtime:
             self._require_known(addr)
             return self._records[addr]
 
+    def address_by_id(self, id_str: str) -> Address | None:
+        """Look up a known Address by its opaque id string. Used by
+        tools to resolve LLM-supplied address strings."""
+        with self._lock:
+            for known in self._records:
+                if known.id == id_str:
+                    return known
+            return None
+
     # ----- Internal spawn (used by the spawn tool) -----
 
     def _spawn(self, *, parent: Address, spec: AgentSpec) -> Address:
         """Create a child agent under ``parent``. Capability enforcement
         is the caller's responsibility (the spawn tool checks); this
-        method is the trusted construction path."""
+        method is the trusted construction path.
+
+        The parent automatically gains capability for the new child, so
+        ``spawn`` followed by ``send(child, ...)`` works without an
+        explicit ``introduce`` step.
+        """
         with self._lock:
             self._require_not_shutdown()
             self._require_alive(parent)
@@ -187,6 +204,8 @@ class Runtime:
             self._records[addr] = record
             self._tokens[record.token] = addr
             self._records[parent].children.add(addr)
+            self._records[parent].capabilities.extend(addr)
+            register_token(record.token, self, addr)
             self._journal_spawn(record)
         self._maybe_start_driver(record)
         return addr
@@ -254,6 +273,7 @@ class Runtime:
             return
         record.status = "terminated"
         terminated.append(addr)
+        unregister_token(record.token)
         if record.wakeup is not None:
             record.wakeup.set()
         if cascade:
