@@ -16,10 +16,10 @@ unrelated events.
 Visual conventions:
 
 - ``[bold cyan]you ›[/bold cyan]`` — the user prompt.
-- ``[bold magenta]<label>[/bold magenta]`` — an agent's spoken text.
-- ``[cyan]← tool_name(args)[/cyan]`` — outgoing tool call.
-- ``[dim cyan]✓ summary[/dim cyan]`` — tool result (success).
-- ``[red]✗ code: reason[/red]`` — tool result (failure).
+- Each agent's prose lives in a labeled, rounded panel; outgoing tool
+  calls appear inside that panel (they are the agent's actions).
+- Tool results appear *between* panels as one-line summaries, since
+  they are framework events rather than an agent's speech.
 - ``[red]error: ...[/red]`` — runtime errors surfaced from drivers.
 """
 
@@ -29,7 +29,10 @@ import ast
 import json
 from typing import Any, Callable
 
-from rich.console import Console
+from rich.box import ROUNDED
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.text import Text
 
 from combinator.record import AgentRecord
 
@@ -73,18 +76,13 @@ def _render_message(console: Console, label: str, msg: Any) -> None:
     inner = getattr(msg, "message", None)
 
     if inner is not None:
-        # Response object: assistant text + optional tool_calls.
-        # Render text BEFORE tool calls so the narrative reads top-to-
-        # bottom (the model usually says "I'll do X" then calls X).
-        text = getattr(inner, "text", None)
-        if text:
-            console.print(f"[bold magenta]{label}[/]  {text}")
+        # Response object: assistant text + optional tool_calls — render
+        # together as a single labeled panel so multi-agent output is
+        # visually parseable when agents interleave.
+        text = getattr(inner, "text", None) or ""
         tool_calls = getattr(inner, "tool_calls", None) or []
-        for tc in tool_calls:
-            console.print(
-                f"  [cyan]←[/] [cyan]{_tool_name(tc)}[/]"
-                f"({_args_preview(_tool_args(tc))})"
-            )
+        if text or tool_calls:
+            _print_agent_panel(console, label, text, tool_calls)
         return
 
     role = getattr(msg, "role", None)
@@ -98,10 +96,41 @@ def _render_message(console: Console, label: str, msg: Any) -> None:
             console.print(f"  [dim cyan]✓ {summary}[/]")
         return
     if role == "user":
-        # The REPL prints the user's input itself; skip the echo from context.
         return
     if role == "assistant" and text:
-        console.print(f"[bold magenta]{label}[/]  {text}")
+        _print_agent_panel(console, label, text, [])
+
+
+def _print_agent_panel(
+    console: Console,
+    label: str,
+    text: str,
+    tool_calls: list[Any],
+) -> None:
+    """Render one agent's response (prose + tool calls) inside a
+    labeled rounded panel."""
+    pieces: list[Any] = []
+    if text:
+        pieces.append(Text(text, no_wrap=False))
+    if tool_calls:
+        if text:
+            pieces.append(Text(""))  # blank line between prose and calls
+        for tc in tool_calls:
+            line = Text("  ← ", style="cyan")
+            line.append(_tool_name(tc), style="bold cyan")
+            line.append(f"({_args_preview(_tool_args(tc))})", style="cyan")
+            pieces.append(line)
+    body = Group(*pieces) if pieces else Text("")
+    panel = Panel(
+        body,
+        title=f"[bold magenta]{label}[/]",
+        title_align="left",
+        border_style="magenta",
+        box=ROUNDED,
+        padding=(0, 1),
+        expand=True,
+    )
+    console.print(panel)
 
 
 def _summarize_tool_result(text: str) -> str:
