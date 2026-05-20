@@ -30,9 +30,15 @@ from combinator.tools._base import (
 
 
 _TERSE_SUFFIX = (
-    "\n\nRespond tersely: do the work and reply via ``send``. Do not "
-    "narrate or restate your reasoning. One short sentence plus the "
-    "result is plenty."
+    "\n\nIMPORTANT INSTRUCTIONS:\n"
+    "1. The message you need to process is ALREADY SHOWN in this prompt "
+    "(under 'You have N new message(s):'). Read it directly — do NOT "
+    "call ``recv``, ``list_inbox``, or any other read tool.\n"
+    "2. Compute the answer, then make ONE ``send`` call to the address "
+    "in the message's ``reply_to`` field, with the result in ``body``.\n"
+    "3. After the send returns ok, you are DONE. Reply with a single "
+    "short sentence (one line) confirming completion. Do not narrate "
+    "your reasoning."
 )
 
 
@@ -94,7 +100,7 @@ class AgentMapTool(StatelessRuntimeTool):
     spec: dict = RuntimeField(description="Spec template for each worker.")
     items: list = RuntimeField(description="List of items to dispatch.")
     timeout_s: float = RuntimeField(
-        default=120.0, description="Maximum seconds to wait for all replies."
+        default=60.0, description="Maximum seconds to wait for all replies."
     )
     runtime_token: str = StateField(description="(internal) caller token.")
 
@@ -120,7 +126,7 @@ class AgentFoldTool(StatelessRuntimeTool):
     spec: dict = RuntimeField(description="Spec template for each worker.")
     items: list = RuntimeField(description="List of items to fold.")
     init: Any = RuntimeField(description="Initial accumulator value.")
-    timeout_s: float = RuntimeField(default=120.0, description="Maximum seconds.")
+    timeout_s: float = RuntimeField(default=60.0, description="Maximum seconds.")
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
@@ -146,7 +152,7 @@ class AgentFilterTool(StatelessRuntimeTool):
 
     spec: dict = RuntimeField(description="Spec template for each worker.")
     items: list = RuntimeField(description="List of items to filter.")
-    timeout_s: float = RuntimeField(default=120.0, description="Maximum seconds.")
+    timeout_s: float = RuntimeField(default=60.0, description="Maximum seconds.")
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
