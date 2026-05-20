@@ -47,6 +47,16 @@ class Mailbox:
             self._cond.notify_all()
             return stored
 
+    def replay_put(self, env: Envelope) -> None:
+        """Insert ``env`` preserving its original ``seq``. Intended for
+        journal replay only; advances the next-seq counter past
+        ``env.seq`` so future puts remain monotonic."""
+        with self._cond:
+            self._items.append(env)
+            if env.seq + 1 > self._next_seq:
+                self._next_seq = env.seq + 1
+            self._cond.notify_all()
+
     def read(
         self,
         *,
