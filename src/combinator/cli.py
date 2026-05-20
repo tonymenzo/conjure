@@ -211,8 +211,22 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     agents_dir = store_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set up input channel BEFORE creating the tmux session so the
+    # input command in window 0 has a file to write to immediately.
+    # Truncate any stale content from a previous session so the reader
+    # can safely read from start (no SEEK_END race).
+    input_path = store_dir / "input.jsonl"
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    input_path.write_text("", encoding="utf-8")
+
+    input_cmd = f"combinator-input --input-path {input_path} --label {cfg.root.label or 'iota'}"
+
     try:
-        tmux = TmuxSession.attach_or_create(session_name)
+        tmux = TmuxSession.attach_or_create(
+            session_name,
+            initial_window_name="input",
+            initial_command=input_cmd,
+        )
     except Exception as exc:
         print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
         _remove_pid(pid_path)
@@ -243,25 +257,71 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         _remove_pid(pid_path)
         return 2
 
-    # Rename the default tmux shell window to "status" so it's not the
-    # one labeled like a stale process.
-    try:
-        for w in tmux.list_windows():
-            if w["name"] not in {root.label or root.id, "status"}:
-                tmux.rename_window(current_name=w["name"], new_name="status")
-                break
-    except Exception:
-        pass
+    # Start the input reader thread: tails the input file and forwards
+    # each line to the root agent (or shuts down on :quit).
+    _start_input_reader(
+        input_path=input_path,
+        runtime=runtime,
+        root=root,
+        shutdown_event=shutdown_event,
+    )
 
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
 
-    # Block until SIGTERM / SIGINT.
+    # Block until SIGTERM / SIGINT / :quit.
     shutdown_event.wait()
 
     _shutdown(runtime, tmux)
     _remove_pid(pid_path)
     return 0
+
+
+def _start_input_reader(
+    *,
+    input_path: Path,
+    runtime: Runtime,
+    root: Address,
+    shutdown_event: threading.Event,
+) -> None:
+    """Tail ``input_path`` and dispatch each line.
+
+    - ``:quit`` / ``:q`` / ``:exit`` → set ``shutdown_event``.
+    - Anything else → ``runtime.send_external(to=root, body=line)``.
+    Future control commands (``:tree`` etc.) will be added when the
+    meta-view popup needs them; for now they're forwarded as plain
+    text (they won't match anything meaningful agent-side, which is
+    fine — the meta-view is the right place to put them).
+    """
+
+    def reader() -> None:
+        # Read from start: the daemon's setup truncated this file (and
+        # tests give us a fresh tmp_path) so there's nothing stale to
+        # replay. Reading from start avoids a seek/append race that
+        # would skip messages appended just before the thread starts.
+        with input_path.open("r", encoding="utf-8") as fh:
+            while not shutdown_event.is_set():
+                raw = fh.readline()
+                if not raw:
+                    time.sleep(0.05)
+                    continue
+                try:
+                    data = json.loads(raw.strip())
+                except Exception:
+                    continue
+                line = (data.get("line") or "").strip()
+                if not line:
+                    continue
+                if line in (":quit", ":q", ":exit"):
+                    shutdown_event.set()
+                    return
+                try:
+                    runtime.send_external(to=root, body=line)
+                except Exception:
+                    # Don't kill the reader on a single bad dispatch.
+                    pass
+
+    threading.Thread(target=reader, daemon=True, name="input-reader").start()
 
 
 def _shutdown(runtime: Runtime, tmux: TmuxSession) -> None:

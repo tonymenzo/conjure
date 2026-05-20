@@ -30,6 +30,7 @@ test = [
 [project.scripts]
 combinator = "combinator.cli:main"
 combinator-render = "combinator.render:main"
+combinator-input = "combinator.cli_input:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

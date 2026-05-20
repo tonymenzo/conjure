@@ -45,19 +45,37 @@ class TmuxSession:
         self._session = None  # libtmux.Session — set by attach_or_create
 
     @classmethod
-    def attach_or_create(cls, name: str) -> "TmuxSession":
+    def attach_or_create(
+        cls,
+        name: str,
+        *,
+        initial_window_name: str | None = None,
+        initial_command: str | None = None,
+    ) -> "TmuxSession":
         """Return a wrapper bound to an existing session of that name,
         or freshly created if absent. The returned wrapper does not
-        attach the calling process — use ``attach()`` for that."""
+        attach the calling process — use ``attach()`` for that.
+
+        When the session is created (not attached to), ``initial_window_name``
+        and ``initial_command`` configure window 0 — useful for putting
+        the input prompt (or any anchor) in the first window without
+        a follow-on rename.
+        """
         s = cls(name)
         if s._server.has_session(name):
             s._session = s._server.sessions.get(session_name=name)
-        else:
-            s._session = s._server.new_session(
-                session_name=name,
-                attach=False,
-                kill_session=False,
-            )
+            return s
+        kwargs: dict[str, str] = {}
+        if initial_window_name:
+            kwargs["window_name"] = initial_window_name
+        if initial_command:
+            kwargs["window_command"] = initial_command
+        s._session = s._server.new_session(
+            session_name=name,
+            attach=False,
+            kill_session=False,
+            **kwargs,
+        )
         return s
 
     def has_session(self) -> bool:
