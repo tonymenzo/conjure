@@ -1,19 +1,19 @@
 # Example configuration: minimal iota root agent.
 #
-# Two ways to run:
+# Tmux mode (the default, daemonized):
 #
-#   combinator run examples/iota.yaml      # tmux mode: each agent gets a
-#                                          # window; attach + detach.
-#                                          # MVP only supports one-shot
-#                                          # (set mode: one-shot below).
+#   combinator run examples/iota.yaml
+#     - Daemonizes a runtime.
+#     - tmux session with window 0 = an interactive prompt to iota,
+#       window 1+ = one window per spawned agent (live rich panels).
+#     - Ctrl+B M opens the meta-view popup (spawn tree + inbox + cost).
+#     - Ctrl+B d detaches; the daemon keeps running.
+#     - Reattach: combinator run --attach
+#     - Stop the daemon: combinator quit
 #
-#   combinator repl examples/iota.yaml     # single-pane interactive REPL
-#                                          # (no tmux); good for chat-style
-#                                          # use, scripting, and tests.
+# REPL mode (single pane, no tmux):
 #
-# Reattach to a running tmux session:
-#   combinator run --attach                # newest combinator-* session
-#   combinator run --attach combinator-abc # named session
+#   combinator repl examples/iota.yaml
 #
 # Verify keys + config first:
 #   combinator check examples/iota.yaml
@@ -56,6 +56,7 @@ root:
   label: iota
 
 mode: repl
-# initial_task: "describe yourself"   # required for tmux mode (combinator run);
-                                      # also works in `combinator repl` to
-                                      # auto-send on startup.
+# initial_task: "describe yourself"   # optional — sent automatically on
+                                      # startup if mode is one-shot. In repl
+                                      # mode or tmux mode with the input
+                                      # window, just type messages directly.
