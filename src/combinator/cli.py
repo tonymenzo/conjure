@@ -198,7 +198,14 @@ def _cmd_run_tmux(config_path: Path) -> int:
 
 
 def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
-    """Daemon body: build the runtime, set up tmux, block on signal."""
+    """Daemon body: build the runtime, set up tmux, block on signal.
+
+    Each agent gets one tmux window running ``combinator-chat`` — a
+    self-contained textual chat (history + prompt) for that agent. The
+    root agent (iota) takes window 0; spawned children get new windows
+    as they appear. There is no separate "input" window — each chat
+    has its own input.
+    """
     shutdown_event = threading.Event()
 
     def _signal_handler(_signum, _frame):
@@ -213,36 +220,40 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     agents_dir = store_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # Set up input channel BEFORE creating the tmux session so the
-    # input command in window 0 has a file to write to immediately.
-    # Truncate any stale content from a previous session so the reader
-    # can safely read from start (no SEEK_END race).
-    input_path = store_dir / "input.jsonl"
-    input_path.parent.mkdir(parents=True, exist_ok=True)
-    input_path.write_text("", encoding="utf-8")
+    # The tmux session is created AFTER build_runtime so iota's chat
+    # can be window 0. Spawn listener queues windows in a list; we
+    # apply them once tmux exists. Iota goes first; later spawns
+    # arrive while tmux is alive and get windows immediately.
+    tmux_holder: dict[str, TmuxSession | None] = {"session": None}
+    pending_windows: list[tuple[str, str]] = []  # (label, command)
 
-    input_cmd = f"combinator-input --input-path {input_path} --label {cfg.root.label or 'iota'}"
-
-    try:
-        tmux = TmuxSession.attach_or_create(
-            session_name,
-            initial_window_name="input",
-            initial_command=input_cmd,
+    def _chat_command(record: AgentRecord) -> str:
+        log_path = agents_dir / f"{record.addr.id}.jsonl"
+        label = record.addr.label or record.addr.id
+        return (
+            f"combinator-chat "
+            f"--log {log_path} "
+            f"--addr {record.addr.id} "
+            f"--label {label} "
+            f"--session {session_name}"
         )
-    except Exception as exc:
-        print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
-        _remove_pid(pid_path)
-        return 2
 
     def spawn_listener(record: AgentRecord) -> None:
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         record.event_log = EventLog(log_path)
         label = record.addr.label or record.addr.id
-        cmd = f"combinator-render --log {log_path} --label {label}"
+        cmd = _chat_command(record)
+        tmux = tmux_holder["session"]
+        if tmux is None:
+            pending_windows.append((label, cmd))
+            return
         try:
             tmux.new_window(name=label, command=cmd)
         except Exception as exc:
-            print(f"daemon: tmux window for {label} failed: {exc}", file=sys.stderr)
+            print(
+                f"daemon: tmux window for {label} failed: {exc}",
+                file=sys.stderr,
+            )
 
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log
@@ -255,21 +266,37 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         )
     except Exception as exc:
         print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)
-        tmux.kill()
         _remove_pid(pid_path)
         return 2
 
-    # Start the input reader thread: tails the input file and forwards
-    # each line to the root agent (or shuts down on :quit).
-    _start_input_reader(
-        input_path=input_path,
-        runtime=runtime,
-        root=root,
-        shutdown_event=shutdown_event,
-    )
+    # Now iota is spawned and pending_windows has at least one entry
+    # (iota's chat). Create the tmux session with iota as window 0,
+    # then drain any remaining pending windows.
+    root_label = root.label or "iota"
+    root_cmd = _chat_command(runtime.record_for(root))
+    try:
+        tmux = TmuxSession.attach_or_create(
+            session_name,
+            initial_window_name=root_label,
+            initial_command=root_cmd,
+        )
+    except Exception as exc:
+        print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
+        _remove_pid(pid_path)
+        return 2
+    tmux_holder["session"] = tmux
 
-    # Start the JSON-RPC control server so the meta-view popup can
-    # query state and inject commands.
+    # Anything pending besides iota's first entry (e.g., children that
+    # spawned during build_runtime, which shouldn't happen but is
+    # possible if the runtime is extended later) gets a window now.
+    for label, cmd in pending_windows[1:]:
+        try:
+            tmux.new_window(name=label, command=cmd)
+        except Exception:
+            pass
+
+    # Start the JSON-RPC control server so chat windows can send
+    # messages and the meta-view popup can query state.
     control_path = socket_path_for(session_name)
     control_server = ControlServer(runtime=runtime, socket_path=control_path)
     try:
@@ -277,16 +304,16 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     except Exception as exc:
         print(f"daemon: control server failed to start: {exc}", file=sys.stderr)
 
-    # Bind Ctrl+B M (prefix M) to a popup running the meta-view. This
-    # is a tmux *server-global* binding, so the most recent daemon's
-    # session wins if multiple are alive — acceptable for v1; the
-    # popup itself auto-discovers the live socket if asked.
+    # Bind Ctrl+B M to a popup running the meta-view. tmux key bindings
+    # are server-global; the most recent daemon wins if there are
+    # multiple, which is fine — the popup auto-discovers the live
+    # socket if asked.
     _bind_meta_popup(session_name)
 
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
 
-    # Block until SIGTERM / SIGINT / :quit.
+    # Block until SIGTERM / SIGINT.
     shutdown_event.wait()
 
     try:
