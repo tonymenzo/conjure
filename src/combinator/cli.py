@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -37,6 +39,14 @@ from rich.rule import Rule
 from combinator import _ui
 from combinator.address import USER, Address
 from combinator.config import load_config
+from combinator.daemon import (
+    daemonize,
+    is_daemon_running,
+    list_session_names,
+    log_path_for,
+    pid_path_for,
+    stop_daemon,
+)
 from combinator.event_log import EventLog
 from combinator.record import AgentRecord
 from combinator.runner import build_runtime
@@ -55,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_p = sub.add_parser(
         "run",
-        help="Tmux-native session: one window per agent.",
+        help="Tmux-native session: one window per agent; daemonized.",
     )
     run_p.add_argument("config", type=Path, nargs="?", help="Path to a YAML config file.")
     run_p.add_argument(
@@ -64,7 +74,18 @@ def main(argv: list[str] | None = None) -> int:
         const="__most_recent__",
         default=None,
         metavar="SESSION",
-        help="Attach to an existing combinator tmux session (newest if name omitted).",
+        help="Attach to an existing combinator session (newest if name omitted).",
+    )
+
+    quit_p = sub.add_parser(
+        "quit",
+        help="Stop a running combinator daemon (newest if name omitted).",
+    )
+    quit_p.add_argument(
+        "session",
+        nargs="?",
+        default=None,
+        help="Session name (default: newest combinator-* daemon).",
     )
 
     repl_p = sub.add_parser(
@@ -97,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.config is None:
             parser.error("config path required (or pass --attach)")
         return _cmd_run_tmux(args.config)
+    if args.cmd == "quit":
+        return _cmd_quit(args.session)
     if args.cmd == "repl":
         return _cmd_repl(args.config)
     if args.cmd == "check":
@@ -110,9 +133,21 @@ def main(argv: list[str] | None = None) -> int:
 # ----- combinator run (tmux orchestrator) ------------------------------------
 
 def _cmd_run_tmux(config_path: Path) -> int:
-    """Boot the runtime under tmux, give each spawned agent its own
-    window, fork off a tmux client for the user, then wait for the
-    client to exit before shutting down."""
+    """Start a daemonized combinator runtime, set up the tmux session
+    with one window per agent, then attach the user's terminal.
+
+    Lifecycle:
+
+    - Parent (the original ``combinator run`` invocation) picks a
+      session name, daemonizes off a child, waits for the daemon to
+      create the tmux session, and ``execvp`` to ``tmux attach``.
+    - Daemon (the detached child) owns the runtime + tmux session. It
+      blocks on SIGTERM and tears everything down cleanly on exit.
+
+    Detaching with ``Ctrl+B d`` exits the parent (which is now the
+    tmux client) but leaves the daemon running. Re-attach with
+    ``combinator run --attach``. Stop the daemon with ``combinator quit``.
+    """
     from combinator.env import load_env_files
 
     console = _ui.make_console()
@@ -130,21 +165,59 @@ def _cmd_run_tmux(config_path: Path) -> int:
         _ui.print_error(console, f"config invalid: {exc}")
         return 2
 
+    session_name = f"combinator-{uuid.uuid4().hex[:6]}"
+    pid_path = pid_path_for(session_name)
+    log_path = log_path_for(session_name)
+
+    daemon_pid = daemonize(log_path=log_path, pid_path=pid_path)
+    if daemon_pid > 0:
+        # Parent — wait for daemon to bring up the tmux session, then
+        # attach. If the daemon dies before then, surface the error
+        # from the daemon log.
+        if not _wait_for_tmux_session(session_name, timeout_s=10.0):
+            _ui.print_error(
+                console,
+                f"daemon did not create tmux session within 10s "
+                f"(check {log_path})",
+            )
+            return 1
+        _ui.print_system(
+            console,
+            f"session [cyan]{session_name}[/] up; attaching "
+            f"([dim]Ctrl+B d to detach[/], "
+            f"[dim]`combinator quit` to stop the daemon[/])",
+        )
+        time.sleep(0.1)
+        os.execvp("tmux", ["tmux", "attach-session", "-t", session_name])
+        return 1  # only reached if exec fails
+
+    # Daemon path — _run_daemon never returns (blocks until SIGTERM).
+    return _run_daemon(cfg=cfg, session_name=session_name, pid_path=pid_path)
+
+
+def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
+    """Daemon body: build the runtime, set up tmux, block on signal."""
+    shutdown_event = threading.Event()
+
+    def _signal_handler(_signum, _frame):
+        shutdown_event.set()
+
+    # Signal handlers must be installed on the main thread before any
+    # driver threads start (which build_runtime triggers).
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
     store_dir = Path(cfg.runtime.store_dir or "./.combinator/store")
     agents_dir = store_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    session_name = f"combinator-{uuid.uuid4().hex[:6]}"
     try:
         tmux = TmuxSession.attach_or_create(session_name)
     except Exception as exc:
-        _ui.print_error(console, f"failed to create tmux session: {exc}")
+        print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
+        _remove_pid(pid_path)
         return 2
 
-    # Per-agent setup hook: open a tmux window running combinator-render
-    # against this agent's event log. We also attach the EventLog onto
-    # the record so the engine factory's event_log_router can wire it
-    # to the engine's display hook.
     def spawn_listener(record: AgentRecord) -> None:
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         record.event_log = EventLog(log_path)
@@ -152,8 +225,8 @@ def _cmd_run_tmux(config_path: Path) -> int:
         cmd = f"combinator-render --log {log_path} --label {label}"
         try:
             tmux.new_window(name=label, command=cmd)
-        except Exception as exc:  # don't kill the spawn if tmux misbehaves
-            console.print(f"[red]tmux window for {label} failed: {exc}[/]")
+        except Exception as exc:
+            print(f"daemon: tmux window for {label} failed: {exc}", file=sys.stderr)
 
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log
@@ -165,13 +238,13 @@ def _cmd_run_tmux(config_path: Path) -> int:
             spawn_listener=spawn_listener,
         )
     except Exception as exc:
-        _ui.print_error(console, f"failed to build runtime: {exc}")
+        print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)
         tmux.kill()
+        _remove_pid(pid_path)
         return 2
 
-    # Rename window 0 (the tmux default shell window) to something
-    # useful — a small status pane so the user has somewhere obvious
-    # to land. Workers / iota are on subsequent windows.
+    # Rename the default tmux shell window to "status" so it's not the
+    # one labeled like a stale process.
     try:
         for w in tmux.list_windows():
             if w["name"] not in {root.label or root.id, "status"}:
@@ -180,44 +253,19 @@ def _cmd_run_tmux(config_path: Path) -> int:
     except Exception:
         pass
 
-    # If config has an initial task, dispatch it now.
-    if cfg.mode == "one-shot":
-        if not cfg.initial_task:
-            _ui.print_error(console, "mode is one-shot but initial_task is empty")
-            _shutdown(runtime, tmux)
-            return 2
+    if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
 
-    _ui.print_system(
-        console,
-        f"session [cyan]{session_name}[/] up. "
-        f"root=[bold magenta]{root.label or 'root'}[/] [dim]({root.id})[/]",
-    )
-    _ui.print_system(
-        console,
-        f"attaching… (detach with Ctrl+B d, reattach with `combinator run --attach`)",
-    )
-    time.sleep(0.2)  # give renderer windows a beat to spin up
+    # Block until SIGTERM / SIGINT.
+    shutdown_event.wait()
 
-    # Fork: child becomes the tmux client; parent keeps the runtime
-    # alive and waits for the child to exit (which happens when the
-    # user detaches or kills the session).
-    pid = os.fork()
-    if pid == 0:
-        os.execvp("tmux", ["tmux", "attach-session", "-t", session_name])
-        return 1  # only reached if exec fails
-    try:
-        os.waitpid(pid, 0)
-    except KeyboardInterrupt:
-        pass
     _shutdown(runtime, tmux)
+    _remove_pid(pid_path)
     return 0
 
 
 def _shutdown(runtime: Runtime, tmux: TmuxSession) -> None:
     """Tear down the runtime + tmux session cleanly."""
-    # Close every agent's event log so the renderer processes can
-    # observe EOF (or just keep tailing — they won't see new events).
     try:
         for _addr, record in list(runtime._records.items()):  # noqa: SLF001
             log = getattr(record, "event_log", None)
@@ -238,6 +286,29 @@ def _shutdown(runtime: Runtime, tmux: TmuxSession) -> None:
         pass
 
 
+def _remove_pid(pid_path: Path) -> None:
+    try:
+        pid_path.unlink()
+    except OSError:
+        pass
+
+
+def _wait_for_tmux_session(session_name: str, *, timeout_s: float) -> bool:
+    """Poll until ``session_name`` exists in tmux, or timeout."""
+    import libtmux
+
+    deadline = time.monotonic() + timeout_s
+    server = libtmux.Server()
+    while time.monotonic() < deadline:
+        try:
+            if server.has_session(session_name):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return False
+
+
 def _cmd_run_attach(session: str) -> int:
     """Attach to an existing combinator tmux session."""
     if not tmux_available():
@@ -254,7 +325,14 @@ def _cmd_run_attach(session: str) -> int:
 
 
 def _find_most_recent_combinator_session() -> str | None:
-    """Return the name of the newest ``combinator-*`` session, or None."""
+    """Return the name of the newest live combinator daemon session."""
+    sessions = list_session_names()
+    if sessions:
+        # PID file mtime as proxy for "newest" — most recently spawned daemon.
+        sessions.sort(key=lambda n: pid_path_for(n).stat().st_mtime, reverse=True)
+        return sessions[0]
+    # Fall back to tmux session listing for the case where the daemon
+    # isn't tracked (older sessions or manual setups).
     import libtmux
 
     server = libtmux.Server()
@@ -264,12 +342,29 @@ def _find_most_recent_combinator_session() -> str | None:
     ]
     if not matching:
         return None
-    # tmux's session_created is a unix timestamp string. Sort newest first.
     matching.sort(
         key=lambda s: int(s.get("session_created") or 0),
         reverse=True,
     )
     return matching[0].session_name
+
+
+def _cmd_quit(session: str | None) -> int:
+    console = _ui.make_console()
+    if session is None:
+        session = _find_most_recent_combinator_session()
+        if session is None:
+            _ui.print_error(console, "no combinator daemon found")
+            return 1
+    pid_path = pid_path_for(session)
+    if not pid_path.exists():
+        _ui.print_error(console, f"no PID file for session {session}")
+        return 1
+    if stop_daemon(pid_path, timeout_s=10.0):
+        _ui.print_system(console, f"stopped [cyan]{session}[/]")
+        return 0
+    _ui.print_error(console, f"daemon for {session} did not exit in time")
+    return 1
 
 
 # ----- combinator repl (single-pane REPL) ------------------------------------
