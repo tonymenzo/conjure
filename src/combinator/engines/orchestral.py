@@ -119,6 +119,7 @@ def make_orchestral_engine_factory(
     tool_registry: ToolGroupRegistry | None = None,
     max_tool_iterations: int = 8,
     display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None = None,
+    event_log_router: Callable[["AgentRecord"], Any] | None = None,
 ) -> EngineFactory:
     """Build an ``engine_factory`` suitable for ``Runtime(engine_factory=...)``.
 
@@ -132,10 +133,14 @@ def make_orchestral_engine_factory(
     tests that use a FakeLLM single-threadedly. Production code should
     pass ``llm_factories``.
 
-    ``display_hook_builder``: if given, called once per spawned agent
-    with the agent's ``AgentRecord``; it returns a ``DisplayHook``
-    closure that the engine passes through to ``orchestral.Agent``.
-    This is how the CLI surfaces live tool calls and responses.
+    ``display_hook_builder`` (REPL path) — called once per spawned
+    agent; returns a ``DisplayHook`` that renders to a console.
+
+    ``event_log_router`` (tmux path) — called once per spawned agent;
+    returns an ``EventLog`` (or None to fall back to
+    ``display_hook_builder``). When present, the engine's display
+    hook serializes orchestral context messages to event dicts and
+    emits them to the log, which the per-agent renderer process tails.
     """
     if llm_factories is None and llms is None:
         raise ValueError("must provide one of llm_factories or llms")
@@ -157,7 +162,11 @@ def make_orchestral_engine_factory(
             llm = llms[llm_name]
         tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
         tools = build_tools(record.token, tool_names, registry)
-        hook = display_hook_builder(record) if display_hook_builder else None
+        hook = _build_hook(
+            record=record,
+            display_hook_builder=display_hook_builder,
+            event_log_router=event_log_router,
+        )
         return OrchestralEngine(
             record=record,
             runtime=runtime,
@@ -168,3 +177,35 @@ def make_orchestral_engine_factory(
         )
 
     return factory
+
+
+def _build_hook(
+    *,
+    record: "AgentRecord",
+    display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None,
+    event_log_router: Callable[["AgentRecord"], Any] | None,
+) -> DisplayHook | None:
+    """Pick the right display-hook flavor for this agent.
+
+    Preference order:
+    1. event_log_router → returns an EventLog → use event-log hook
+    2. display_hook_builder → returns a DisplayHook → use that
+    3. neither → no hook (silent engine)
+    """
+    if event_log_router is not None:
+        event_log = event_log_router(record)
+        if event_log is not None:
+            from combinator.events import serialize_message
+
+            seen = {"n": 0}
+
+            def hook(context: Any) -> None:
+                messages = getattr(context, "messages", None) or []
+                for msg in messages[seen["n"]:]:
+                    event_log.emit(serialize_message(msg))
+                seen["n"] = len(messages)
+
+            return hook
+    if display_hook_builder is not None:
+        return display_hook_builder(record)
+    return None

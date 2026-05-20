@@ -59,6 +59,7 @@ class Runtime:
         store_dir: Path | None = None,
         engine_factory: EngineFactory | None = None,
         max_workers: int = 32,
+        spawn_listener: Callable[[AgentRecord], None] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._records: dict[Address, AgentRecord] = {}
@@ -68,6 +69,7 @@ class Runtime:
         self._shutdown = False
         self._max_workers = max_workers
         self._engine_factory = engine_factory
+        self._spawn_listener = spawn_listener
         self._install_sentinels()
 
     def _install_sentinels(self) -> None:
@@ -110,6 +112,11 @@ class Runtime:
             self._root_addr = addr
             register_token(record.token, self, addr)
             self._journal_spawn(record)
+        # Notify externally-registered listener (e.g. the tmux
+        # orchestrator) so it can set up per-agent state (event log,
+        # window) BEFORE the driver starts emitting events.
+        if self._spawn_listener is not None:
+            self._spawn_listener(record)
         self._maybe_start_driver(record)
         return addr
 
@@ -292,6 +299,8 @@ class Runtime:
             self._records[parent].capabilities.extend(addr)
             register_token(record.token, self, addr)
             self._journal_spawn(record)
+        if self._spawn_listener is not None:
+            self._spawn_listener(record)
         self._maybe_start_driver(record)
         return addr
 

@@ -2,28 +2,34 @@
 
 Subcommands:
 
-- ``combinator run <config.yaml>`` — load config, spawn the root agent,
-  drop into a rich-rendered REPL (or run a one-shot task).
-- ``combinator check <config.yaml>`` — validate config + report API key
-  availability.
-- ``combinator config list|set|unset`` — manage the user-global .env.
+- ``combinator run <config>``   — tmux-native mode: each agent gets a
+                                  tmux window, the user attaches to the
+                                  session. The runtime keeps running
+                                  inside the parent process; detaching
+                                  shuts the runtime down cleanly.
+- ``combinator run --attach``   — attach to the most-recent
+                                  ``combinator-*`` tmux session.
+- ``combinator run --attach <name>`` — attach to a specific session.
+- ``combinator repl <config>``  — single-pane REPL mode (no tmux);
+                                  useful for scripting and tests.
+- ``combinator check <config>`` — validate config + report key
+                                  availability.
+- ``combinator config list|set|unset`` — manage the user .env.
 
-REPL control commands:
+REPL control commands (``combinator repl`` only):
 
-- ``:tree`` — print the live spawn tree
-- ``:status`` — print each agent's status
-- ``:inbox <addr_id>`` — print envelopes in any known agent's inbox
-- ``:send <addr_id> <body>`` — send a message to any known agent
-- ``:help`` — show commands
-- ``:quit`` — terminate the runtime and exit
+- ``:tree``, ``:status``, ``:cost``, ``:inbox [addr]``,
+  ``:send <addr> <body>``, ``:help``, ``:quit``.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from rich.rule import Rule
@@ -31,19 +37,41 @@ from rich.rule import Rule
 from combinator import _ui
 from combinator.address import USER, Address
 from combinator.config import load_config
+from combinator.event_log import EventLog
+from combinator.record import AgentRecord
 from combinator.runner import build_runtime
 from combinator.runtime import Runtime
+from combinator.tmux_session import TmuxSession, tmux_available
 
 
 _AGENT_RESPONSE_TIMEOUT_S = 180.0
 
 
+# ----- CLI entry point -------------------------------------------------------
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="combinator")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    run_p = sub.add_parser("run", help="Run a configured agent session.")
-    run_p.add_argument("config", type=Path, help="Path to a YAML config file.")
+    run_p = sub.add_parser(
+        "run",
+        help="Tmux-native session: one window per agent.",
+    )
+    run_p.add_argument("config", type=Path, nargs="?", help="Path to a YAML config file.")
+    run_p.add_argument(
+        "--attach",
+        nargs="?",
+        const="__most_recent__",
+        default=None,
+        metavar="SESSION",
+        help="Attach to an existing combinator tmux session (newest if name omitted).",
+    )
+
+    repl_p = sub.add_parser(
+        "repl",
+        help="Single-pane REPL mode (no tmux).",
+    )
+    repl_p.add_argument("config", type=Path, help="Path to a YAML config file.")
 
     check_p = sub.add_parser(
         "check", help="Validate a config without spawning agents or calling LLMs."
@@ -64,7 +92,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.cmd == "run":
-        return _cmd_run(args.config)
+        if args.attach is not None:
+            return _cmd_run_attach(args.attach)
+        if args.config is None:
+            parser.error("config path required (or pass --attach)")
+        return _cmd_run_tmux(args.config)
+    if args.cmd == "repl":
+        return _cmd_repl(args.config)
     if args.cmd == "check":
         return _cmd_check(args.config)
     if args.cmd == "config":
@@ -73,7 +107,174 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _cmd_run(config_path: Path) -> int:
+# ----- combinator run (tmux orchestrator) ------------------------------------
+
+def _cmd_run_tmux(config_path: Path) -> int:
+    """Boot the runtime under tmux, give each spawned agent its own
+    window, fork off a tmux client for the user, then wait for the
+    client to exit before shutting down."""
+    from combinator.env import load_env_files
+
+    console = _ui.make_console()
+    if not tmux_available():
+        _ui.print_error(
+            console,
+            "tmux not found on PATH. Install tmux >=3.4 or use `combinator repl`.",
+        )
+        return 2
+
+    load_env_files()
+    try:
+        cfg = load_config(config_path)
+    except Exception as exc:
+        _ui.print_error(console, f"config invalid: {exc}")
+        return 2
+
+    store_dir = Path(cfg.runtime.store_dir or "./.combinator/store")
+    agents_dir = store_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    session_name = f"combinator-{uuid.uuid4().hex[:6]}"
+    try:
+        tmux = TmuxSession.attach_or_create(session_name)
+    except Exception as exc:
+        _ui.print_error(console, f"failed to create tmux session: {exc}")
+        return 2
+
+    # Per-agent setup hook: open a tmux window running combinator-render
+    # against this agent's event log. We also attach the EventLog onto
+    # the record so the engine factory's event_log_router can wire it
+    # to the engine's display hook.
+    def spawn_listener(record: AgentRecord) -> None:
+        log_path = agents_dir / f"{record.addr.id}.jsonl"
+        record.event_log = EventLog(log_path)
+        label = record.addr.label or record.addr.id
+        cmd = f"combinator-render --log {log_path} --label {label}"
+        try:
+            tmux.new_window(name=label, command=cmd)
+        except Exception as exc:  # don't kill the spawn if tmux misbehaves
+            console.print(f"[red]tmux window for {label} failed: {exc}[/]")
+
+    def event_log_router(record: AgentRecord) -> EventLog | None:
+        return record.event_log
+
+    try:
+        runtime, root = build_runtime(
+            cfg,
+            event_log_router=event_log_router,
+            spawn_listener=spawn_listener,
+        )
+    except Exception as exc:
+        _ui.print_error(console, f"failed to build runtime: {exc}")
+        tmux.kill()
+        return 2
+
+    # Rename window 0 (the tmux default shell window) to something
+    # useful — a small status pane so the user has somewhere obvious
+    # to land. Workers / iota are on subsequent windows.
+    try:
+        for w in tmux.list_windows():
+            if w["name"] not in {root.label or root.id, "status"}:
+                tmux.rename_window(current_name=w["name"], new_name="status")
+                break
+    except Exception:
+        pass
+
+    # If config has an initial task, dispatch it now.
+    if cfg.mode == "one-shot":
+        if not cfg.initial_task:
+            _ui.print_error(console, "mode is one-shot but initial_task is empty")
+            _shutdown(runtime, tmux)
+            return 2
+        runtime.send_external(to=root, body=cfg.initial_task)
+
+    _ui.print_system(
+        console,
+        f"session [cyan]{session_name}[/] up. "
+        f"root=[bold magenta]{root.label or 'root'}[/] [dim]({root.id})[/]",
+    )
+    _ui.print_system(
+        console,
+        f"attaching… (detach with Ctrl+B d, reattach with `combinator run --attach`)",
+    )
+    time.sleep(0.2)  # give renderer windows a beat to spin up
+
+    # Fork: child becomes the tmux client; parent keeps the runtime
+    # alive and waits for the child to exit (which happens when the
+    # user detaches or kills the session).
+    pid = os.fork()
+    if pid == 0:
+        os.execvp("tmux", ["tmux", "attach-session", "-t", session_name])
+        return 1  # only reached if exec fails
+    try:
+        os.waitpid(pid, 0)
+    except KeyboardInterrupt:
+        pass
+    _shutdown(runtime, tmux)
+    return 0
+
+
+def _shutdown(runtime: Runtime, tmux: TmuxSession) -> None:
+    """Tear down the runtime + tmux session cleanly."""
+    # Close every agent's event log so the renderer processes can
+    # observe EOF (or just keep tailing — they won't see new events).
+    try:
+        for _addr, record in list(runtime._records.items()):  # noqa: SLF001
+            log = getattr(record, "event_log", None)
+            if log is not None:
+                try:
+                    log.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        runtime.shutdown()
+    except Exception:
+        pass
+    try:
+        tmux.kill()
+    except Exception:
+        pass
+
+
+def _cmd_run_attach(session: str) -> int:
+    """Attach to an existing combinator tmux session."""
+    if not tmux_available():
+        print("tmux not found on PATH.", file=sys.stderr)
+        return 2
+    if session == "__most_recent__":
+        target = _find_most_recent_combinator_session()
+        if target is None:
+            print("no combinator-* tmux session found", file=sys.stderr)
+            return 1
+        session = target
+    os.execvp("tmux", ["tmux", "attach-session", "-t", session])
+    return 1  # only reached if exec fails
+
+
+def _find_most_recent_combinator_session() -> str | None:
+    """Return the name of the newest ``combinator-*`` session, or None."""
+    import libtmux
+
+    server = libtmux.Server()
+    matching = [
+        s for s in server.sessions
+        if (s.session_name or "").startswith("combinator-")
+    ]
+    if not matching:
+        return None
+    # tmux's session_created is a unix timestamp string. Sort newest first.
+    matching.sort(
+        key=lambda s: int(s.get("session_created") or 0),
+        reverse=True,
+    )
+    return matching[0].session_name
+
+
+# ----- combinator repl (single-pane REPL) ------------------------------------
+
+def _cmd_repl(config_path: Path) -> int:
     from combinator.env import load_env_files
 
     console = _ui.make_console()
@@ -150,8 +351,6 @@ def _run_repl(console, runtime: Runtime, root: Address) -> int:
 
 
 def _flush_user_inbox(console, runtime: Runtime, *, since_seq: int) -> int:
-    """Print any structured messages agents have sent to ``@user`` since
-    ``since_seq`` and return the new cursor."""
     envelopes = runtime.read_inbox(USER, since_seq=since_seq)
     if not envelopes:
         return since_seq
@@ -176,8 +375,6 @@ def _flush_user_inbox(console, runtime: Runtime, *, since_seq: int) -> int:
 def _wait_for_idle(
     console, runtime: Runtime, addr: Address, target_seq: int, *, label: str
 ) -> None:
-    """Block until ``addr`` has consumed up to ``target_seq`` and gone
-    idle. Shows a spinner while waiting."""
     with console.status(f"[dim]{label} is thinking…[/]", spinner="dots"):
         ok = runtime.wait_for_idle(addr, target_seq, timeout_s=_AGENT_RESPONSE_TIMEOUT_S)
     if not ok:
@@ -274,27 +471,20 @@ def _print_tree(runtime: Runtime, root: Address, *, console) -> None:
 
 def _walk(runtime: Runtime, addr: Address, *, prefix: str, console) -> None:
     rec = runtime.record_for(addr)
-    status_color = {
-        "lazy": "yellow",
-        "running": "green",
-        "idle": "white",
-        "terminated": "red",
-    }.get(rec.status, "white")
     label = addr.label or "—"
     console.print(
         f"{prefix}[bold magenta]{label}[/] [dim]({addr.id})[/] "
-        f"[{status_color}]{rec.status}[/]"
+        f"[{_status_color(rec.status)}]{rec.status}[/]"
     )
     children = sorted(rec.children, key=lambda a: a.id)
     for i, child in enumerate(children):
         is_last = i == len(children) - 1
         branch = "└── " if is_last else "├── "
-        next_prefix = prefix + ("    " if is_last else "│   ")
         _walk(runtime, child, prefix=prefix + branch, console=console)
 
 
 def _print_status(runtime: Runtime, *, console) -> None:
-    with runtime._lock:  # noqa: SLF001 - intentional internal access for inspector
+    with runtime._lock:  # noqa: SLF001
         records = list(runtime._records.values())  # noqa: SLF001
     for r in records:
         console.print(
@@ -336,6 +526,8 @@ def _body_preview(body) -> str:
     s = json.dumps(body, default=str) if not isinstance(body, str) else body
     return s if len(s) <= 200 else s[:197] + "..."
 
+
+# ----- combinator check ------------------------------------------------------
 
 def _cmd_check(config_path: Path) -> int:
     from combinator.env import load_env_files
@@ -381,6 +573,8 @@ def _cmd_check(config_path: Path) -> int:
         return 1
     return 0
 
+
+# ----- combinator config -----------------------------------------------------
 
 def _cmd_config(args) -> int:
     from combinator.env import (

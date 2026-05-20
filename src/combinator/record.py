@@ -70,3 +70,8 @@ class AgentRecord:
     wakeup: Any = None
     driver: Any = None
     agent: Any = None
+
+    # Optional per-agent EventLog populated by the tmux orchestrator's
+    # spawn_listener; engine factory wires it into the display hook.
+    # None for non-tmux modes (REPL renders directly to stdout).
+    event_log: Any = None
