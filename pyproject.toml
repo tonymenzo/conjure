@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "combinator"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Agentic functional programming: a multi-agent harness over orchestral with recursive spawn, addressable mailboxes, and FP-style combinators."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,6 +12,7 @@ authors = [{ name = "Tony Menzo" }]
 dependencies = [
     "orchestral-ai>=1.4",
     "pydantic>=2.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,9 @@ test = [
     "pytest>=7",
     "sympy>=1.12",
 ]
+
+[project.scripts]
+combinator = "combinator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

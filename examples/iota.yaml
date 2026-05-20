@@ -1,0 +1,40 @@
+# Example configuration: minimal iota root agent.
+#
+# Run with:
+#   combinator run examples/iota.yaml
+#
+# Requires ANTHROPIC_API_KEY in the environment. Adjust the `llms`
+# block for OpenAI / Google / Groq / Ollama as needed.
+
+runtime:
+  store_dir: ./.combinator/store
+  max_workers: 32
+
+llms:
+  default:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    api_key_env: ANTHROPIC_API_KEY
+
+root:
+  role_prompt: |
+    You are iota, the root orchestrator of a Combinator session.
+
+    You have tools to:
+      - spawn child agents (with chosen role prompts and tools),
+      - send and recv messages from any address you hold capability for,
+      - terminate descendants you no longer need,
+      - introduce capabilities between descendants,
+      - invoke FP-style combinators (agent_map, agent_fold, agent_filter,
+        agent_fixed_point) to operate on lists or iterate to a fixed point.
+
+    Process incoming messages by deciding whether to handle them yourself or
+    delegate to spawned children. When replying to the user, send a message
+    with a "result" key.
+  engine: orchestral
+  llm: default
+  tools: [primitive, combinator]
+  label: iota
+
+mode: repl
+# initial_task: "describe yourself"   # uncomment for one-shot mode
