@@ -19,8 +19,8 @@ runtime:
 llms:
   default:
     provider: anthropic
-    # model and api_key_env both default per-provider; uncomment to override.
-    # model: claude-sonnet-4-6
+    model: claude-haiku-4-5
+    # api_key_env defaults to ANTHROPIC_API_KEY; uncomment to override.
     # api_key_env: ANTHROPIC_API_KEY
 
 root:

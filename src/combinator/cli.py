@@ -167,6 +167,9 @@ def _handle_command(line: str, *, console, runtime: Runtime, root: Address) -> b
     if cmd == ":status":
         _print_status(runtime, console=console)
         return False
+    if cmd == ":cost":
+        _print_cost(runtime, console=console)
+        return False
     if cmd == ":inbox":
         if len(parts) < 2:
             console.print("[dim]usage:[/] :inbox <addr_id>")
@@ -189,11 +192,50 @@ def _print_help(console) -> None:
         "  [cyan]:help[/]                 show this help\n"
         "  [cyan]:tree[/]                 show the spawn tree\n"
         "  [cyan]:status[/]               show each agent's status\n"
+        "  [cyan]:cost[/]                 show LLM spend (per agent + total)\n"
         "  [cyan]:inbox <addr>[/]         list envelopes in an agent's inbox\n"
         "  [cyan]:send <addr> <body>[/]   send a message to any known agent\n"
         "  [cyan]:quit[/]                 terminate and exit\n\n"
         "[dim]Anything else is sent as a user message to the root.[/]",
     )
+
+
+def _print_cost(runtime: Runtime, *, console) -> None:
+    rows = runtime.costs_by_agent()
+    if not rows:
+        console.print("[dim](no agents)[/]")
+        return
+    total = 0.0
+    for addr, cost in rows:
+        total += cost
+        rec = runtime.record_for(addr)
+        label = addr.label or "—"
+        cost_str = _format_cost(cost)
+        console.print(
+            f"  [bold magenta]{label}[/] [dim]({addr.id})[/] "
+            f"[{_status_color(rec.status)}]{rec.status}[/]  {cost_str}"
+        )
+    console.print(
+        f"[dim]──────────────[/]\n"
+        f"[bold]total[/]  {_format_cost(total)}"
+    )
+
+
+def _format_cost(usd: float) -> str:
+    if usd <= 0:
+        return "[dim]$0.0000[/]"
+    if usd < 0.01:
+        return f"[cyan]${usd:.6f}[/]"
+    return f"[cyan]${usd:.4f}[/]"
+
+
+def _status_color(status: str) -> str:
+    return {
+        "lazy": "yellow",
+        "running": "green",
+        "idle": "white",
+        "terminated": "red",
+    }.get(status, "white")
 
 
 def _print_tree(runtime: Runtime, root: Address, *, console) -> None:

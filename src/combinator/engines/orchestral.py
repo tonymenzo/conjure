@@ -87,6 +87,13 @@ class OrchestralEngine:
         response = self._agent.run(prompt)
         return response.text if response.text is not None else ""
 
+    def cost(self) -> float:
+        """Return the cumulative LLM cost (USD) seen by this engine."""
+        try:
+            return float(self._agent.get_total_cost())
+        except Exception:
+            return 0.0
+
     @staticmethod
     def _build_system_prompt(record: "AgentRecord") -> str:
         return _DEFAULT_FRAME.format(

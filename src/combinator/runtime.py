@@ -39,6 +39,18 @@ if TYPE_CHECKING:
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
 
 
+def _engine_cost(engine: Any) -> float:
+    if engine is None:
+        return 0.0
+    fn = getattr(engine, "cost", None)
+    if not callable(fn):
+        return 0.0
+    try:
+        return float(fn())
+    except Exception:
+        return 0.0
+
+
 class Runtime:
 
     def __init__(
@@ -184,6 +196,30 @@ class Runtime:
                 if known.id == id_str:
                     return known
             return None
+
+    def total_cost(self) -> float:
+        """Sum of every agent's engine cost (USD). Engines that don't
+        track cost contribute zero."""
+        total = 0.0
+        with self._lock:
+            for record in self._records.values():
+                engine = self._engine_for(record)
+                total += _engine_cost(engine)
+        return total
+
+    def costs_by_agent(self) -> list[tuple[Address, float]]:
+        """Per-agent costs (USD), in spawn order."""
+        out: list[tuple[Address, float]] = []
+        with self._lock:
+            for addr, record in self._records.items():
+                engine = self._engine_for(record)
+                out.append((addr, _engine_cost(engine)))
+        return out
+
+    @staticmethod
+    def _engine_for(record: AgentRecord) -> Any:
+        agent_wrapper = record.agent
+        return getattr(agent_wrapper, "engine", None) if agent_wrapper else None
 
     def wait_for_idle(
         self,

@@ -66,6 +66,10 @@ class ScriptedEngine:
         result = self.behavior(self, prompt, envelopes)
         return str(result) if result is not None else "ok"
 
+    def cost(self) -> float:
+        """Scripted engines do not call any LLM."""
+        return 0.0
+
 
 class BehaviorRegistry:
     """Maps ``spec.role_prompt`` values to behavior callables.
