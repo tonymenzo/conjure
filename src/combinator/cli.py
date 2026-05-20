@@ -277,6 +277,12 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     except Exception as exc:
         print(f"daemon: control server failed to start: {exc}", file=sys.stderr)
 
+    # Bind Ctrl+B M (prefix M) to a popup running the meta-view. This
+    # is a tmux *server-global* binding, so the most recent daemon's
+    # session wins if multiple are alive — acceptable for v1; the
+    # popup itself auto-discovers the live socket if asked.
+    _bind_meta_popup(session_name)
+
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
 
@@ -382,6 +388,34 @@ def _wait_for_tmux_session(session_name: str, *, timeout_s: float) -> bool:
             pass
         time.sleep(0.05)
     return False
+
+
+def _bind_meta_popup(session_name: str) -> None:
+    """Bind ``prefix + M`` to a popup running the meta-view for this
+    daemon. ``-E`` makes the popup close when the meta app exits.
+    Failure is swallowed — the binding is a convenience, not load-bearing.
+    """
+    import subprocess
+
+    popup_cmd = f"combinator-meta --session {session_name}"
+    try:
+        subprocess.run(
+            [
+                "tmux",
+                "bind-key",
+                "M",
+                "display-popup",
+                "-E",
+                "-w", "85%",
+                "-h", "85%",
+                "-T", f" combinator › {session_name} ",
+                popup_cmd,
+            ],
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _cmd_run_attach(session: str) -> int:
