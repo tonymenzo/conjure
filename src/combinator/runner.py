@@ -8,16 +8,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Callable, Any
+
 from combinator.address import Address
 from combinator.config import Config
 from combinator.engines.orchestral import make_orchestral_engine_factory
 from combinator.llm import build_llms
-from combinator.record import AgentSpec
+from combinator.record import AgentRecord, AgentSpec
 from combinator.runtime import Runtime
 
 
-def build_runtime(config: Config) -> tuple[Runtime, Address]:
-    """Build a ``Runtime`` and spawn the root agent per ``config``."""
+def build_runtime(
+    config: Config,
+    *,
+    display_hook_builder: Callable[[AgentRecord], Callable[[Any], None]] | None = None,
+) -> tuple[Runtime, Address]:
+    """Build a ``Runtime`` and spawn the root agent per ``config``.
+
+    ``display_hook_builder`` is an optional factory that returns a
+    per-agent display hook (used by the CLI to render tool calls and
+    assistant text in real time).
+    """
     llms = build_llms({name: c.model_dump() for name, c in config.llms.items()})
 
     if config.root.engine != "orchestral":
@@ -26,7 +37,10 @@ def build_runtime(config: Config) -> tuple[Runtime, Address]:
             "(only 'orchestral' is supported in v0.1)"
         )
 
-    engine_factory = make_orchestral_engine_factory(llms=llms)
+    engine_factory = make_orchestral_engine_factory(
+        llms=llms,
+        display_hook_builder=display_hook_builder,
+    )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
     runtime = Runtime(

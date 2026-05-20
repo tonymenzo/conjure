@@ -33,6 +33,10 @@ if TYPE_CHECKING:
     from combinator.runtime import Runtime
 
 
+DisplayHook = Callable[[Any], None]
+EngineFactory = Callable[["AgentRecord", "Runtime"], "OrchestralEngine"]
+
+
 _DEFAULT_FRAME = """You are an agent in the Combinator multi-agent framework.
 
 Your identity:
@@ -64,6 +68,7 @@ class OrchestralEngine:
         tools: list[Any],
         system_prompt: str | None = None,
         max_tool_iterations: int = 8,
+        display_hook: DisplayHook | None = None,
     ) -> None:
         self._record = record
         self._runtime = runtime
@@ -73,9 +78,8 @@ class OrchestralEngine:
             tools=tools,
             system_prompt=prompt,
             max_tool_interations=max_tool_iterations,
-            # Tools already carry their runtime_token; tool_config left empty
-            # so orchestral's clone-and-inject step doesn't overwrite them.
             tool_config=None,
+            display_hook=display_hook,
             debug=False,
         )
 
@@ -97,11 +101,17 @@ def make_orchestral_engine_factory(
     llms: dict[str, Any],
     tool_registry: ToolGroupRegistry | None = None,
     max_tool_iterations: int = 8,
-) -> Callable[["AgentRecord", "Runtime"], "OrchestralEngine"]:
+    display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None = None,
+) -> EngineFactory:
     """Build an ``engine_factory`` suitable for ``Runtime(engine_factory=...)``.
 
     ``llms`` maps LLM names (referenced by ``AgentSpec.llm``) to live
     LLM client instances (e.g., ``orchestral.llm.GPT(...)``).
+
+    ``display_hook_builder``: if given, called once per spawned agent
+    with the agent's ``AgentRecord``; it returns a ``DisplayHook``
+    closure that the engine passes through to ``orchestral.Agent``.
+    This is how the CLI surfaces live tool calls and responses.
     """
     registry = tool_registry if tool_registry is not None else DEFAULT_TOOL_GROUPS
 
@@ -114,12 +124,14 @@ def make_orchestral_engine_factory(
         llm = llms[llm_name]
         tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
         tools = build_tools(record.token, tool_names, registry)
+        hook = display_hook_builder(record) if display_hook_builder else None
         return OrchestralEngine(
             record=record,
             runtime=runtime,
             llm=llm,
             tools=tools,
             max_tool_iterations=max_tool_iterations,
+            display_hook=hook,
         )
 
     return factory

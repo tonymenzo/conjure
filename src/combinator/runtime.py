@@ -185,6 +185,33 @@ class Runtime:
                     return known
             return None
 
+    def wait_for_idle(
+        self,
+        addr: Address,
+        target_seq: int,
+        *,
+        timeout_s: float = 180.0,
+    ) -> bool:
+        """Block until ``addr``'s driver has consumed everything up to
+        ``target_seq`` and the agent's status is ``idle`` (or it has
+        been terminated). Returns True if reached, False on timeout.
+
+        Used by the CLI to know when an agent finishes processing the
+        message the user just sent.
+        """
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            with self._lock:
+                record = self._records.get(addr)
+                if record is None or record.status == "terminated":
+                    return True
+                driver = record.driver
+                cursor = getattr(driver, "_cursor", 0) if driver is not None else 0
+                if cursor >= target_seq and record.status == "idle":
+                    return True
+            time.sleep(0.02)
+        return False
+
     # ----- Internal spawn (used by the spawn tool) -----
 
     def _spawn(self, *, parent: Address, spec: AgentSpec) -> Address:

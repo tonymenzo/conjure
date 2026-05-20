@@ -14,8 +14,13 @@ import yaml
 from orchestral.context.message import Message
 from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
+from rich.console import Console
 
-from combinator.cli import _handle_command, _print_tree, _run_one_shot
+from combinator.cli import (
+    _handle_command,
+    _print_tree,
+    _run_one_shot,
+)
 from combinator.config import load_config_from_mapping
 from combinator.engines.orchestral import make_orchestral_engine_factory
 from combinator.record import AgentSpec
@@ -60,6 +65,10 @@ class _FakeLLM(LLM):
         return []
 
 
+def _captured_console() -> Console:
+    return Console(file=io.StringIO(), force_terminal=False, no_color=True, width=200)
+
+
 def _runtime_with_fake_llm():
     factory = make_orchestral_engine_factory(llms={"default": _FakeLLM()})
     return Runtime(engine_factory=factory)
@@ -68,46 +77,49 @@ def _runtime_with_fake_llm():
 def test_repl_tree_command_emits_tree():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"], label="iota"))
-    buf = io.StringIO()
-    _print_tree(rt, root, out=buf)
-    out = buf.getvalue()
+    console = _captured_console()
+    _print_tree(rt, root, console=console)
+    out = console.file.getvalue()
     assert "iota" in out
     assert root.id in out
     rt.shutdown()
 
 
-def test_repl_help_command_quits_does_not_exit():
+def test_repl_help_command_does_not_signal_exit():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"]))
-    buf = io.StringIO()
-    should_exit = _handle_command(":help", runtime=rt, root=root, out=buf)
+    console = _captured_console()
+    should_exit = _handle_command(":help", console=console, runtime=rt, root=root)
     assert should_exit is False
-    assert "commands" in buf.getvalue().lower()
+    assert "commands" in console.file.getvalue().lower()
     rt.shutdown()
 
 
 def test_repl_quit_command_signals_exit():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"]))
-    buf = io.StringIO()
-    assert _handle_command(":quit", runtime=rt, root=root, out=buf) is True
+    console = _captured_console()
+    assert _handle_command(":quit", console=console, runtime=rt, root=root) is True
     rt.shutdown()
 
 
 def test_repl_inbox_unknown_addr():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"]))
-    buf = io.StringIO()
-    _handle_command(":inbox ag-bogus", runtime=rt, root=root, out=buf)
-    assert "no agent" in buf.getvalue()
+    console = _captured_console()
+    _handle_command(":inbox ag-bogus", console=console, runtime=rt, root=root)
+    assert "no agent" in console.file.getvalue()
     rt.shutdown()
 
 
 def test_repl_send_json_body_parses():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"]))
-    buf = io.StringIO()
-    _handle_command(f':send {root.id} {{"task": "hi"}}', runtime=rt, root=root, out=buf)
+    console = _captured_console()
+    _handle_command(
+        f':send {root.id} {{"task": "hi"}}',
+        console=console, runtime=rt, root=root,
+    )
     inbox = rt.read_inbox(root)
     assert any(env.body == {"task": "hi"} for env in inbox)
     rt.shutdown()
@@ -116,21 +128,21 @@ def test_repl_send_json_body_parses():
 def test_repl_send_falls_back_to_raw_string():
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"]))
-    buf = io.StringIO()
-    _handle_command(f":send {root.id} plain text", runtime=rt, root=root, out=buf)
+    console = _captured_console()
+    _handle_command(
+        f":send {root.id} plain text",
+        console=console, runtime=rt, root=root,
+    )
     inbox = rt.read_inbox(root)
     assert any(env.body == "plain text" for env in inbox)
     rt.shutdown()
 
 
 def test_one_shot_mode_runs_and_exits():
-    """``one-shot`` with a task should send and then exit when the root
-    goes idle. The FakeLLM finishes in one cycle so this is fast."""
     rt = _runtime_with_fake_llm()
     root = rt.root(AgentSpec(role_prompt="r", tools=["primitive"], label="iota"))
-    # Borrow the existing runtime for the test; one-shot will shutdown
-    # internally, so we DON'T shut down again here.
-    rc = _run_one_shot(rt, root, task="do work")
+    console = _captured_console()
+    rc = _run_one_shot(console, rt, root, task="do work")
     assert rc == 0
 
 

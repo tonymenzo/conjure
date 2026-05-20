@@ -1,0 +1,37 @@
+# Groq-backed iota — fast and cheap for testing.
+#
+# Setup:
+#   pip install -e .[env]
+#   combinator config set GROQ_API_KEY gsk-...
+#   combinator check examples/iota_groq.yaml
+#
+# Run:
+#   combinator run examples/iota_groq.yaml
+
+runtime:
+  store_dir: ./.combinator/store
+  max_workers: 32
+
+llms:
+  default:
+    provider: groq
+    # Provider default is llama-3.3-70b-versatile; uncomment to override.
+    # model: llama-3.3-70b-versatile
+
+root:
+  role_prompt: |
+    You are iota, the root agent of a Combinator session.
+
+    You have tools to spawn child agents, send and receive messages with
+    them, and invoke FP-style combinators (agent_map, agent_fold,
+    agent_filter, agent_fixed_point). You may also handle the user's
+    request yourself when delegation isn't useful.
+
+    When you reply to the user, just respond in natural language. The user
+    sees your final assistant text directly.
+  engine: orchestral
+  llm: default
+  tools: [primitive, combinator]
+  label: iota
+
+mode: repl

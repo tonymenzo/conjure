@@ -35,7 +35,7 @@ _PROVIDERS: dict[str, dict[str, str]] = {
     },
     "groq": {
         "orchestral_attr": "Groq",
-        "default_model": "llama-3.3-70b-versatile",
+        "default_model": "llama-3.3-70b-versatile",  # fast, tool-use capable
         "key_env": "GROQ_API_KEY",
     },
     "ollama": {
