@@ -46,20 +46,27 @@ if TYPE_CHECKING:
     from combinator.runtime import Runtime
 
 
-_DEFAULT_SYSTEM_FRAME = """You are an agent in the Combinator multi-agent framework.
+_SYSTEM_PROMPT_PATH = (
+    Path(__file__).resolve().parent.parent / "system_prompts" / "claude_agent.md"
+)
 
-Your identity:
-- Address id:  {addr_id}
-- Label:       {label}
-- Depth:       {depth} (root is depth 0; max allowed is {max_depth})
 
-Your role:
-{role_prompt}
+@functools.cache
+def _load_default_system_frame() -> str:
+    """Read the templated system prompt from ``system_prompts/claude_agent.md``.
 
-You have access to filesystem tools (Read, Write, Edit, Bash, Grep,
-Glob) operating inside your sandbox directory. Be terse and direct.
-Once you've completed the task you were asked, STOP — don't send
-acknowledgements or status updates."""
+    Cached so we don't re-read the file per spawn. Falls back to a
+    minimal inline frame if the file is missing (shouldn't happen in a
+    proper install, but keeps the engine robust to packaging
+    accidents)."""
+    try:
+        return _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return (
+            "You are an agent in the Combinator multi-agent framework.\n\n"
+            "Identity: address {addr_id}, label {label}, depth {depth} "
+            "(max {max_depth}).\n\nRole: {role_prompt}"
+        )
 
 
 class ClaudeAgentEngine:
@@ -295,18 +302,37 @@ class ClaudeAgentEngine:
     # ----- internals -----
 
     async def _step_async(self, prompt: str) -> str:
-        from claude_agent_sdk.types import AssistantMessage, ResultMessage
+        from claude_agent_sdk.types import (
+            AssistantMessage,
+            ResultMessage,
+            UserMessage,
+        )
 
         accumulated = ""
+        pending_tool_calls: list[dict[str, Any]] = []
+        stream_open = False  # text/tool_calls emitted since last stream_end
         try:
             await self._client.query(prompt)
             async for msg in self._client.receive_response():
-                text = _extract_text(msg)
-                if text:
-                    self._emit_chunk(text)
-                    accumulated += text
-                # ResultMessage carries the per-turn cost.
-                if isinstance(msg, ResultMessage):
+                if isinstance(msg, AssistantMessage):
+                    text = _extract_text(msg)
+                    if text:
+                        self._emit_chunk(text)
+                        accumulated += text
+                        stream_open = True
+                    tool_calls = _extract_tool_calls(msg)
+                    if tool_calls:
+                        pending_tool_calls.extend(tool_calls)
+                    if text or tool_calls:
+                        # Close the response block: text on top, tool
+                        # calls beneath (chat.py:_speaker_block).
+                        self._emit_stream_end(pending_tool_calls)
+                        pending_tool_calls = []
+                        stream_open = False
+                elif isinstance(msg, UserMessage):
+                    for result in _extract_tool_results(msg):
+                        self._emit_tool_result(result)
+                elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
                     if cost is not None:
                         try:
@@ -314,10 +340,10 @@ class ClaudeAgentEngine:
                         except (TypeError, ValueError):
                             pass
         finally:
-            # Emit stream_end so the chat pane finalizes the streaming
-            # bubble even when the SDK raises mid-turn. The driver
-            # picks up the exception and emits the error event.
-            self._emit_stream_end()
+            # Close any block left dangling — exception mid-turn, or a
+            # final assistant message we never saw the close of.
+            if stream_open or pending_tool_calls:
+                self._emit_stream_end(pending_tool_calls)
         return accumulated
 
     def _emit_chunk(self, text: str) -> None:
@@ -328,23 +354,46 @@ class ClaudeAgentEngine:
         except Exception:
             pass
 
-    def _emit_stream_end(self) -> None:
+    def _emit_stream_end(self, tool_calls: list[dict[str, Any]] | None = None) -> None:
         if self._stream_emit is None:
             return
         try:
-            self._stream_emit({"kind": "stream_end", "tool_calls": []})
+            self._stream_emit(
+                {"kind": "stream_end", "tool_calls": list(tool_calls or [])}
+            )
+        except Exception:
+            pass
+
+    def _emit_tool_result(self, result: dict[str, Any]) -> None:
+        if self._stream_emit is None:
+            return
+        try:
+            self._stream_emit(
+                {
+                    "kind": "tool",
+                    "text": result.get("text", ""),
+                    "failed": bool(result.get("failed")),
+                }
+            )
         except Exception:
             pass
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
-        return _DEFAULT_SYSTEM_FRAME.format(
-            addr_id=record.addr.id,
-            label=record.addr.label or "(none)",
-            role_prompt=record.spec.role_prompt,
-            depth=record.depth,
-            max_depth=getattr(runtime, "max_depth", 3),
-        )
+        # ``str.format`` collides with curly braces in JSON examples
+        # inside the markdown, so we use explicit replacements on a
+        # closed set of placeholders.
+        frame = _load_default_system_frame()
+        substitutions = {
+            "{addr_id}": record.addr.id,
+            "{label}": record.addr.label or "(none)",
+            "{role_prompt}": record.spec.role_prompt,
+            "{depth}": str(record.depth),
+            "{max_depth}": str(getattr(runtime, "max_depth", 3)),
+        }
+        for key, value in substitutions.items():
+            frame = frame.replace(key, value)
+        return frame
 
 
 @functools.cache
@@ -390,18 +439,90 @@ def _claude_auth_status() -> dict[str, Any] | None:
 
 
 def _extract_text(msg: Any) -> str:
-    """Pull text content out of an SDK message.
+    """Pull plain text out of an SDK message's content blocks.
 
-    AssistantMessage carries a list of content blocks; TextBlock has
-    a ``text`` attribute. Other block kinds (ToolUseBlock, etc.) are
-    ignored here — the SDK itself runs the tool and surfaces results
-    as separate messages."""
+    Walks the content list and concatenates ``TextBlock.text`` entries.
+    Other block kinds (``ToolUseBlock``, ``ThinkingBlock``, etc.)
+    contribute nothing — they're surfaced via dedicated extractors."""
     content = getattr(msg, "content", None)
     if content is None:
         return ""
     parts: list[str] = []
     for block in content:
+        # ``ToolUseBlock`` also has a (callable) ``name`` attribute and
+        # no ``text``; gate on the block's class name so we don't
+        # accidentally pick up non-text blocks that happen to expose a
+        # ``text`` attribute via duck typing.
+        cls_name = type(block).__name__
+        if cls_name not in ("TextBlock",):
+            continue
         text = getattr(block, "text", None)
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts)
+
+
+_MCP_PREFIX = "mcp__combinator__"
+
+
+def _extract_tool_calls(msg: Any) -> list[dict[str, Any]]:
+    """Serialize each ``ToolUseBlock`` on ``msg`` for stream_end.
+
+    The ``mcp__combinator__<name>`` prefix is stripped so the chat
+    pane shows the user-meaningful name (``spawn``, ``send``, ...)
+    rather than the full MCP-wire identifier."""
+    out: list[dict[str, Any]] = []
+    for block in getattr(msg, "content", None) or []:
+        if type(block).__name__ not in ("ToolUseBlock", "ServerToolUseBlock"):
+            continue
+        name = getattr(block, "name", "") or "?"
+        if name.startswith(_MCP_PREFIX):
+            name = name[len(_MCP_PREFIX):]
+        args = getattr(block, "input", None) or {}
+        out.append({"name": name, "args": args})
+    return out
+
+
+def _extract_tool_results(msg: Any) -> list[dict[str, Any]]:
+    """Serialize each ``ToolResultBlock`` on ``msg`` for ``tool``
+    events. ``failed`` reflects ``is_error``; ``text`` is the result
+    body coerced to a string (the chat pane's ``_summarize_tool_result``
+    parses ``{"ok": False, ...}`` shapes back into a code:reason
+    summary)."""
+    out: list[dict[str, Any]] = []
+    content = getattr(msg, "content", None)
+    if not isinstance(content, list):
+        return out
+    for block in content:
+        if type(block).__name__ not in ("ToolResultBlock", "ServerToolResultBlock"):
+            continue
+        body = getattr(block, "content", None)
+        text = _stringify_tool_result(body)
+        out.append(
+            {
+                "text": text,
+                "failed": bool(getattr(block, "is_error", False)),
+            }
+        )
+    return out
+
+
+def _stringify_tool_result(body: Any) -> str:
+    """Coerce a ``ToolResultBlock.content`` value to a chat-renderable
+    string. The SDK delivers either a bare string or a list of
+    content-block dicts (with ``"type": "text"`` etc.)."""
+    if body is None:
+        return ""
+    if isinstance(body, str):
+        return body
+    if isinstance(body, list):
+        parts: list[str] = []
+        for entry in body:
+            if isinstance(entry, dict) and entry.get("type") == "text":
+                t = entry.get("text", "")
+                if isinstance(t, str):
+                    parts.append(t)
+            elif isinstance(entry, str):
+                parts.append(entry)
+        return "".join(parts)
+    return str(body)

@@ -47,6 +47,9 @@ combinator-input = "combinator.cli_input:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+combinator = ["system_prompts/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
