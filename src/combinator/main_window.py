@@ -174,12 +174,10 @@ class MainApp(App):
     }
     #tree-pane > .tree--cursor {
         background: $surface;
-        color: $foreground;
         text-style: underline;
     }
     #tree-pane:focus > .tree--cursor {
         background: $surface;
-        color: $foreground;
         text-style: bold underline;
     }
     #tree-pane > .tree--highlight,
