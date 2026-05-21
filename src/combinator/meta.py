@@ -201,6 +201,10 @@ class MetaApp(App):
         )
         self.selected_addr: str | None = None
         self.selected_label: str | None = None
+        # Track which agent addresses the user has explicitly collapsed
+        # so periodic ``refresh_tree`` rebuilds don't re-expand them.
+        # Default-expand new agents the user hasn't touched yet.
+        self._collapsed: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -249,9 +253,23 @@ class MetaApp(App):
         label_text = node.get("label") or node.get("addr") or "?"
         markup = f"[{style}]{icon}[/] [bold]{label_text}[/]"
         addr_id = node.get("addr")
-        child = parent.add(markup, data=addr_id, expand=True)
+        # Default: expanded — unless the user explicitly collapsed this
+        # agent on a prior tick. Without this guard, periodic refresh
+        # would clobber the user's collapse action every second.
+        expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
+        child = parent.add(markup, data=addr_id, expand=expand)
         for c in node.get("children", []):
             self._populate(child, c)
+
+    def on_tree_node_collapsed(self, event: Tree.NodeCollapsed) -> None:
+        addr = event.node.data
+        if isinstance(addr, str):
+            self._collapsed.add(addr)
+
+    def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
+        addr = event.node.data
+        if isinstance(addr, str):
+            self._collapsed.discard(addr)
 
     def refresh_cost(self) -> None:
         reply = self.client.call("cost")

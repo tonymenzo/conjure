@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -234,15 +236,20 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     chat_bin = _shutil.which("combinator-chat") or "combinator-chat"
 
     def _chat_command(record: AgentRecord) -> str:
+        """Build a shell-safe command line that runs ``combinator-chat``
+        for this agent. Every arg is ``shlex.quote``'d so labels with
+        spaces, parens, or other shell metacharacters can't break the
+        invocation."""
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         label = record.addr.label or record.addr.id
-        return (
-            f"{chat_bin} "
-            f"--log {log_path} "
-            f"--addr {record.addr.id} "
-            f"--label {label} "
-            f"--session {session_name}"
-        )
+        parts = [
+            chat_bin,
+            "--log", str(log_path),
+            "--addr", record.addr.id,
+            "--label", label,
+            "--session", session_name,
+        ]
+        return " ".join(shlex.quote(p) for p in parts)
 
     def spawn_listener(record: AgentRecord) -> None:
         log_path = agents_dir / f"{record.addr.id}.jsonl"
@@ -291,6 +298,17 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         _remove_pid(pid_path)
         return 2
     tmux_holder["session"] = tmux
+
+    # ``remain-on-exit on`` keeps a window around after its command
+    # exits. Without it, if a chat process crashes the window
+    # closes instantly and the user can't see why. With it, the user
+    # sees the traceback and can close the window manually with
+    # ``Ctrl+B &`` once they're done diagnosing.
+    subprocess.run(
+        ["tmux", "set-option", "-t", session_name, "remain-on-exit", "on"],
+        check=False,
+        timeout=3,
+    )
 
     # Anything pending besides iota's first entry (e.g., children that
     # spawned during build_runtime, which shouldn't happen but is

@@ -149,7 +149,6 @@ class ChatApp(App):
         self.sub_title = f"({addr})"
         self._tail_stop = threading.Event()
         self._tail_thread: threading.Thread | None = None
-        self._render_console: Console | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -252,21 +251,10 @@ class ChatApp(App):
     # ---- log tailing ----
 
     def _start_tail(self) -> None:
-        log = self.query_one("#history", RichLog)
-        # Use a Console that renders to a string, then write the
-        # rendered output into the RichLog. RichLog accepts renderables
-        # directly, which is cleaner — but render_event prints to a
-        # console. We use RichLog.write with a renderable per event.
-        from rich.console import Console
-        from io import StringIO
-
-        capture_console = Console(
-            file=StringIO(),
-            force_terminal=True,
-            color_system="truecolor",
-            width=max(self.size.width - 4, 40),
-        )
-        self._render_console = capture_console
+        """Spawn the background reader that tails the agent's event log
+        and dispatches each event to the textual event loop for
+        rendering. No rich Console captures — events are formatted
+        into ``rich.Text`` rows directly by ``_format_event``."""
 
         def reader() -> None:
             for event in tail(self.log_path, poll_interval=0.05, stop_event=self._tail_stop):
