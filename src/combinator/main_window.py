@@ -42,18 +42,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Header, Input, RichLog, Static, Tree
+from textual.widgets import Header, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 
-from combinator.chat import (  # shared event-row renderers
-    _format_event,
-    _format_response_rows,
-    _rewrite_stream,
-    _user_rows,
-)
+from combinator.chat import ChatView
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
-from combinator.event_log import tail
 
 
 _STATUS_ICON = {
@@ -183,13 +177,9 @@ class MainApp(App):
     #tree-pane > .tree--highlight-line {
         background: $surface;
     }
-    #chat-history {
+    ChatView {
         background: $surface;
-        padding: 0 1;
         scrollbar-size: 1 1;
-        border: none;
-    }
-    #chat-history:focus {
         border: none;
     }
     #chat-input {
@@ -242,23 +232,10 @@ class MainApp(App):
         # spawns a fresh one targeting the new agent's log.
         self._tail_stop: threading.Event | None = None
         self._tail_thread: threading.Thread | None = None
-        # Track the last seq we rendered so resumed tails don't replay
-        # the backlog.
-        self._chat_last_seen_path: Path | None = None
-        # Streaming state for the chat pane — chunks accumulate until
-        # the engine emits ``stream_end``. ``_stream_marker`` is the
-        # row count of the chat history at the moment the response
-        # started; on each chunk we truncate back to it and rewrite
-        # the in-progress response so the text grows top-down inside
-        # the history (no separate streaming pane).
-        self._stream_buffer: str = ""
-        self._streaming: bool = False
-        self._stream_marker: int = 0
         # Count of user echoes written locally that the tail hasn't yet
-        # consumed. The tail decrements this for each ``user`` event it
-        # sees and skips rendering — otherwise live submissions show up
-        # twice (local echo + log replay). Backlog replay (where the
-        # counter is 0) shows ``user`` events from the log directly.
+        # consumed. The tail decrements this for each ``user_input``
+        # event it sees and skips rendering — otherwise live
+        # submissions would show twice (local echo + log replay).
         self._pending_user_echoes: int = 0
 
     # ----- compose -----
@@ -271,15 +248,7 @@ class MainApp(App):
                 yield Static("(select an agent to see its inbox)", id="inbox-pane")
                 yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
-                history = RichLog(
-                    id="chat-history",
-                    wrap=True,
-                    markup=True,
-                    highlight=False,
-                    auto_scroll=True,
-                )
-                history.can_focus = False
-                yield history
+                yield ChatView(id="chat-history")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
@@ -545,9 +514,7 @@ class MainApp(App):
             label = self._addr_labels.get(addr_id) or addr_id
             self._swap_chat_to(addr=addr_id, label=label)
         except Exception as exc:
-            self.query_one("#chat-history", RichLog).write(
-                Text(f"selection error: {exc}", style="red")
-            )
+            self.query_one(ChatView).write_error(f"selection error: {exc}")
 
     @on(Tree.NodeCollapsed)
     def _on_node_collapsed(self, event: Tree.NodeCollapsed) -> None:
@@ -563,85 +530,52 @@ class MainApp(App):
 
     def _swap_chat_to(self, *, addr: str, label: str) -> None:
         """Bind the chat pane to a new agent: stop the old tail,
-        clear the history, replay the agent's recent backlog, then
-        start a fresh tail."""
+        clear ChatView, replay the agent's recent backlog, then start
+        a fresh tail."""
         if addr == self.selected_addr:
             return
         self.selected_addr = addr
         self.selected_label = label
-
-        history = self.query_one("#chat-history", RichLog)
-        history.clear()
-        # Drop any in-flight streaming state from the previous agent so
-        # incoming chunks for that agent (which we'll ignore via the
-        # ``label`` check in ``_render_into_chat``) don't leak into the
-        # new agent's view.
-        self._stream_buffer = ""
-        self._streaming = False
-        self._stream_marker = 0
         self._pending_user_echoes = 0
+
+        view = self.query_one(ChatView)
+        view.reset()
 
         log_path_str = self._log_paths.get(addr)
         if not log_path_str:
-            history.write(Text("(no log path yet for this agent)", style="dim"))
+            view.write_error("(no log path yet for this agent)")
             return
         log_path = Path(log_path_str)
         self._stop_chat_tail()
-        self._render_backlog(log_path, label, history)
+        self._render_backlog(log_path, label, view)
         self._start_chat_tail(log_path, label)
 
-    def _render_backlog(self, log_path: Path, label: str, history: RichLog) -> None:
-        """Replay the agent's recent events into the chat history.
-
-        Streaming responses arrive as a sequence of ``chunk`` events
-        followed by ``stream_end``; ``_format_event`` doesn't know how
-        to render those on its own. Accumulate them here and emit a
-        single response row at ``stream_end`` so the chat-history
-        replay shows what the user saw live."""
+    def _render_backlog(self, log_path: Path, label: str, view: ChatView) -> None:
+        """Read the recent N events from disk and let ChatView replay
+        them (which handles chunk accumulation and mounts blocks)."""
         if not log_path.exists():
             return
         try:
             content = log_path.read_text(encoding="utf-8")
         except OSError:
             return
-        lines = content.splitlines()[-_INITIAL_BACKLOG:]
-        chunk_buffer = ""
-        for line in lines:
+        events: list[dict[str, Any]] = []
+        for line in content.splitlines()[-_INITIAL_BACKLOG:]:
             line = line.strip()
             if not line:
                 continue
             try:
-                event = json.loads(line)
+                events.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-            kind = event.get("kind")
-            if kind == "chunk":
-                chunk_buffer += event.get("text", "") or ""
-                continue
-            if kind == "stream_end":
-                for row in _format_response_rows(
-                    label, chunk_buffer, event.get("tool_calls", []) or []
-                ):
-                    history.write(row)
-                chunk_buffer = ""
-                continue
-            for row in _format_event(label, event):
-                history.write(row)
-        # A trailing chunk with no stream_end (mid-stream snapshot)
-        # would otherwise be dropped silently — flush it as text.
-        if chunk_buffer:
-            for row in _format_response_rows(label, chunk_buffer, []):
-                history.write(row)
+        view.replay_events(label, events)
 
     def _start_chat_tail(self, log_path: Path, label: str) -> None:
         stop = threading.Event()
         self._tail_stop = stop
-        self._chat_last_seen_path = log_path
         initial_offset = log_path.stat().st_size if log_path.exists() else 0
 
         def reader() -> None:
-            # Open and seek past the already-rendered backlog before
-            # entering ``tail`` so we don't double-render.
             try:
                 with log_path.open("r", encoding="utf-8") as fh:
                     fh.seek(initial_offset)
@@ -659,7 +593,7 @@ class MainApp(App):
                             event = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        self.call_from_thread(self._render_into_chat, label, event)
+                        self.call_from_thread(self._on_tail_event, label, event)
             except OSError:
                 return
 
@@ -669,50 +603,19 @@ class MainApp(App):
         self._tail_thread = t
         t.start()
 
-    def _render_into_chat(self, label: str, event: dict[str, Any]) -> None:
+    def _on_tail_event(self, label: str, event: dict[str, Any]) -> None:
         # Only render if the user hasn't swapped to a different agent
         # while this tail was producing events.
         if label != self.selected_label:
             return
-        history = self.query_one("#chat-history", RichLog)
-        kind = event.get("kind")
-        if kind == "chunk":
-            self._on_chunk(label, event.get("text", "") or "")
-            return
-        if kind == "stream_end":
-            self._on_stream_end(label, event.get("tool_calls", []) or [])
-            return
-        if kind == "user_input" and self._pending_user_echoes > 0:
-            # We already wrote a local echo for this submission; don't
-            # render it a second time from the log tail.
+        if event.get("kind") == "user_input" and self._pending_user_echoes > 0:
             self._pending_user_echoes -= 1
             return
+        view = self.query_one(ChatView)
         try:
-            for row in _format_event(label, event):
-                history.write(row)
+            view.apply_event(label, event)
         except Exception as exc:
-            history.write(Text(f"render error: {exc}", style="red"))
-
-    def _on_chunk(self, label: str, text: str) -> None:
-        if not text:
-            return
-        history = self.query_one("#chat-history", RichLog)
-        if not self._streaming:
-            self._streaming = True
-            self._stream_buffer = ""
-            self._stream_marker = len(history.lines)
-        self._stream_buffer += text
-        _rewrite_stream(history, label, self._stream_buffer, [], self._stream_marker)
-
-    def _on_stream_end(self, label: str, tool_calls: list[dict[str, Any]]) -> None:
-        history = self.query_one("#chat-history", RichLog)
-        if self._stream_buffer or tool_calls:
-            _rewrite_stream(
-                history, label, self._stream_buffer, tool_calls, self._stream_marker
-            )
-        self._stream_buffer = ""
-        self._streaming = False
-        self._stream_marker = 0
+            view.write_error(f"render error: {exc}")
 
     def _stop_chat_tail(self) -> None:
         if self._tail_stop is not None:
@@ -728,9 +631,8 @@ class MainApp(App):
         event.input.value = ""
         if not text or not self.selected_addr:
             return
-        history = self.query_one("#chat-history", RichLog)
-        for row in _user_rows(text):
-            history.write(row)
+        view = self.query_one(ChatView)
+        view.echo_user(text)
         # The daemon will write a matching ``user_input`` event into
         # the agent's log; the tail must skip it so the local echo
         # doesn't duplicate.
@@ -739,13 +641,11 @@ class MainApp(App):
             reply = self.client.call("send", addr=self.selected_addr, body=text)
         except Exception as exc:
             self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            history.write(Text(f"send failed: {exc}", style="red"))
+            view.write_error(f"send failed: {exc}")
             return
         if not reply.get("ok"):
             self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            history.write(
-                Text(f"send rejected: {reply.get('error', '?')}", style="red")
-            )
+            view.write_error(f"send rejected: {reply.get('error', '?')}")
 
 
 # ---- helpers ----

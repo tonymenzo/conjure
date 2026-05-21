@@ -1,27 +1,30 @@
 """``combinator-chat`` — per-agent chat TUI.
 
 Each tmux window in a combinator session runs one ``combinator-chat``
-instance for one agent. The window is a self-contained chat:
+instance for one agent. The window is:
 
-- **Top pane** — scrollable history of this agent's activity. Sourced
-  from the agent's JSONL event log, which the daemon writes to. Each
-  event is rendered as a rich panel (responses) or compact line (tool
-  results, lifecycle).
+- **Top pane** — a ``ChatView`` (scrollable container of per-event
+  blocks) showing this agent's activity. Sourced from the agent's
+  JSONL event log.
 - **Bottom pane** — input prompt. Pressing Enter sends the text to
   this agent's inbox via the daemon's control socket.
 
 The chat does not own the agent's runtime — that lives in the daemon.
 It's a pure UI: tail-log + send-on-Enter.
 
+Streaming model: each response is one mounted ``Static`` widget. As
+``chunk`` events arrive the widget is updated in place (textual's
+native API, no internal-state hacking). On ``stream_end`` the widget
+is finalized (tool calls appended) and a new block can mount on top.
+
 Keybindings:
 
 - ``Enter``         — send the current input
-- ``Tab``           — toggle focus between history (scroll) and input
+- ``Tab``           — focus the input (when scrolling the history)
 - ``PgUp / PgDn``   — scroll history
 - ``Ctrl+L``        — clear the input field
 - ``Esc``           — focus history (for scrollback)
 - ``Ctrl+Q``        — close this window only (daemon untouched)
-- ``Ctrl+\\``       — open the meta-view popup (handled by tmux binding)
 """
 
 from __future__ import annotations
@@ -35,13 +38,13 @@ from typing import Any, Sequence
 import ast
 import json as _json
 
+from rich.console import Group, RenderableType
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
-from textual.geometry import Size
-from textual.widgets import Header, Input, RichLog
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Header, Input, Static
 
 from combinator.control import ControlClient
 from combinator.daemon import socket_path_for
@@ -98,19 +101,155 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+# Background colors used to differentiate user vs agent message
+# blocks. User rows get a noticeable dark tint so they read as
+# quoted input; agent rows get a subtler highlight so the response
+# feels like the "main flow".
+_USER_BG = "on #14202c"
+_AGENT_BG = "on #1c1c1c"
+
+
+class ChatView(VerticalScroll):
+    """Scrollable container of per-event chat blocks.
+
+    Each event mounts a ``Static`` child. The currently-streaming
+    response (if any) is tracked so subsequent ``chunk`` events update
+    the same widget in place via the public ``Static.update`` API —
+    no private-state manipulation, no flicker, no stale strip cache.
+    """
+
+    DEFAULT_CSS = """
+    ChatView {
+        background: $surface;
+        padding: 0 1;
+        scrollbar-size: 1 1;
+        scrollbar-gutter: stable;
+    }
+    ChatView > Static {
+        height: auto;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._streaming_block: Static | None = None
+        self._stream_buffer: str = ""
+        self.can_focus = False
+
+    def reset(self) -> None:
+        """Drop every block and reset stream state. Use on agent swap."""
+        for child in list(self.children):
+            child.remove()
+        self._streaming_block = None
+        self._stream_buffer = ""
+
+    def apply_event(self, label: str, event: dict[str, Any]) -> None:
+        """Route one live event (from the log tail) to the right path."""
+        kind = event.get("kind")
+        if kind == "chunk":
+            self._stream_chunk(label, event.get("text", "") or "")
+            return
+        if kind == "stream_end":
+            self._end_stream(label, event.get("tool_calls", []) or [])
+            return
+        # Any non-streaming event finalizes a hanging stream first so
+        # the response block lands before the new block goes below it.
+        if self._streaming_block is not None:
+            self._end_stream(label, [])
+        self._append_event(label, event)
+
+    def replay_events(self, label: str, events: list[dict[str, Any]]) -> None:
+        """Replay a backlog: accumulate chunk events into complete
+        responses, mount everything in order, scroll to the bottom."""
+        chunk_buffer = ""
+        for event in events:
+            kind = event.get("kind")
+            if kind == "chunk":
+                chunk_buffer += event.get("text", "") or ""
+                continue
+            if kind == "stream_end":
+                self._mount_response(
+                    label, chunk_buffer, event.get("tool_calls", []) or []
+                )
+                chunk_buffer = ""
+                continue
+            self._append_event(label, event)
+        # Trailing chunks with no stream_end (mid-response when we
+        # opened the log) get flushed as text without tool calls.
+        if chunk_buffer:
+            self._mount_response(label, chunk_buffer, [])
+        self._scroll_to_end()
+
+    def echo_user(self, text: str) -> None:
+        """Mount a user block directly (used by the local-input echo)."""
+        rows = _user_rows(text)
+        if rows:
+            self._mount_rows(rows)
+            self._scroll_to_end()
+
+    def write_error(self, text: str) -> None:
+        """Mount a simple error/status line."""
+        self._mount_rows([Text(text, style="red")])
+        self._scroll_to_end()
+
+    # ----- internals -----
+
+    def _append_event(self, label: str, event: dict[str, Any]) -> None:
+        rows = _format_event(label, event)
+        if rows:
+            self._mount_rows(rows)
+            self._scroll_to_end()
+
+    def _stream_chunk(self, label: str, text: str) -> None:
+        if not text:
+            return
+        self._stream_buffer += text
+        renderable = _streaming_renderable(label, self._stream_buffer, [])
+        if self._streaming_block is None:
+            self._streaming_block = Static(renderable)
+            self.mount(self._streaming_block)
+        else:
+            self._streaming_block.update(renderable)
+        self._scroll_to_end()
+
+    def _end_stream(self, label: str, tool_calls: list[dict[str, Any]]) -> None:
+        has_content = bool(self._stream_buffer) or bool(tool_calls)
+        if self._streaming_block is None and not has_content:
+            return
+        renderable = _streaming_renderable(label, self._stream_buffer, tool_calls)
+        if self._streaming_block is None:
+            self._streaming_block = Static(renderable)
+            self.mount(self._streaming_block)
+        else:
+            self._streaming_block.update(renderable)
+        self._streaming_block = None
+        self._stream_buffer = ""
+        self._scroll_to_end()
+
+    def _mount_response(
+        self, label: str, text: str, tool_calls: list[dict[str, Any]]
+    ) -> None:
+        rows = _format_response_rows(label, text, tool_calls)
+        if rows:
+            self._mount_rows(rows)
+
+    def _mount_rows(self, rows: list[Text]) -> None:
+        renderable = _rows_to_renderable(rows)
+        self.mount(Static(renderable))
+
+    def _scroll_to_end(self) -> None:
+        # call_after_refresh waits for the new mount/update to be in the
+        # layout before scrolling, so the bottom is the actual bottom.
+        self.call_after_refresh(self.scroll_end, animate=False)
+
+
 class ChatApp(App):
     """One agent, one chat window."""
 
     CSS = """
     Screen {
         background: $surface;
-    }
-    RichLog {
-        background: $surface;
-        border: none;
-        padding: 0 1;
-        scrollbar-size: 1 1;
-        scrollbar-gutter: stable;
     }
     Input {
         dock: bottom;
@@ -125,8 +264,7 @@ class ChatApp(App):
 
     BINDINGS = [
         Binding("ctrl+q", "quit_window", "Close window"),
-        Binding("escape", "focus_history", "Scroll mode"),
-        Binding("tab", "toggle_focus", "Toggle focus"),
+        Binding("escape", "focus_input", "Focus input"),
         Binding("ctrl+l", "clear_input", "Clear input"),
         Binding("pageup", "scroll_up", "Page up", show=False),
         Binding("pagedown", "scroll_down", "Page down", show=False),
@@ -150,29 +288,15 @@ class ChatApp(App):
         self.sub_title = f"({addr})"
         self._tail_stop = threading.Event()
         self._tail_thread: threading.Thread | None = None
-        # Streaming state — accumulating chunks live until stream_end.
-        # ``_stream_marker`` is the RichLog row count at the moment
-        # the response started; truncating to it lets each chunk
-        # rewrite the in-progress response so text grows top-down.
-        self._stream_buffer: str = ""
-        self._streaming: bool = False
-        self._stream_marker: int = 0
-        # See main_window for the same pattern: local echo + log tail
-        # would otherwise double-render the user's own messages.
+        # Count of locally-echoed user messages waiting for the
+        # matching ``user_input`` to arrive from the daemon. Each
+        # arrival decrements; ones with the counter at zero render.
         self._pending_user_echoes: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical():
-            history = RichLog(
-                id="history",
-                wrap=True,
-                markup=True,
-                highlight=False,
-                auto_scroll=True,
-            )
-            history.can_focus = False
-            yield history
+            yield ChatView(id="history")
         yield Input(placeholder="type a message — Enter to send", id="input")
 
     def on_mount(self) -> None:
@@ -187,9 +311,6 @@ class ChatApp(App):
     # ---- status indicator ----
 
     def _refresh_status(self) -> None:
-        """Poll the daemon for this agent's status and update the
-        window's subtitle so the user can see at a glance whether the
-        agent is alive."""
         try:
             reply = self.client.call("status")
         except Exception:
@@ -203,7 +324,6 @@ class ChatApp(App):
                 break
         if my_status is None:
             return
-        # Use a status icon similar to the meta-view for consistency.
         icon = {"lazy": "…", "running": "▶", "idle": "✓", "terminated": "✗"}.get(
             my_status, "?"
         )
@@ -214,26 +334,17 @@ class ChatApp(App):
     def action_quit_window(self) -> None:
         self.exit()
 
-    def action_focus_history(self) -> None:
-        self.query_one("#history", RichLog).focus()
-
-    def action_toggle_focus(self) -> None:
-        if isinstance(self.focused, Input):
-            self.query_one("#history", RichLog).focus()
-        else:
-            self.query_one(Input).focus()
+    def action_focus_input(self) -> None:
+        self.query_one(Input).focus()
 
     def action_clear_input(self) -> None:
-        inp = self.query_one(Input)
-        inp.value = ""
+        self.query_one(Input).value = ""
 
     def action_scroll_up(self) -> None:
-        log = self.query_one("#history", RichLog)
-        log.scroll_page_up()
+        self.query_one(ChatView).scroll_page_up()
 
     def action_scroll_down(self) -> None:
-        log = self.query_one("#history", RichLog)
-        log.scroll_page_down()
+        self.query_one(ChatView).scroll_page_down()
 
     # ---- input submission ----
 
@@ -243,120 +354,65 @@ class ChatApp(App):
         event.input.value = ""
         if not text:
             return
-        # Echo the user's message into the local history right away so
-        # the user sees what they sent. The daemon will also emit a
-        # ``user`` event into the log; the renderer skips that to avoid
-        # a duplicate.
-        log = self.query_one("#history", RichLog)
-        for row in _user_rows(text):
-            log.write(row)
+        view = self.query_one(ChatView)
+        view.echo_user(text)
         self._pending_user_echoes += 1
         try:
             reply = self.client.call("send", addr=self.addr, body=text)
         except Exception as exc:
             self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            log.write(Text(f"send failed: {exc}", style="red"))
+            view.write_error(f"send failed: {exc}")
             return
         if not reply.get("ok"):
             self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            log.write(Text(f"send rejected: {reply.get('error', '?')}", style="red"))
+            view.write_error(f"send rejected: {reply.get('error', '?')}")
 
     # ---- log tailing ----
 
     def _start_tail(self) -> None:
-        """Spawn the background reader that tails the agent's event log
-        and dispatches each event to the textual event loop for
-        rendering. No rich Console captures — events are formatted
-        into ``rich.Text`` rows directly by ``_format_event``."""
+        """Background reader: tails the JSONL log and pushes each event
+        into the textual event loop for rendering."""
 
         def reader() -> None:
             for event in tail(self.log_path, poll_interval=0.05, stop_event=self._tail_stop):
-                self.call_from_thread(self._render_event_into_log, event)
+                self.call_from_thread(self._on_event, event)
 
         self._tail_thread = threading.Thread(
             target=reader, daemon=True, name="chat-tail"
         )
         self._tail_thread.start()
 
-    def _render_event_into_log(self, event: dict[str, Any]) -> None:
-        """Format one event and route it to either the streaming pane
-        (chunks accumulating live) or the main history (everything
-        else)."""
-        kind = event.get("kind")
-        if kind == "chunk":
-            self._on_chunk(event.get("text", "") or "")
-            return
-        if kind == "stream_end":
-            self._on_stream_end(event.get("tool_calls", []) or [])
-            return
-        if kind == "user_input" and self._pending_user_echoes > 0:
+    def _on_event(self, event: dict[str, Any]) -> None:
+        if event.get("kind") == "user_input" and self._pending_user_echoes > 0:
             self._pending_user_echoes -= 1
             return
-        log = self.query_one("#history", RichLog)
+        view = self.query_one(ChatView)
         try:
-            rows = list(_format_event(self.agent_label, event))
+            view.apply_event(self.agent_label, event)
         except Exception as exc:
-            log.write(Text(f"render error: {exc}", style="red"))
-            return
-        for row in rows:
-            log.write(row)
-
-    def _on_chunk(self, text: str) -> None:
-        if not text:
-            return
-        log = self.query_one("#history", RichLog)
-        if not self._streaming:
-            self._streaming = True
-            self._stream_buffer = ""
-            self._stream_marker = len(log.lines)
-        self._stream_buffer += text
-        _rewrite_stream(
-            log, self.agent_label, self._stream_buffer, [], self._stream_marker
-        )
-
-    def _on_stream_end(self, tool_calls: list[dict[str, Any]]) -> None:
-        log = self.query_one("#history", RichLog)
-        if self._stream_buffer or tool_calls:
-            _rewrite_stream(
-                log,
-                self.agent_label,
-                self._stream_buffer,
-                tool_calls,
-                self._stream_marker,
-            )
-        self._stream_buffer = ""
-        self._streaming = False
-        self._stream_marker = 0
+            view.write_error(f"render error: {exc}")
 
 
-# Background colors used to differentiate user vs agent message
-# blocks. User rows get a noticeable dark tint so they read as
-# quoted input; agent rows get a subtler highlight so the response
-# feels like the "main flow". Hex values are picked to read on both
-# default light and dark Textual themes — applied as rich background
-# styles directly to the Text rows since the rows live inside a
-# RichLog (textual CSS doesn't reach row-level styles).
-_USER_BG = "on #14202c"
-_AGENT_BG = "on #1c1c1c"
+# ---------------------------------------------------------------- helpers
 
 
-def _rewrite_stream(
-    history: RichLog,
+def _streaming_renderable(
     label: str,
     text: str,
     tool_calls: list[dict[str, Any]],
-    marker: int,
-) -> None:
-    """Truncate ``history`` back to ``marker`` and re-write the
-    in-progress response. Each streaming chunk calls this with the
-    full accumulated text so the visible content grows top-down inside
-    the chat history (new lines appear below the previous, the header
-    stays where it landed when the response started)."""
-    marker = max(0, min(marker, len(history.lines)))
-    history.lines = history.lines[:marker]
-    history.virtual_size = Size(history.virtual_size.width, len(history.lines))
-    for row in _format_response_rows(label, text, tool_calls):
-        history.write(row)
+) -> RenderableType:
+    """Build the renderable shown while a response is streaming. Same
+    shape as ``_format_response_rows`` produces, just packaged for a
+    Static widget."""
+    rows = _format_response_rows(label, text, tool_calls)
+    return _rows_to_renderable(rows) if rows else Text("")
+
+
+def _rows_to_renderable(rows: list[Text]) -> RenderableType:
+    """Pack ``Text`` rows into a single ``Group`` (drops trailing empty
+    spacers — CSS margin already gives blocks breathing room)."""
+    filtered = [r for r in rows if r.plain != ""]
+    return Group(*filtered) if filtered else Text("")
 
 
 def _format_response_rows(
@@ -364,10 +420,11 @@ def _format_response_rows(
     text: str,
     tool_calls: list[dict[str, Any]],
 ) -> list[Text]:
-    """Build the rows that a completed response writes to the chat
-    history. Agent blocks use a subtle background tint to stand apart
-    from user messages, with the agent label as a bold-magenta header
-    and tool calls indented underneath.
+    """Build the rows that a completed (or in-progress) response writes.
+
+    Agent blocks use a subtle background tint to stand apart from user
+    messages, with the agent label as a bold-magenta header and tool
+    calls indented underneath.
     """
     rows: list[Text] = []
     if not text and not tool_calls:
@@ -390,7 +447,6 @@ def _format_response_rows(
         row.append(f"({args})", style="cyan")
         row.stylize(_AGENT_BG)
         rows.append(row)
-    rows.append(Text(""))
     return rows
 
 
@@ -418,16 +474,14 @@ def _user_rows(text: str) -> list[Text]:
         row.append(line)
         row.stylize(_USER_BG)
         rows.append(row)
-    rows.append(Text(""))
     return rows
 
 
 def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
-    """Convert one event dict into the rows to write to a RichLog.
+    """Convert one event dict into the rows for a single chat block.
 
-    User and agent blocks are visually distinguished by background
-    color (no bar prefix); tool calls / results render as compact
-    indented one-liners.
+    Blocks have no internal spacers — the ``ChatView`` CSS adds
+    ``margin-bottom: 1`` between Static children.
     """
     rows: list[Text] = []
     kind = event.get("kind")
@@ -443,7 +497,6 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         failed = bool(event.get("failed"))
         summary = _summarize_tool_result(event.get("text", "") or "")
         row = Text()
-        row.append("  ")
         if failed:
             row.append(f"✗ {summary}", style="red")
         else:
@@ -459,7 +512,7 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         parent = event.get("parent")
         suffix = f" under {parent}" if parent else " (root)"
         row = Text()
-        row.append("  + spawned ", style="dim")
+        row.append("+ spawned ", style="dim")
         row.append(spawned_label, style="bold")
         row.append(suffix, style="dim")
         rows.append(row)
@@ -468,7 +521,7 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
     if kind == "terminated":
         addr = event.get("addr", "?")
         row = Text()
-        row.append("  × terminated ", style="red dim")
+        row.append("× terminated ", style="red dim")
         row.append(addr, style="red")
         rows.append(row)
         return rows
@@ -481,7 +534,7 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
     return rows
 
 
-# ---- helpers (duplicated from _ui to avoid pulling rich.Panel deps) ----
+# ---- small parsing helpers ----
 
 _ARG_PREVIEW_LEN = 60
 _BODY_PREVIEW_LEN = 200
