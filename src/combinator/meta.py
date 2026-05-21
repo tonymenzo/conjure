@@ -133,6 +133,11 @@ _STATUS_STYLE = {
     "terminated": "red dim",
 }
 
+# Cap on how many recent log lines we read from an agent's event log to
+# render in the activity pane. Keeps the read + render bounded even for
+# long-lived agents whose logs grow to many KB.
+_ACTIVITY_TAIL_LINES = 60
+
 
 class MetaApp(App):
     """Lazygit-style overview of the daemon's runtime state."""
@@ -142,26 +147,22 @@ class MetaApp(App):
         background: $surface;
     }
     #left {
-        width: 35%;
+        width: 38%;
     }
-    #tree-pane, #cost-pane {
+    #tree-pane, #inbox-pane, #cost-pane {
         border: round $primary;
         background: $surface;
         padding: 0 1;
     }
-    #tree-pane {
-        height: 70%;
-    }
-    #cost-pane {
-        height: 30%;
-    }
-    #preview-pane {
+    #tree-pane    { height: 40%; }
+    #inbox-pane   { height: 35%; }
+    #cost-pane    { height: 25%; }
+    #activity-pane {
         border: round $primary;
         background: $surface;
         padding: 0 1;
         overflow-y: auto;
         scrollbar-size: 1 1;
-        scrollbar-gutter: stable;
     }
     Tree {
         background: $surface;
@@ -209,25 +210,34 @@ class MetaApp(App):
         # touch expand state. This is what keeps user-collapsed nodes
         # collapsed across the periodic refresh.
         self._tree_signature: tuple | None = None
-        # Optional: agents the user explicitly collapsed. Applied when
-        # a rebuild does happen (e.g. a new agent appears).
+        # Agents the user explicitly collapsed. Applied on rebuilds.
         self._collapsed: set[str] = set()
+        # Per-agent event log paths, learned from each ``tree``
+        # response. Used by the activity pane to tail the right log
+        # without an extra round trip.
+        self._log_paths: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Horizontal():
             with Vertical(id="left"):
                 yield Tree("spawn tree", id="tree-pane")
+                yield Static("(select an agent to see its inbox)", id="inbox-pane")
                 yield Static("(no costs yet)", id="cost-pane")
             yield Static(
-                "(select an agent to preview its activity)",
-                id="preview-pane",
+                "(select an agent to preview its chat)",
+                id="activity-pane",
             )
         yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_all()
-        self.set_interval(1.0, self.refresh_all)
+        # Tighter refresh than before (was 1s). Each tick: one ``tree``
+        # control call, one ``cost`` call, one ``inbox`` call for the
+        # selected agent, plus a small file read of the selected
+        # agent's event log. All cheap; this stays comfortably under
+        # a few ms per tick on a local socket.
+        self.set_interval(0.5, self.refresh_all)
         self.query_one("#tree-pane", Tree).focus()
 
     # ---- data refresh ----
@@ -239,7 +249,8 @@ class MetaApp(App):
         self.refresh_tree()
         self.refresh_cost()
         if self.selected_addr is not None:
-            self.refresh_preview(self.selected_addr)
+            self.refresh_inbox(self.selected_addr)
+            self.refresh_activity(self.selected_addr)
 
     def refresh_tree(self) -> None:
         """Periodic refresh.
@@ -279,6 +290,9 @@ class MetaApp(App):
 
     def _populate(self, parent: TreeNode, node: dict[str, Any]) -> None:
         addr_id = node.get("addr")
+        log_path = node.get("log_path")
+        if isinstance(addr_id, str) and isinstance(log_path, str):
+            self._log_paths[addr_id] = log_path
         # Honor a prior user collapse if the agent still exists;
         # otherwise default to expanded (new agents are visible).
         expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
@@ -298,6 +312,9 @@ class MetaApp(App):
             addr = n.get("addr")
             if isinstance(addr, str):
                 by_addr[addr] = n
+                log_path = n.get("log_path")
+                if isinstance(log_path, str):
+                    self._log_paths[addr] = log_path
             for c in n.get("children", []):
                 collect(c)
 
@@ -343,53 +360,95 @@ class MetaApp(App):
         lines.append(f"[bold]total[/]  {_format_usd(total)}")
         cost.update("\n".join(lines))
 
-    def refresh_preview(self, addr_id: str) -> None:
+    def refresh_inbox(self, addr_id: str) -> None:
+        """Update the inbox preview pane (left middle) with the
+        selected agent's most recent envelopes."""
         try:
             reply = self.client.call("inbox", addr=addr_id)
         except Exception as exc:
-            self.query_one("#preview-pane", Static).update(
+            self.query_one("#inbox-pane", Static).update(
                 Text(f"control error: {exc}", style="red")
             )
             return
-        preview = self.query_one("#preview-pane", Static)
+        inbox_pane = self.query_one("#inbox-pane", Static)
         if not reply.get("ok"):
-            preview.update(Text(reply.get("error", "?"), style="red"))
+            inbox_pane.update(Text(reply.get("error", "?"), style="red"))
             return
         envs = reply.get("envelopes", [])
-        if not envs:
-            preview.update(
-                Text(
-                    f"(inbox empty for {self.selected_label or addr_id})",
-                    style="dim",
-                )
-            )
-            return
-        # Build a Group of Text rows directly; no ANSI capture needed,
-        # which removes a class of width / parsing bugs and avoids
-        # Static's markup parser seeing escape codes.
         from rich.console import Group as _Group
 
         rows: list[Any] = [
             Text(f"inbox of {self.selected_label or addr_id}", style="bold"),
             Text(""),
         ]
-        for env in envs[-12:]:
-            sender = env.get("from_label") or env.get("from") or "?"
-            body = env.get("body")
-            body_repr = body if isinstance(body, str) else _short_repr(body, 200)
-            row = Text()
-            row.append(f"seq={env.get('seq')}  ", style="cyan")
-            row.append(f"from={sender}  ", style="magenta")
-            row.append(str(body_repr))
-            rows.append(row)
-        preview.update(_Group(*rows))
+        if not envs:
+            rows.append(Text("(empty)", style="dim"))
+        else:
+            for env in envs[-10:]:
+                sender = env.get("from_label") or env.get("from") or "?"
+                body = env.get("body")
+                body_repr = body if isinstance(body, str) else _short_repr(body, 160)
+                row = Text()
+                row.append(f"seq={env.get('seq')}  ", style="cyan")
+                row.append(f"from={sender}  ", style="magenta")
+                row.append(str(body_repr))
+                rows.append(row)
+        inbox_pane.update(_Group(*rows))
+
+    def refresh_activity(self, addr_id: str) -> None:
+        """Update the activity pane (right, main) by tailing the
+        selected agent's event log directly. Bypasses the control
+        socket because file reads are faster than RPC for the
+        last-N-events pattern.
+        """
+        from combinator.chat import _format_event
+
+        activity_pane = self.query_one("#activity-pane", Static)
+        log_path = self._log_paths.get(addr_id)
+        if log_path is None:
+            activity_pane.update(Text("(no log path for this agent)", style="dim"))
+            return
+        log_file = Path(log_path)
+        if not log_file.exists():
+            activity_pane.update(Text("(log file not yet created)", style="dim"))
+            return
+        try:
+            content = log_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            activity_pane.update(Text(f"read error: {exc}", style="red"))
+            return
+
+        import json as _json
+        from rich.console import Group as _Group
+
+        events: list[dict[str, Any]] = []
+        for line in content.splitlines()[-_ACTIVITY_TAIL_LINES:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                continue
+        if not events:
+            activity_pane.update(Text("(no activity yet)", style="dim"))
+            return
+
+        label = self.selected_label or addr_id
+        rows: list[Any] = []
+        for event in events:
+            rows.extend(_format_event(label, event))
+        if not rows:
+            rows.append(Text("(no rendered events)", style="dim"))
+        activity_pane.update(_Group(*rows))
 
     # ---- selection actions ----
 
-    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
-        # Guard the whole handler: any exception here would propagate
-        # into textual's event loop and crash the popup. Surface errors
-        # in the preview pane instead so the user can keep navigating.
+    @on(Tree.NodeHighlighted)
+    def _on_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        # Guard the whole handler: any exception would propagate into
+        # textual's event loop and crash the popup. Surface errors in
+        # the inbox pane instead so the user can keep navigating.
         try:
             addr_id = event.node.data
             if not isinstance(addr_id, str):
@@ -400,10 +459,11 @@ class MetaApp(App):
             # "✗ worker-3" — last token is the agent label.
             label_text = event.node.label.plain
             self.selected_label = label_text.split()[-1] if label_text else addr_id
-            self.refresh_preview(addr_id)
+            self.refresh_inbox(addr_id)
+            self.refresh_activity(addr_id)
         except Exception as exc:
             try:
-                self.query_one("#preview-pane", Static).update(
+                self.query_one("#inbox-pane", Static).update(
                     Text(f"selection error: {exc}", style="red")
                 )
             except Exception:

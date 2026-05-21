@@ -130,10 +130,17 @@ class ControlServer:
 
         def walk(addr: Any) -> dict[str, Any]:
             rec = self.runtime.record_for(addr)
+            event_log = getattr(rec, "event_log", None)
+            log_path = (
+                str(event_log.path)
+                if event_log is not None and getattr(event_log, "path", None)
+                else None
+            )
             return {
                 "addr": addr.id,
                 "label": addr.label or addr.id,
                 "status": rec.status,
+                "log_path": log_path,
                 "children": [
                     walk(c) for c in sorted(rec.children, key=lambda a: a.id)
                 ],
