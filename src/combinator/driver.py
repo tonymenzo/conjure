@@ -86,6 +86,11 @@ class Driver:
             if not envelopes:
                 continue
             self._cursor = envelopes[-1].seq
+            # Power the ``"caller"`` address shortcut — tools that
+            # resolve ``to="caller"`` look up the agent's
+            # ``last_received_from``. Most-recent envelope wins when
+            # several arrive in one tick.
+            record.last_received_from = envelopes[-1].from_
             record.status = "running"
             prompt = self._build_prompt(envelopes)
             errored = False

@@ -273,6 +273,29 @@ def test_label_shortcut_ambiguous_returns_none(rt, root_token):
     assert out["code"] == "no_such_address"
 
 
+def test_send_to_caller_shortcut_resolves_to_last_sender(rt, root_token):
+    """``"caller"`` resolves to the sender of the most-recent envelope
+    the agent received. The right tool for "reply to whoever just
+    messaged me" — no body-field plumbing needed."""
+    from combinator.address import USER
+
+    # Simulate a delivered envelope by hand — the driver normally sets
+    # ``last_received_from`` before calling step.
+    rt.record_for(rt.root_addr).last_received_from = USER
+    out = send_impl(token=root_token, to="caller", body="reply")
+    assert out["ok"] is True
+    user_envs = rt.read_inbox(USER)
+    assert any(e.body == "reply" for e in user_envs)
+
+
+def test_send_to_caller_without_received_message_is_unresolved(rt, root_token):
+    """Before the agent has received anything, ``"caller"`` is None
+    and the resolver reports ``no_such_address`` rather than guessing."""
+    out = send_impl(token=root_token, to="caller", body="nope")
+    assert out["ok"] is False
+    assert out["code"] == "no_such_address"
+
+
 # ----- peek_impl -----
 
 def test_peek_descendant_returns_status_and_inbox(rt, root_token):

@@ -45,6 +45,10 @@ routed the result somewhere specific (usually a collector agent).
 
 - `"self"` — your own address.
 - `"parent"` — the agent that spawned you (errors if you're the root).
+- `"caller"` — the sender of the most-recent envelope you received.
+  Lets you reply to "whoever just messaged me" without tracking the
+  address yourself. **This is the right tool for request/reply.**
+  Workers should reply with `Send(to="caller", ...)`.
 - `"<label>"` — matched against your *direct* children by label;
   resolves only when exactly one child carries that label.
 - A literal address id (`ag-...`) or sentinel (`@user`, `@system`) —
@@ -53,15 +57,15 @@ routed the result somewhere specific (usually a collector agent).
 The shortcuts let you keep role-prompts templatable instead of
 copy-pasting opaque ids.
 
-> ⚠ **Don't put `"self"` into a `reply_to` body field.** Shortcuts
-> are resolved at *the tool call site*, not at the time the body
-> was constructed. If you `Send(to=child, body={"task": ...,
+> ⚠ **Don't put shortcut strings into a `reply_to` body field.**
+> Shortcuts resolve at *the tool call site*, not at the time the
+> body was constructed. If you `Send(to=child, body={"task": ...,
 > "reply_to": "self"})`, then the child later does
 > `Send(to=body["reply_to"], ...)`, the child resolves `"self"` to
-> *itself* and the reply vanishes. You'll hit a silent 30-second
-> `WaitFor` timeout. Pass an explicit address id (`reply_to: "<your-
-> own-addr>"`) when threading a reply-to through a body, or design
-> the worker so it replies via `Send(to="parent", ...)`.
+> *itself* and the reply vanishes — silent 30-second `WaitFor`
+> timeout. Instead, either pass an explicit address id in
+> `reply_to`, or just tell the worker to reply with `Send(to=
+> "caller", ...)` and omit the field entirely.
 
 ## Message-body shape
 

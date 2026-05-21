@@ -110,3 +110,10 @@ class AgentRecord:
     # spawn_listener; engine factory wires it into the display hook.
     # None for non-tmux modes (REPL renders directly to stdout).
     event_log: Any = None
+
+    # Sender of the most-recent envelope the driver delivered into a
+    # ``step``. Powers the ``"caller"`` address shortcut so tools can
+    # naturally say "reply to whoever just messaged me" without the
+    # agent having to track ids itself. Updated by ``Driver._loop``
+    # before each ``step`` call.
+    last_received_from: Address | None = None

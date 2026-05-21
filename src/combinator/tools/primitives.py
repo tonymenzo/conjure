@@ -68,6 +68,9 @@ def _resolve_addr(
 
     - ``"self"`` → the caller's own address.
     - ``"parent"`` → the caller's parent (``None`` for the root).
+    - ``"caller"`` → the sender of the most-recent envelope the
+      agent received. Lets workers reply to "whoever just messaged
+      me" without the agent tracking the address itself.
     - ``"@user"`` / ``"@system"`` → the sentinels (id lookup).
     - ``"ag-..."`` → exact id lookup.
     - ``"<label>"`` → matched against the caller's own children; only
@@ -81,6 +84,8 @@ def _resolve_addr(
         return caller_addr
     if addr_str == "parent":
         return runtime.record_for(caller_addr).parent
+    if addr_str == "caller":
+        return runtime.record_for(caller_addr).last_received_from
     by_id = runtime.address_by_id(addr_str)
     if by_id is not None:
         return by_id
