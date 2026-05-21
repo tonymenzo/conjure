@@ -51,6 +51,7 @@ from textual.widgets import Header, Input, Static
 from combinator.control import ControlClient
 from combinator.daemon import socket_path_for
 from combinator.event_log import tail
+from combinator.tui_select import set_mouse_tracking
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -342,6 +343,7 @@ class ChatApp(App):
         Binding("ctrl+q", "quit_window", "Close window"),
         Binding("escape", "focus_input", "Focus input"),
         Binding("ctrl+l", "clear_input", "Clear input"),
+        Binding("f5", "toggle_select_mode", "Select"),
         Binding("pageup", "scroll_up", "Page up", show=False),
         Binding("pagedown", "scroll_down", "Page down", show=False),
     ]
@@ -426,12 +428,32 @@ class ChatApp(App):
             "terminated": "[dim]●[/]",
             "error": "[bold red]●[/]",
         }.get(my_status, "[dim]●[/]")
-        self.sub_title = f"({self.addr})  {circle} {my_status}"
+        base = f"({self.addr})  {circle} {my_status}"
+        self._base_sub_title = base
+        if getattr(self, "_select_mode", False):
+            self.sub_title = f"{base}  [bold yellow][select — F5 to exit][/]"
+        else:
+            self.sub_title = base
 
     # ---- key actions ----
 
     def action_quit_window(self) -> None:
         self.exit()
+
+    def action_toggle_select_mode(self) -> None:
+        """Release / re-acquire textual's mouse capture so the user
+        can click-drag-select text natively."""
+        self._select_mode = not getattr(self, "_select_mode", False)
+        set_mouse_tracking(self, on=not self._select_mode)
+        base = getattr(self, "_base_sub_title", None)
+        if base is None:
+            base = self.sub_title
+            self._base_sub_title = base
+        self.sub_title = (
+            f"{base}  [bold yellow][select — F5 to exit][/]"
+            if self._select_mode
+            else base
+        )
 
     def action_focus_input(self) -> None:
         self.query_one(Input).focus()

@@ -49,6 +49,7 @@ from combinator.chat import ChatView
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 from combinator.status_tree import StatusTree
+from combinator.tui_select import set_mouse_tracking
 
 
 # Status icon = filled circle in every state; only the color
@@ -228,6 +229,7 @@ class MainApp(App):
         Binding("f2", "toggle_sidebar", "Toggle sidebar"),
         Binding("f3", "permission_allow", "Allow", show=False),
         Binding("f4", "permission_deny", "Deny", show=False),
+        Binding("f5", "toggle_select_mode", "Select"),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
@@ -343,6 +345,14 @@ class MainApp(App):
         self._stop_chat_tail()
 
     # ----- actions -----
+
+    def action_toggle_select_mode(self) -> None:
+        """Release / re-acquire textual's mouse capture so the user
+        can click-drag-select text natively. Header subtitle gets a
+        ``[select]`` tag while active."""
+        self._select_mode = not getattr(self, "_select_mode", False)
+        set_mouse_tracking(self, on=not self._select_mode)
+        self._update_subtitle()
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar")
@@ -559,17 +569,22 @@ class MainApp(App):
         walk(tree.root)
 
     def _update_subtitle(self) -> None:
-        """Header subtitle reflects the selected agent + its model."""
+        """Header subtitle reflects the selected agent + its model.
+        When select mode is on, append a yellow indicator so the user
+        knows clicks won't be intercepted."""
         base = f"session: {self.socket_path.stem}"
-        if not self.selected_addr:
-            self.sub_title = base
-            return
-        label = self.selected_label or self.selected_addr
-        model = self._addr_models.get(self.selected_addr)
-        if model:
-            self.sub_title = f"{base}  ·  {label}  ·  {model}"
+        if self.selected_addr:
+            label = self.selected_label or self.selected_addr
+            model = self._addr_models.get(self.selected_addr)
+            if model:
+                base = f"{base}  ·  {label}  ·  {model}"
+            else:
+                base = f"{base}  ·  {label}"
+        self._base_sub_title = base
+        if getattr(self, "_select_mode", False):
+            self.sub_title = f"{base}  [bold yellow][select — F5 to exit][/]"
         else:
-            self.sub_title = f"{base}  ·  {label}"
+            self.sub_title = base
 
     def _cache_extras(self, addr_id: str, node: dict[str, Any]) -> None:
         """Pluck the per-agent ``model`` off a tree node. Context
