@@ -594,6 +594,10 @@ def _format_event(
     if kind == "tool":
         failed = bool(event.get("failed"))
         summary = _summarize_tool_result(event.get("text", "") or "")
+        # Skip the ``⎿`` row entirely when a tool ran with no output —
+        # no point rendering an empty result indicator.
+        if not summary:
+            return (None, ())
         return (_tool_result_block(summary, failed), ("subordinate",))
 
     if kind == "assistant":
