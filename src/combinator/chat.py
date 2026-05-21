@@ -593,11 +593,17 @@ def _format_event(
 
     if kind == "tool":
         failed = bool(event.get("failed"))
-        summary = _summarize_tool_result(event.get("text", "") or "")
-        # Skip the ``⎿`` row entirely when a tool ran with no output —
-        # no point rendering an empty result indicator.
+        summary = _summarize_tool_result(
+            event.get("text", "") or "", failed=failed
+        )
         if not summary:
-            return (None, ())
+            # Failures must always be visible; if the SDK supplied no
+            # body we still surface a minimal marker so the user sees
+            # that the tool blew up. Successful no-output tools stay
+            # silent.
+            if not failed:
+                return (None, ())
+            summary = "(failed)"
         return (_tool_result_block(summary, failed), ("subordinate",))
 
     if kind == "assistant":
@@ -638,6 +644,10 @@ def _format_event(
 
 _ARG_PREVIEW_LEN = 60
 _BODY_PREVIEW_LEN = 200
+# Failure detail gets a generous cap — stack traces and SDK error
+# bodies easily run past 200 chars and clipping them defeats the
+# point of surfacing the failure.
+_FAILURE_DETAIL_LEN = 1000
 
 
 def _args_preview(args: Any) -> str:
@@ -650,16 +660,26 @@ def _args_preview(args: Any) -> str:
     return ", ".join(parts)
 
 
-def _summarize_tool_result(text: str) -> str:
+def _summarize_tool_result(text: str, *, failed: bool = False) -> str:
+    """Render a summary for a tool-result body.
+
+    Successful results are aggressively truncated and newlines are
+    folded into spaces (tool outputs are often verbose and the chat
+    just needs a hint). Failed results get a much larger cap *and*
+    keep their newlines so multi-line stack traces / structured error
+    bodies render the way the user would read them in a terminal.
+    """
     parsed = _parse_dict(text)
     if not isinstance(parsed, dict):
+        if failed:
+            return _clip(text, _FAILURE_DETAIL_LEN)
         return _truncate(text, _BODY_PREVIEW_LEN)
     ok = parsed.get("ok")
     if ok is False:
         code = parsed.get("code") or "error"
         msg = parsed.get("error") or ""
         if msg:
-            return f"{code}: {_truncate(str(msg), 80)}"
+            return f"{code}: {_clip(str(msg), _FAILURE_DETAIL_LEN)}"
         return str(code)
     for key in ("address", "result", "msg_id", "terminated", "envelopes", "next_seq"):
         if key in parsed:
@@ -680,6 +700,13 @@ def _parse_dict(text: str) -> Any:
             return _json.loads(text)
         except (ValueError, TypeError):
             return None
+
+
+def _clip(s: str, n: int) -> str:
+    """Cap ``s`` at ``n`` characters, preserving newlines. Use for
+    multi-line content (failure detail, stack traces) where the
+    line structure carries meaning."""
+    return s if len(s) <= n else s[: n - 1] + "…"
 
 
 def _truncate(s: str, n: int) -> str:
