@@ -105,14 +105,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 # Vertical-bar chat layout: a thin ``▎`` glyph in the left column
 # (color-coded by speaker) ties a block's lines together visually.
-# The agent's identity is shown in the window's title; the bar is a
-# silent speaker indicator, not a label. Text + indented tool calls
-# render under the same bar so a response and its tool uses read as
-# one unit.
+# Colors match the activity pane (main_window._activity_label_style):
+# bold magenta = agent, bold cyan = user. Each block ends with a
+# trailing bar-only row so the bar runs continuously down the pane
+# across stacked blocks instead of showing CSS-margin gaps.
 _AGENT_BAR = "▎"
 _USER_BAR = "▎"
-_AGENT_BAR_STYLE = "cyan"
-_USER_BAR_STYLE = "bold blue"
+_AGENT_BAR_STYLE = "bold magenta"
+_USER_BAR_STYLE = "bold cyan"
 _TOOL_CALL_PREFIX = "● "
 _TOOL_CALL_STYLE = "cyan"
 _TOOL_RESULT_PREFIX = "⎿ "
@@ -137,11 +137,7 @@ class ChatView(VerticalScroll):
     }
     ChatView > Static {
         height: auto;
-        margin-bottom: 1;
-    }
-    ChatView > Static.subordinate {
-        margin-top: 0;
-        margin-bottom: 1;
+        margin: 0;
     }
     """
 
@@ -504,24 +500,27 @@ def _bar_grid() -> "Table":
 
 
 def _user_block(text: str) -> RenderableType | None:
-    """Left-aligned user message under a blue speaker bar. No "user"
-    label — the bar's color encodes the speaker."""
+    """Left-aligned user message under a cyan speaker bar. The bar
+    extends one row past the last line of text so adjacent blocks
+    chain together without a visual gap."""
     if not text:
         return None
     table = _bar_grid()
     bar = Text(_USER_BAR, style=_USER_BAR_STYLE)
     for line in text.split("\n"):
         table.add_row(bar, Text(line))
+    table.add_row(bar, Text(""))
     return table
 
 
 def _response_block(
     text: str, tool_calls: list[dict[str, Any]]
 ) -> RenderableType | None:
-    """Agent response: cyan bar on the left, text under it, tool
-    calls indented one space below. When the assistant turn carried
-    only tool calls (no text), the empty leading line is skipped so
-    the bar doesn't open with a blank row."""
+    """Agent response: magenta bar on the left, text under it, tool
+    calls indented one space below, then one trailing bar-only row so
+    the bar flows into the next block without a CSS-margin gap. When
+    the turn carried only tool calls (no text), the empty leading
+    line is skipped so the bar doesn't open with a blank row."""
     if not text and not tool_calls:
         return None
     table = _bar_grid()
@@ -531,6 +530,7 @@ def _response_block(
             table.add_row(bar, Text(line))
     for tc in tool_calls:
         table.add_row(bar, _tool_call_text(tc))
+    table.add_row(bar, Text(""))
     return table
 
 
@@ -563,14 +563,16 @@ def _error_block(text: str) -> RenderableType:
 
 def _tool_result_block(summary: str, failed: bool) -> RenderableType:
     """Tool result aligns under the preceding response's bar (same
-    cyan, same column) so the result reads as a continuation. The
-    bar is dimmed to subordinate it visually."""
+    magenta column) so it reads as a continuation. The bar is dimmed
+    to subordinate it visually. Includes a trailing bar-only row to
+    keep the bar continuous through to the next block."""
     table = _bar_grid()
-    bar = Text(_AGENT_BAR, style=f"dim {_AGENT_BAR_STYLE}")
+    bar = Text(_AGENT_BAR, style="dim magenta")
     body = Text()
     body.append(_TOOL_RESULT_PREFIX, style="dim")
     body.append(summary, style="red" if failed else "dim")
     table.add_row(bar, body)
+    table.add_row(bar, Text(""))
     return table
 
 
