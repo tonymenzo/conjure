@@ -192,7 +192,21 @@ class ControlServer:
                 result["inbox"] = inbox_reply.get("envelopes", [])
             else:
                 result["inbox_error"] = inbox_reply.get("error")
+            # Context-window meter for the selected agent only —
+            # keeps the per-tick cost bounded regardless of how many
+            # agents are alive.
+            ctx = self._context_usage_for(addr_id)
+            if ctx is not None:
+                result["context"] = ctx
         return result
+
+    def _context_usage_for(self, addr_id: str) -> dict[str, int] | None:
+        addr = self.runtime.address_by_id(addr_id)
+        if addr is None:
+            return None
+        rec = self.runtime.record_for(addr)
+        engine = self.runtime._engine_for(rec)  # noqa: SLF001
+        return _engine_context_usage(engine)
 
     def _sandbox(self, addr_id: str | None, path: str | None) -> dict[str, Any]:
         """List sandbox contents (when ``path`` is None or a directory)
@@ -365,6 +379,12 @@ class ControlServer:
     # ---- methods ----
 
     def _tree(self) -> dict[str, Any]:
+        """Tree walk per tick. Stays *cheap* — only fields that are
+        O(1) per agent. ``context_usage`` is intentionally excluded
+        (some engines do an async-bridge call with a 2s timeout, and
+        running that for every agent every 500ms would lag the UI).
+        Context usage is fetched separately for the selected agent in
+        ``_snapshot``."""
         root = self.runtime.root_addr
         if root is None:
             return {"ok": True, "tree": None}
@@ -384,7 +404,6 @@ class ControlServer:
                 "status": rec.status,
                 "engine": rec.spec.engine,
                 "model": _engine_model_name(engine),
-                "context": _engine_context_usage(engine),
                 "log_path": log_path,
                 "children": [
                     walk(c) for c in sorted(rec.children, key=lambda a: a.id)

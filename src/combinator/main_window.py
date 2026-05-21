@@ -412,7 +412,18 @@ class MainApp(App):
         self._apply_cost(reply.get("cost") or {})
         self._apply_activity(reply.get("activity") or [])
         self._apply_permissions(reply.get("pending_permissions") or [])
+        self._apply_context(reply.get("context"))
         self._refresh_context_bar()
+
+    def _apply_context(self, ctx: dict[str, Any] | None) -> None:
+        if not self.selected_addr:
+            return
+        if not isinstance(ctx, dict):
+            self._addr_context.pop(self.selected_addr, None)
+            return
+        used, total = ctx.get("used"), ctx.get("max")
+        if isinstance(used, int) and isinstance(total, int) and total > 0:
+            self._addr_context[self.selected_addr] = (used, total)
 
     def _apply_tree(self, node: dict[str, Any] | None) -> None:
         # Cache the latest tree so the pulse tick can refresh labels
@@ -517,18 +528,12 @@ class MainApp(App):
             self.sub_title = f"{base}  ·  {label}"
 
     def _cache_extras(self, addr_id: str, node: dict[str, Any]) -> None:
-        """Pluck the per-agent ``model`` and ``context`` payload off
-        a tree node. Used to feed the context bar at the bottom of
-        the chat pane and the header subtitle."""
+        """Pluck the per-agent ``model`` off a tree node. Context
+        usage is fetched separately for the selected agent only (in
+        ``refresh_all``) to keep the tick cost bounded."""
         model = node.get("model")
         if isinstance(model, str) and model:
             self._addr_models[addr_id] = model
-        ctx = node.get("context")
-        if isinstance(ctx, dict):
-            used = ctx.get("used")
-            total = ctx.get("max")
-            if isinstance(used, int) and isinstance(total, int) and total > 0:
-                self._addr_context[addr_id] = (used, total)
 
     def _refresh_context_bar(self) -> None:
         """Render the model + context-window meter for the selected

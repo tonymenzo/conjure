@@ -159,16 +159,21 @@ class ClaudeAgentEngine:
         return getattr(self._options, "model", None) if hasattr(self, "_options") else None
 
     def context_usage(self) -> tuple[int, int] | None:
-        """Pull the SDK's authoritative context-usage counter. The
-        call is async; we hop onto the engine's event loop and wait
-        a short time so the synchronous UI tick doesn't stall."""
+        """Pull the SDK's context-usage counter. Bounded by a short
+        timeout — the UI calls this on a 500ms tick and we must NOT
+        stall it. If the SDK is busy mid-turn, we just return None
+        and the bar shows whatever it had last tick.
+
+        Cache the last good reading so we can still render between
+        ticks where the SDK is busy."""
+        cached = getattr(self, "_last_context", None)
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 self._client.get_context_usage(), self._loop
             )
-            usage = fut.result(timeout=2.0)
+            usage = fut.result(timeout=0.2)
         except Exception:
-            return None
+            return cached
         used = (
             getattr(usage, "tokens_used", None)
             or getattr(usage, "input_tokens", None)
@@ -181,11 +186,13 @@ class ClaudeAgentEngine:
             or 200_000
         )
         if used is None:
-            return None
+            return cached
         try:
-            return (int(used), int(total))
+            result = (int(used), int(total))
         except (TypeError, ValueError):
-            return None
+            return cached
+        self._last_context = result
+        return result
 
     def uses_subscription(self) -> bool:
         """True — the SDK always delegates to the local ``claude`` CLI,

@@ -250,10 +250,9 @@ class OrchestralEngine:
         """Return ``(tokens_used, tokens_max)`` for this agent's
         context window, or None when we don't have token info.
 
-        Estimated from message text lengths (~4 chars/token), since
-        orchestral doesn't expose an authoritative token count.
-        Max defaults to 200K (modern Claude default) — accurate
-        enough for a progress bar, not for billing."""
+        Estimated from message text lengths (~4 chars/token). Only
+        invoked for the selected agent each UI tick (the control
+        server gates that), so the O(messages) cost is bounded."""
         messages = getattr(getattr(self._agent, "context", None), "messages", None)
         if messages is None:
             return None
