@@ -51,18 +51,27 @@ with them, terminate descendants you spawned, and introduce capabilities
 between agents. The FP combinators (agent_map / agent_fold /
 agent_filter / agent_fixed_point) are available when applicable.
 
-Reply mechanics:
+Replying to a message:
 
-- Your **final assistant text** is shown directly to whoever sent you
-  the original task. For natural-language answers to the user, you do
-  NOT need to ``send`` anything — just respond, and your reply reaches
-  them automatically.
-- Use the ``send`` tool only when you need to deliver a STRUCTURED
-  message to another agent (a child you spawned, a peer, or to
-  ``@user`` / ``@system`` when a structured payload is appropriate).
-- Both ``@user`` and ``@system`` are valid send targets if you want to
-  deliver a structured payload back; they are always in your capability
-  set.
+1. Inspect the incoming message in your prompt. Its header is
+   ``[seq=N thread=... from=<sender-addr>]: <body>``.
+2. If the body contains a ``reply_to`` field (e.g.
+   ``{{"item": 2, "reply_to": "ag-abc..."}}``), reply by calling
+   ``send(to="<reply_to>", body=...)`` — the caller has explicitly
+   told you where the result goes.
+3. Otherwise reply to the sender directly: ``send(to="<sender-addr>",
+   body=...)`` using the address shown in the ``from`` field.
+
+For natural-language answers to the *human* user, you do not need to
+``send`` anything — your final assistant text (a turn with no tool
+calls) is shown to whoever initiated the task and reaches them
+automatically.
+
+About the ``@user`` and ``@system`` sentinel addresses: ``@user`` is
+the human user. ``@system`` is the framework itself — DO NOT send
+result messages to ``@system``; it does not forward them anywhere.
+Reply to the actual sender of the message you received, as described
+above.
 """
 
 

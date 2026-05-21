@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from rich.text import Text
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -201,9 +202,15 @@ class MetaApp(App):
         )
         self.selected_addr: str | None = None
         self.selected_label: str | None = None
-        # Track which agent addresses the user has explicitly collapsed
-        # so periodic ``refresh_tree`` rebuilds don't re-expand them.
-        # Default-expand new agents the user hasn't touched yet.
+        # Cache of the last tree *structure* we rendered (addresses +
+        # parent/child shape, status excluded). We only tear down and
+        # rebuild the textual ``Tree`` when this signature changes —
+        # status updates flow through ``_update_labels`` and don't
+        # touch expand state. This is what keeps user-collapsed nodes
+        # collapsed across the periodic refresh.
+        self._tree_signature: tuple | None = None
+        # Optional: agents the user explicitly collapsed. Applied when
+        # a rebuild does happen (e.g. a new agent appears).
         self._collapsed: set[str] = set()
 
     def compose(self) -> ComposeResult:
@@ -235,10 +242,33 @@ class MetaApp(App):
             self.refresh_preview(self.selected_addr)
 
     def refresh_tree(self) -> None:
+        """Periodic refresh.
+
+        On every tick we compare the current daemon-reported tree
+        structure (addresses + parent/child relationships, *not*
+        status) to the last one we rendered. If unchanged, we only
+        update the labels of existing nodes — no clear/rebuild, no
+        touching of expand state. Status icons update visually,
+        user-collapsed nodes stay collapsed.
+
+        Only when an agent is added or removed do we rebuild the
+        tree from scratch, applying ``self._collapsed`` to honor any
+        prior user collapses on still-existing nodes.
+        """
         reply = self.client.call("tree")
+        if not reply.get("ok"):
+            return
+        node = reply.get("tree")
+        new_sig = _structure_signature(node)
+        if new_sig == self._tree_signature:
+            self._update_labels(node)
+            return
+        self._tree_signature = new_sig
+        self._rebuild_tree(node)
+
+    def _rebuild_tree(self, node: dict[str, Any] | None) -> None:
         tree = self.query_one("#tree-pane", Tree)
         tree.clear()
-        node = reply.get("tree") if reply.get("ok") else None
         if node is None:
             tree.root.set_label("(no agents)")
             tree.root.expand()
@@ -248,25 +278,51 @@ class MetaApp(App):
         self._populate(tree.root, node)
 
     def _populate(self, parent: TreeNode, node: dict[str, Any]) -> None:
-        icon = _STATUS_ICON.get(node.get("status", ""), "?")
-        style = _STATUS_STYLE.get(node.get("status", ""), "white")
-        label_text = node.get("label") or node.get("addr") or "?"
-        markup = f"[{style}]{icon}[/] [bold]{label_text}[/]"
         addr_id = node.get("addr")
-        # Default: expanded — unless the user explicitly collapsed this
-        # agent on a prior tick. Without this guard, periodic refresh
-        # would clobber the user's collapse action every second.
+        # Honor a prior user collapse if the agent still exists;
+        # otherwise default to expanded (new agents are visible).
         expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
-        child = parent.add(markup, data=addr_id, expand=expand)
+        child = parent.add(_format_node_label(node), data=addr_id, expand=expand)
         for c in node.get("children", []):
             self._populate(child, c)
 
-    def on_tree_node_collapsed(self, event: Tree.NodeCollapsed) -> None:
+    def _update_labels(self, node: dict[str, Any] | None) -> None:
+        """Walk the existing tree and update node labels in place for
+        status changes. Does not touch expand/collapse state."""
+        if node is None:
+            return
+        tree = self.query_one("#tree-pane", Tree)
+        by_addr: dict[str, dict[str, Any]] = {}
+
+        def collect(n: dict[str, Any]) -> None:
+            addr = n.get("addr")
+            if isinstance(addr, str):
+                by_addr[addr] = n
+            for c in n.get("children", []):
+                collect(c)
+
+        collect(node)
+
+        def walk(tnode: TreeNode) -> None:
+            if isinstance(tnode.data, str) and tnode.data in by_addr:
+                new_label = _format_node_label(by_addr[tnode.data])
+                # Only update if the label string changed — avoids
+                # unnecessary repaints on quiet ticks.
+                if str(tnode.label) != new_label:
+                    tnode.set_label(new_label)
+            for child in tnode.children:
+                walk(child)
+
+        walk(tree.root)
+
+    @on(Tree.NodeCollapsed)
+    def _on_node_collapsed(self, event: Tree.NodeCollapsed) -> None:
         addr = event.node.data
         if isinstance(addr, str):
             self._collapsed.add(addr)
 
-    def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
+    @on(Tree.NodeExpanded)
+    def _on_node_expanded(self, event: Tree.NodeExpanded) -> None:
         addr = event.node.data
         if isinstance(addr, str):
             self._collapsed.discard(addr)
@@ -378,6 +434,25 @@ class MetaApp(App):
         except Exception:
             pass
         self.refresh_all()
+
+
+def _structure_signature(node: dict[str, Any] | None) -> tuple | None:
+    """Return a stable hashable signature of the tree's structure
+    (addresses + parent/child relations, *not* status). Used to detect
+    when a rebuild is actually necessary."""
+    if node is None:
+        return None
+    return (
+        node.get("addr"),
+        tuple(_structure_signature(c) for c in node.get("children", [])),
+    )
+
+
+def _format_node_label(node: dict[str, Any]) -> str:
+    icon = _STATUS_ICON.get(node.get("status", ""), "?")
+    style = _STATUS_STYLE.get(node.get("status", ""), "white")
+    label_text = node.get("label") or node.get("addr") or "?"
+    return f"[{style}]{icon}[/] [bold]{label_text}[/]"
 
 
 def _format_usd(usd: float) -> str:
