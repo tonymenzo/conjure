@@ -1,0 +1,64 @@
+# Example configuration: root agent backed by claude-agent-sdk.
+#
+# This config makes the root run as a ``ClaudeSDKClient`` session
+# (Claude Code's tool surface) instead of the in-process orchestral
+# engine. The agent's cwd is its sandbox dir, allowed_tools is the
+# list under ``root.tools``, and per-tool permission decisions ride
+# on ``root.permissions``.
+#
+# Setup:
+#   pip install -e .[claude_agent]
+#   # ANTHROPIC_API_KEY in shell or ~/.config/combinator/.env
+#   combinator check examples/claude_agent.yaml
+#   combinator run examples/claude_agent.yaml
+#
+# Browse the agent's sandbox: Ctrl+B F inside the tmux session.
+
+runtime:
+  store_dir: ./.combinator/store
+  max_workers: 32
+  max_depth: 3
+
+llms:
+  # The orchestral engine needs at least one LLM entry to validate;
+  # claude_agent ignores it and talks to Claude directly.
+  default:
+    provider: anthropic
+
+root:
+  role_prompt: |
+    You are a coding agent backed by the Claude Agent SDK. Your
+    working directory is your sandbox; everything you Read, Write,
+    Edit, and Bash happens inside it. Keep your replies terse —
+    code first, brief explanations after.
+
+  engine: claude_agent
+
+  # Tool names use Claude Code's vocabulary directly when
+  # engine=claude_agent. Pick what this agent should be able to do.
+  tools:
+    - Read
+    - Write
+    - Edit
+    - Bash
+    - Grep
+    - Glob
+
+  # Per-tool permission decisions. "allow" (default) runs without
+  # asking; "deny" hard-blocks; "ask" (when the UI prompt lands)
+  # will surface an interactive approval. Today "ask" maps to deny.
+  permissions:
+    Read: allow
+    Grep: allow
+    Glob: allow
+    Write: allow
+    Edit: allow
+    Bash: ask
+
+  # Optional: pin the sandbox path explicitly. When omitted the
+  # runtime auto-allocates {store_dir}/sandboxes/{agent_id}/.
+  # sandbox_dir: ./work/
+
+  label: root
+
+mode: repl
