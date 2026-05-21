@@ -267,10 +267,10 @@ class MainApp(App):
         # 500ms tick: light enough that interaction feels live, heavy
         # enough that we're not spamming the control socket.
         self.set_interval(0.5, self.refresh_all)
-        tree.focus()
-        # Default selection: try to land on the root (iota) so the
-        # chat pane shows something useful immediately.
+        # Pre-select iota in the tree (drives the chat pane) but land
+        # the cursor in the input box so the user can just start typing.
         self._select_root_if_available()
+        self.query_one("#chat-input", Input).focus()
 
     def on_unmount(self) -> None:
         self._stop_chat_tail()
@@ -365,6 +365,12 @@ class MainApp(App):
         if new_sig == self._tree_signature:
             self._update_labels(node)
             return
+        # Topology changed — auto-expand any branch where a new agent
+        # appeared, so newly-spawned children pop into view even if
+        # the user had collapsed the parent earlier.
+        prev_addrs = set(self._addr_labels)
+        for parent_addr in _parents_with_new_children(node, prev_addrs):
+            self._collapsed.discard(parent_addr)
         self._tree_signature = new_sig
         self._rebuild_tree(node)
 
@@ -634,6 +640,28 @@ class MainApp(App):
 
 
 # ---- helpers ----
+
+def _parents_with_new_children(
+    node: dict[str, Any] | None, known_addrs: set[str]
+) -> set[str]:
+    """Walk ``node`` and collect every addr whose tree slot contains a
+    child that wasn't present in ``known_addrs``. Used to auto-expand
+    branches when new agents spawn."""
+    parents: set[str] = set()
+    if node is None:
+        return parents
+
+    def walk(n: dict[str, Any], parent_addr: str | None) -> None:
+        addr = n.get("addr")
+        if isinstance(addr, str) and addr not in known_addrs and parent_addr:
+            parents.add(parent_addr)
+        carrier = addr if isinstance(addr, str) else parent_addr
+        for child in n.get("children", []):
+            walk(child, carrier)
+
+    walk(node, None)
+    return parents
+
 
 def _structure_signature(node: dict[str, Any] | None) -> tuple | None:
     if node is None:
