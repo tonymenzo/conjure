@@ -347,19 +347,20 @@ class MainApp(App):
     # ----- refresh -----
 
     def refresh_all(self) -> None:
-        self.refresh_tree()
-        self.refresh_cost()
-        if self.selected_addr is not None:
-            self.refresh_inbox(self.selected_addr)
-
-    def refresh_tree(self) -> None:
+        """One socket call per tick — fetch tree + cost + (selected
+        agent's) inbox in a single round-trip."""
         try:
-            reply = self.client.call("tree")
+            reply = self.client.call("snapshot", addr=self.selected_addr)
         except Exception:
             return
         if not reply.get("ok"):
             return
-        node = reply.get("tree")
+        self._apply_tree(reply.get("tree"))
+        self._apply_cost(reply.get("cost") or {})
+        if self.selected_addr is not None and "inbox" in reply:
+            self._apply_inbox(self.selected_addr, reply.get("inbox") or [])
+
+    def _apply_tree(self, node: dict[str, Any] | None) -> None:
         new_sig = _structure_signature(node)
         if new_sig == self._tree_signature:
             self._update_labels(node)
@@ -423,19 +424,8 @@ class MainApp(App):
 
         walk(tree.root)
 
-    def refresh_inbox(self, addr_id: str) -> None:
-        try:
-            reply = self.client.call("inbox", addr=addr_id)
-        except Exception as exc:
-            self.query_one("#inbox-pane", Static).update(
-                Text(f"control error: {exc}", style="red")
-            )
-            return
+    def _apply_inbox(self, addr_id: str, envs: list[dict[str, Any]]) -> None:
         inbox_pane = self.query_one("#inbox-pane", Static)
-        if not reply.get("ok"):
-            inbox_pane.update(Text(reply.get("error", "?"), style="red"))
-            return
-        envs = reply.get("envelopes", [])
         from rich.console import Group as _Group
 
         rows: list[Any] = [
@@ -456,25 +446,18 @@ class MainApp(App):
                 rows.append(row)
         inbox_pane.update(_Group(*rows))
 
-    def refresh_cost(self) -> None:
-        try:
-            reply = self.client.call("cost")
-        except Exception:
-            return
+    def _apply_cost(self, cost: dict[str, Any]) -> None:
         cost_pane = self.query_one("#cost-pane", Static)
-        if not reply.get("ok"):
-            cost_pane.update(Text(reply.get("error", "?"), style="red"))
-            return
-        total = reply.get("total", 0.0)
+        from rich.console import Group as _Group
+
+        total = cost.get("total", 0.0)
         rows: list[Any] = [Text("cost", style="bold")]
-        for row in reply.get("rows", []):
+        for row in cost.get("rows", []) or []:
             label = row.get("label") or row.get("addr") or "?"
             usd = row.get("cost", 0.0)
             rows.append(Text(f"  {label:<14}  {_format_usd(usd)}"))
         rows.append(Text(""))
         rows.append(Text(f"total {_format_usd(total)}", style="bold"))
-        from rich.console import Group as _Group
-
         cost_pane.update(_Group(*rows))
 
     # ----- selection / chat pane swap -----
@@ -493,14 +476,16 @@ class MainApp(App):
         """Arrow-navigation lands here. Swap the chat pane to the
         highlighted agent so navigating the tree is instantly visible
         in the chat. The selected-addr early-return in ``_swap_chat_to``
-        makes repeated highlights of the same node a no-op."""
+        makes repeated highlights of the same node a no-op. The next
+        ``refresh_all`` tick picks up the new addr's inbox; we also
+        trigger one immediately for snappier feedback."""
         try:
             addr_id = event.node.data
             if not isinstance(addr_id, str):
                 return
             label = self._addr_labels.get(addr_id) or addr_id
-            self.refresh_inbox(addr_id)
             self._swap_chat_to(addr=addr_id, label=label)
+            self.refresh_all()
         except Exception:
             pass
 

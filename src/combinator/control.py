@@ -113,6 +113,8 @@ class ControlServer:
             return self._cost()
         if method == "inbox":
             return self._inbox(request.get("addr"))
+        if method == "snapshot":
+            return self._snapshot(request.get("addr"))
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -120,6 +122,29 @@ class ControlServer:
                 request.get("addr"), request.get("cascade", True)
             )
         return {"ok": False, "error": f"unknown method: {method}"}
+
+    def _snapshot(self, addr_id: str | None) -> dict[str, Any]:
+        """Return ``tree`` + ``cost`` + (optionally) ``inbox`` for one
+        address in a single round-trip. The main UI ticks 2 Hz; doing
+        three separate socket calls per tick is wasteful, so the UI
+        uses this consolidated query."""
+        tree_reply = self._tree()
+        cost_reply = self._cost()
+        result: dict[str, Any] = {
+            "ok": True,
+            "tree": tree_reply.get("tree"),
+            "cost": {
+                "total": cost_reply.get("total", 0.0),
+                "rows": cost_reply.get("rows", []),
+            },
+        }
+        if addr_id:
+            inbox_reply = self._inbox(addr_id)
+            if inbox_reply.get("ok"):
+                result["inbox"] = inbox_reply.get("envelopes", [])
+            else:
+                result["inbox_error"] = inbox_reply.get("error")
+        return result
 
     # ---- methods ----
 
