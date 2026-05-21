@@ -24,7 +24,13 @@ from combinator.capability import CapabilitySet
 from combinator.mailbox import Mailbox
 
 
-AgentStatus = Literal["lazy", "running", "idle", "terminated"]
+AgentStatus = Literal[
+    "lazy",
+    "running",
+    "awaiting_permission",
+    "idle",
+    "terminated",
+]
 
 
 class AgentSpec(BaseModel):

@@ -98,11 +98,33 @@ class ClaudeAgentEngine:
                     message=f"{tool_name} denied by agent permissions"
                 )
             if decision == "ask":
-                # Phase 2 follow-up will surface an interactive prompt;
-                # for now treat as a hard deny so the agent gets a
-                # clear signal instead of hanging.
+                # Submit a request to the runtime's shared permission
+                # queue; the UI banner picks it up. Block this async
+                # callback on the underlying Event by running the
+                # blocking ``wait`` in a worker thread so we don't
+                # stall the event loop.
+                req = runtime.submit_permission_request(
+                    addr=record.addr,
+                    tool_name=tool_name,
+                    args=dict(args) if isinstance(args, dict) else {},
+                )
+                previous = record.status
+                record.status = "awaiting_permission"
+                try:
+                    result = await asyncio.to_thread(
+                        req.wait, 300.0
+                    )
+                finally:
+                    record.status = previous
+                if result == "allow":
+                    return PermissionResultAllow()
+                if result == "timeout":
+                    runtime._discard_permission(req.req_id)  # noqa: SLF001
+                    return PermissionResultDeny(
+                        message=f"{tool_name} approval timed out"
+                    )
                 return PermissionResultDeny(
-                    message=f"{tool_name} requires approval"
+                    message=f"{tool_name} denied by user"
                 )
             return PermissionResultAllow()
 

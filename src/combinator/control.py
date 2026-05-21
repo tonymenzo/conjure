@@ -121,6 +121,12 @@ class ControlServer:
             return self._inboxes(int(request.get("limit", 20) or 20))
         if method == "sandbox":
             return self._sandbox(request.get("addr"), request.get("path"))
+        if method == "permissions":
+            return self._permissions(request.get("addr"))
+        if method == "resolve_permission":
+            return self._resolve_permission(
+                request.get("req_id"), request.get("decision")
+            )
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -129,14 +135,47 @@ class ControlServer:
             )
         return {"ok": False, "error": f"unknown method: {method}"}
 
+    def _permissions(self, addr_id: str | None) -> dict[str, Any]:
+        """List pending permission requests (optionally for one
+        agent). Powers the chat-pane approval banner."""
+        addr = None
+        if addr_id:
+            addr = self.runtime.address_by_id(addr_id)
+        reqs = self.runtime.list_pending_permissions(addr=addr)
+        return {
+            "ok": True,
+            "pending": [
+                {
+                    "req_id": r.req_id,
+                    "addr": r.addr.id,
+                    "addr_label": r.addr.label,
+                    "tool_name": r.tool_name,
+                    "args": r.args,
+                    "ts": r.ts,
+                }
+                for r in reqs
+            ],
+        }
+
+    def _resolve_permission(
+        self, req_id: str | None, decision: str | None
+    ) -> dict[str, Any]:
+        if not req_id:
+            return {"ok": False, "error": "missing req_id"}
+        if decision not in ("allow", "deny"):
+            return {"ok": False, "error": "decision must be 'allow' or 'deny'"}
+        ok = self.runtime.resolve_permission(req_id, decision)
+        return {"ok": True, "resolved": ok}
+
     def _snapshot(self, addr_id: str | None) -> dict[str, Any]:
-        """Return ``tree`` + ``cost`` + cross-agent ``activity`` (plus
-        the selected agent's ``inbox``, if requested) in a single
+        """Return ``tree`` + ``cost`` + cross-agent ``activity`` +
+        pending permissions for the selected agent in a single
         round-trip. The main UI ticks 2 Hz; one consolidated query
-        per tick is cheaper than four separate ones."""
+        per tick is cheaper than separate ones."""
         tree_reply = self._tree()
         cost_reply = self._cost()
         activity_reply = self._activity(12)
+        permissions_reply = self._permissions(addr_id)
         result: dict[str, Any] = {
             "ok": True,
             "tree": tree_reply.get("tree"),
@@ -145,6 +184,7 @@ class ControlServer:
                 "rows": cost_reply.get("rows", []),
             },
             "activity": activity_reply.get("activity", []),
+            "pending_permissions": permissions_reply.get("pending", []),
         }
         if addr_id:
             inbox_reply = self._inbox(addr_id)

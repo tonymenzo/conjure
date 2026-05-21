@@ -23,6 +23,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
+import uuid
+from dataclasses import dataclass, field
+
 from combinator.address import SYSTEM, USER, Address
 from combinator.capability import CapabilitySet
 from combinator.envelope import Envelope
@@ -42,6 +45,39 @@ if TYPE_CHECKING:
     from combinator.agent import Engine
 
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
+
+
+@dataclass
+class PermissionRequest:
+    """One pending tool-permission decision from an ``ask``-mode tool.
+
+    The tool worker blocks on ``wait()``; the UI (via the control
+    server) calls ``resolve()`` which sets the underlying Event and
+    unblocks the tool. ``timeout`` from the wait side returns the
+    sentinel ``"timeout"`` so the tool can return a clear error
+    instead of hanging forever.
+    """
+
+    req_id: str
+    addr: Address
+    tool_name: str
+    args: dict[str, Any]
+    ts: float = field(default_factory=time.time)
+    _event: threading.Event = field(default_factory=threading.Event)
+    _decision: str = ""  # "allow" | "deny" | "timeout"
+
+    def wait(self, timeout_s: float) -> str:
+        if self._event.wait(timeout=timeout_s):
+            return self._decision or "timeout"
+        return "timeout"
+
+    def resolve(self, decision: str) -> None:
+        if decision not in ("allow", "deny"):
+            raise ValueError(
+                f"decision must be 'allow' or 'deny'; got {decision!r}"
+            )
+        self._decision = decision
+        self._event.set()
 
 
 def _engine_cost(engine: Any) -> float:
@@ -78,12 +114,63 @@ class Runtime:
         self._max_depth = max_depth
         self._engine_factory = engine_factory
         self._spawn_listener = spawn_listener
+        # Pending tool-permission requests (``ask`` decisions). The
+        # UI polls ``list_pending_permissions`` and calls
+        # ``resolve_permission`` to satisfy them.
+        self._permission_requests: dict[str, PermissionRequest] = {}
+        self._permission_lock = threading.Lock()
         self._install_sentinels()
 
     @property
     def store_dir(self) -> Path | None:
         """Root of on-disk runtime state (journal, sandboxes, ...)."""
         return self._store_dir
+
+    # ----- Permission request queue (for ``ask``-mode tools) -----
+
+    def submit_permission_request(
+        self, *, addr: Address, tool_name: str, args: dict[str, Any]
+    ) -> PermissionRequest:
+        """Register a pending permission request. The tool calls
+        ``wait()`` on the returned request; the UI calls
+        ``resolve_permission(req_id, decision)`` to unblock it."""
+        req = PermissionRequest(
+            req_id=f"perm-{uuid.uuid4().hex[:8]}",
+            addr=addr,
+            tool_name=tool_name,
+            args=args,
+        )
+        with self._permission_lock:
+            self._permission_requests[req.req_id] = req
+        return req
+
+    def resolve_permission(self, req_id: str, decision: str) -> bool:
+        """Resolve a pending request. Returns False if the request
+        was never registered (or was already collected)."""
+        with self._permission_lock:
+            req = self._permission_requests.pop(req_id, None)
+        if req is None:
+            return False
+        req.resolve(decision)
+        return True
+
+    def list_pending_permissions(
+        self, *, addr: Address | None = None
+    ) -> list[PermissionRequest]:
+        """Snapshot of currently-pending requests (optionally
+        filtered to one agent)."""
+        with self._permission_lock:
+            reqs = list(self._permission_requests.values())
+        if addr is not None:
+            reqs = [r for r in reqs if r.addr == addr]
+        reqs.sort(key=lambda r: r.ts)
+        return reqs
+
+    def _discard_permission(self, req_id: str) -> None:
+        """Internal: drop a request from the queue without firing
+        the event. Called by tools that gave up waiting (timeout)."""
+        with self._permission_lock:
+            self._permission_requests.pop(req_id, None)
 
     @property
     def max_depth(self) -> int:

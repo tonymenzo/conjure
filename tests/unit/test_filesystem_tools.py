@@ -125,10 +125,11 @@ def test_permission_deny_blocks_write(rt):
     assert read_impl(token=token, path="x.txt")["code"] == "not_found"
 
 
-def test_permission_ask_is_currently_treated_as_deny(rt):
-    """Until the interactive UI hook lands (Phase 2 follow-up), an
-    ``ask`` decision is hard-denied with ``permission_required`` so
-    the agent doesn't hang."""
+def test_permission_ask_blocks_and_resolves_to_allow(rt):
+    """An ``ask`` decision submits a PermissionRequest and blocks the
+    tool. When the UI resolves it to ``allow``, the tool proceeds."""
+    import threading
+
     addr = rt.root(
         AgentSpec(
             role_prompt="r",
@@ -137,9 +138,63 @@ def test_permission_ask_is_currently_treated_as_deny(rt):
         )
     )
     token = rt.record_for(addr).token
-    out = bash_impl(token=token, command="echo hi")
-    assert out["ok"] is False
-    assert out["code"] == "permission_required"
+
+    result: dict = {}
+
+    def runner():
+        result["out"] = bash_impl(token=token, command="echo hi")
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    # Wait until the request appears in the queue.
+    import time
+    for _ in range(50):
+        pending = rt.list_pending_permissions(addr=addr)
+        if pending:
+            break
+        time.sleep(0.05)
+    pending = rt.list_pending_permissions(addr=addr)
+    assert len(pending) == 1
+    assert pending[0].tool_name == "Bash"
+    assert pending[0].args == {"command": "echo hi"}
+    # Resolve → allow.
+    assert rt.resolve_permission(pending[0].req_id, "allow") is True
+    t.join(timeout=5)
+    assert result["out"]["ok"] is True
+    assert result["out"]["stdout"].strip() == "hi"
+
+
+def test_permission_ask_resolved_to_deny(rt):
+    """``deny`` resolution returns a clean ``permission_denied``."""
+    import threading
+
+    addr = rt.root(
+        AgentSpec(
+            role_prompt="r",
+            label="root",
+            permissions={"Write": "ask"},
+        )
+    )
+    token = rt.record_for(addr).token
+    result: dict = {}
+
+    def runner():
+        result["out"] = write_impl(
+            token=token, path="x.txt", content="hi"
+        )
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    import time
+    for _ in range(50):
+        pending = rt.list_pending_permissions(addr=addr)
+        if pending:
+            break
+        time.sleep(0.05)
+    rt.resolve_permission(pending[0].req_id, "deny")
+    t.join(timeout=5)
+    assert result["out"]["ok"] is False
+    assert result["out"]["code"] == "permission_denied"
 
 
 def test_no_sandbox_when_no_store_dir():

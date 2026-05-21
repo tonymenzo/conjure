@@ -66,6 +66,11 @@ _PULSE_STYLES = {
     "lazy":    ["bold green",  "green",  "dim green",  "green"],
     "running": ["bold yellow", "yellow", "dim yellow", "yellow"],
     "error":   ["bold red",    "red",    "dim red",    "red"],
+    # Magenta pulse = "needs your attention" — a tool is blocked
+    # waiting for a permission decision.
+    "awaiting_permission": [
+        "bold magenta", "magenta", "dim magenta", "magenta",
+    ],
 }
 _STATIC_STYLES = {
     "idle": "green",
@@ -189,6 +194,19 @@ class MainApp(App):
         scrollbar-size: 1 1;
         border: none;
     }
+    #perm-banner {
+        dock: bottom;
+        height: auto;
+        padding: 0 1;
+        background: $surface;
+        color: $foreground;
+        display: none;
+        border: round magenta;
+        text-style: bold;
+    }
+    #perm-banner.active {
+        display: block;
+    }
     #chat-input {
         dock: bottom;
         border: round $accent;
@@ -201,6 +219,8 @@ class MainApp(App):
 
     BINDINGS = [
         Binding("f2", "toggle_sidebar", "Toggle sidebar"),
+        Binding("f3", "permission_allow", "Allow", show=False),
+        Binding("f4", "permission_deny", "Deny", show=False),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
@@ -251,6 +271,9 @@ class MainApp(App):
         # Cache the most recent tree node dict so the pulse tick can
         # refresh labels without re-fetching from the daemon.
         self._last_tree: dict[str, Any] | None = None
+        # Currently-displayed permission request for the selected
+        # agent (None when no pending request). F3/F4 resolve this.
+        self._active_perm: dict[str, Any] | None = None
 
     # ----- compose -----
 
@@ -263,6 +286,7 @@ class MainApp(App):
                 yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
+                yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
@@ -363,8 +387,8 @@ class MainApp(App):
     # ----- refresh -----
 
     def refresh_all(self) -> None:
-        """One socket call per tick — fetch tree + cost + activity
-        feed in a single round-trip."""
+        """One socket call per tick — fetch tree + cost + activity +
+        pending permissions for the selected agent."""
         try:
             reply = self.client.call("snapshot", addr=self.selected_addr)
         except Exception:
@@ -374,6 +398,7 @@ class MainApp(App):
         self._apply_tree(reply.get("tree"))
         self._apply_cost(reply.get("cost") or {})
         self._apply_activity(reply.get("activity") or [])
+        self._apply_permissions(reply.get("pending_permissions") or [])
 
     def _apply_tree(self, node: dict[str, Any] | None) -> None:
         # Cache the latest tree so the pulse tick can refresh labels
@@ -461,6 +486,57 @@ class MainApp(App):
                 walk(child)
 
         walk(tree.root)
+
+    def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
+        """Show the first pending permission for the selected agent as
+        a banner above the input. ``F3`` / ``F4`` resolve it."""
+        banner = self.query_one("#perm-banner", Static)
+        if self.selected_addr is None:
+            mine: list[dict[str, Any]] = []
+        else:
+            mine = [p for p in pending if p.get("addr") == self.selected_addr]
+        if not mine:
+            self._active_perm = None
+            banner.set_class(False, "active")
+            banner.update("")
+            return
+        first = mine[0]
+        self._active_perm = first
+        args_preview = _args_preview(first.get("args") or {})
+        body = Text()
+        body.append("PERMISSION REQUEST  ", style="bold magenta")
+        body.append(first.get("tool_name", "?"), style="bold cyan")
+        body.append(f"({args_preview})", style="dim cyan")
+        body.append("    ")
+        body.append("[F3] allow", style="bold green")
+        body.append("    ")
+        body.append("[F4] deny", style="bold red")
+        banner.update(body)
+        banner.set_class(True, "active")
+
+    def action_permission_allow(self) -> None:
+        self._resolve_active_permission("allow")
+
+    def action_permission_deny(self) -> None:
+        self._resolve_active_permission("deny")
+
+    def _resolve_active_permission(self, decision: str) -> None:
+        req = self._active_perm
+        if not req:
+            return
+        try:
+            self.client.call(
+                "resolve_permission",
+                req_id=req.get("req_id"),
+                decision=decision,
+            )
+        except Exception:
+            pass
+        # Hide the banner immediately — the next snapshot will confirm.
+        self._active_perm = None
+        banner = self.query_one("#perm-banner", Static)
+        banner.set_class(False, "active")
+        banner.update("")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
         """Cross-agent activity feed: who sent what to whom across the
@@ -732,6 +808,17 @@ def _short_repr(value: object, limit: int = 200) -> str:
 def _truncate(s: str, n: int) -> str:
     s = s.replace("\n", " ")
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _args_preview(args: dict[str, Any]) -> str:
+    """One-line preview of tool args for the permission banner."""
+    if not args:
+        return ""
+    parts = []
+    for k, v in args.items():
+        s = str(v) if isinstance(v, str) else repr(v)
+        parts.append(f"{k}={_truncate(s, 60)}")
+    return ", ".join(parts)
 
 
 def _activity_label_style(addr_id: str | None) -> str:

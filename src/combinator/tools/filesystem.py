@@ -74,30 +74,66 @@ def _within(child: Path, parent: Path) -> bool:
         return False
 
 
-def _check_permission(record: "AgentRecord", tool_name: str) -> dict[str, Any] | None:
+def _check_permission(
+    record: "AgentRecord",
+    runtime: "Runtime",
+    tool_name: str,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Return an error dict if the per-agent permission denies this
-    tool, else None."""
+    tool, else None.
+
+    For an ``ask`` decision the tool blocks on a ``PermissionRequest``
+    waiting for the UI to allow/deny. The agent's status flips to
+    ``awaiting_permission`` during the wait so the tree shows the
+    distinct color and the UI can surface a banner."""
     decision = (record.spec.permissions or {}).get(tool_name, "allow")
     if decision == "deny":
         return _err("permission_denied", f"{tool_name} denied by agent permissions")
     if decision == "ask":
-        # No interactive UI hook yet — treat as deny so the agent
-        # gets a clear signal rather than silently hanging.
-        return _err("permission_required", f"{tool_name} requires approval")
+        req = runtime.submit_permission_request(
+            addr=record.addr, tool_name=tool_name, args=args or {}
+        )
+        previous_status = record.status
+        record.status = "awaiting_permission"
+        try:
+            result = req.wait(timeout_s=_PERMISSION_WAIT_S)
+        finally:
+            # Restore status whether allow / deny / timeout — driver
+            # state was ``running`` before we started waiting.
+            record.status = previous_status
+        if result == "allow":
+            return None
+        if result == "timeout":
+            runtime._discard_permission(req.req_id)  # noqa: SLF001
+            return _err(
+                "permission_timeout",
+                f"{tool_name} approval timed out after {_PERMISSION_WAIT_S:.0f}s",
+            )
+        return _err("permission_denied", f"{tool_name} denied by user")
     return None
 
 
+# How long a tool waits for a permission decision before giving up.
+# 5 minutes is generous for a human in the loop; tweak via the
+# environment for automated runs.
+_PERMISSION_WAIT_S = 300.0
+
+
 def _enter_sandbox(
-    token: str, tool_name: str
+    token: str,
+    tool_name: str,
+    args: dict[str, Any] | None = None,
 ) -> "tuple[Path, AgentRecord, Runtime] | dict[str, Any]":
     """Resolve token → (sandbox_path, record, runtime); enforce per-tool
-    permission. Returns an error dict on any failure."""
+    permission. For an ``ask`` decision blocks until the UI resolves
+    the request. ``args`` is shown to the user when prompting."""
     resolved = resolve_token(token)
     if resolved is None:
         return _err("no_runtime", "tool is not bound to a runtime")
     runtime, caller = resolved
     record = runtime.record_for(caller)
-    perm_err = _check_permission(record, tool_name)
+    perm_err = _check_permission(record, runtime, tool_name, args)
     if perm_err is not None:
         return perm_err
     sandbox = _sandbox_for(record, runtime)
@@ -110,7 +146,7 @@ def _enter_sandbox(
 
 
 def read_impl(*, token: str, path: str) -> dict[str, Any]:
-    res = _enter_sandbox(token, "Read")
+    res = _enter_sandbox(token, "Read", {"path": path})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
@@ -132,7 +168,7 @@ def read_impl(*, token: str, path: str) -> dict[str, Any]:
 
 
 def write_impl(*, token: str, path: str, content: str) -> dict[str, Any]:
-    res = _enter_sandbox(token, "Write")
+    res = _enter_sandbox(token, "Write", {"path": path, "bytes": len(content)})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
@@ -153,7 +189,7 @@ def edit_impl(
 ) -> dict[str, Any]:
     """Exact string replacement. ``old_string`` must appear exactly
     once in the file."""
-    res = _enter_sandbox(token, "Edit")
+    res = _enter_sandbox(token, "Edit", {"path": path})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
@@ -188,7 +224,7 @@ def bash_impl(
     """Run a shell command with ``cwd=sandbox``. The agent has the
     shell's full surface inside the sandbox; permissions on the
     ``Bash`` tool name are the gate."""
-    res = _enter_sandbox(token, "Bash")
+    res = _enter_sandbox(token, "Bash", {"command": command})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
@@ -218,7 +254,7 @@ def grep_impl(
 ) -> dict[str, Any]:
     """Plain-substring search across all UTF-8 files under ``path``
     (relative to sandbox). For regex use Bash + ``grep``."""
-    res = _enter_sandbox(token, "Grep")
+    res = _enter_sandbox(token, "Grep", {"pattern": pattern, "path": path})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
@@ -252,7 +288,7 @@ def grep_impl(
 def glob_impl(*, token: str, pattern: str) -> dict[str, Any]:
     """Match files in the sandbox by glob pattern (``**/*.py`` style).
     Patterns are evaluated relative to the sandbox root."""
-    res = _enter_sandbox(token, "Glob")
+    res = _enter_sandbox(token, "Glob", {"pattern": pattern})
     if isinstance(res, dict):
         return res
     sandbox, _record, _runtime = res
