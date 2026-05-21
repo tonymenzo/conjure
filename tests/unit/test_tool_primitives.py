@@ -128,6 +128,31 @@ def test_send_to_terminated_target(rt, root_token):
     assert out["code"] == "terminated"
 
 
+def test_send_dedups_immediate_duplicate(rt, root_token):
+    """Two identical sends in quick succession from the same caller
+    coalesce — the second is suppressed and returns the first's
+    msg_id with ``deduplicated=True``."""
+    child = spawn_impl(token=root_token, role_prompt="c")
+    first = send_impl(token=root_token, to=child["address"], body="hi")
+    second = send_impl(token=root_token, to=child["address"], body="hi")
+    assert first["ok"] and second["ok"]
+    assert second.get("deduplicated") is True
+    assert second["msg_id"] == first["msg_id"]
+    # The recipient's inbox should have exactly ONE envelope.
+    inbox = rt.read_inbox(rt.address_by_id(child["address"]))
+    assert len(inbox) == 1
+
+
+def test_send_different_body_not_deduped(rt, root_token):
+    child = spawn_impl(token=root_token, role_prompt="c")
+    a = send_impl(token=root_token, to=child["address"], body="first")
+    b = send_impl(token=root_token, to=child["address"], body="second")
+    assert a["msg_id"] != b["msg_id"]
+    assert not b.get("deduplicated")
+    inbox = rt.read_inbox(rt.address_by_id(child["address"]))
+    assert len(inbox) == 2
+
+
 # ----- recv_impl & wait_for_impl -----
 
 def test_recv_empty_returns_no_envelopes(rt, root_token):
