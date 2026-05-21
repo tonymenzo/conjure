@@ -115,6 +115,8 @@ class ControlServer:
             return self._inbox(request.get("addr"))
         if method == "snapshot":
             return self._snapshot(request.get("addr"))
+        if method == "activity":
+            return self._activity(int(request.get("limit", 12) or 12))
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -124,12 +126,13 @@ class ControlServer:
         return {"ok": False, "error": f"unknown method: {method}"}
 
     def _snapshot(self, addr_id: str | None) -> dict[str, Any]:
-        """Return ``tree`` + ``cost`` + (optionally) ``inbox`` for one
-        address in a single round-trip. The main UI ticks 2 Hz; doing
-        three separate socket calls per tick is wasteful, so the UI
-        uses this consolidated query."""
+        """Return ``tree`` + ``cost`` + cross-agent ``activity`` (plus
+        the selected agent's ``inbox``, if requested) in a single
+        round-trip. The main UI ticks 2 Hz; one consolidated query
+        per tick is cheaper than four separate ones."""
         tree_reply = self._tree()
         cost_reply = self._cost()
+        activity_reply = self._activity(12)
         result: dict[str, Any] = {
             "ok": True,
             "tree": tree_reply.get("tree"),
@@ -137,6 +140,7 @@ class ControlServer:
                 "total": cost_reply.get("total", 0.0),
                 "rows": cost_reply.get("rows", []),
             },
+            "activity": activity_reply.get("activity", []),
         }
         if addr_id:
             inbox_reply = self._inbox(addr_id)
@@ -145,6 +149,30 @@ class ControlServer:
             else:
                 result["inbox_error"] = inbox_reply.get("error")
         return result
+
+    def _activity(self, limit: int) -> dict[str, Any]:
+        """Most-recent ``limit`` envelopes across all agent inboxes,
+        sorted oldest-first. Used by the main UI's activity feed."""
+        rows: list[dict[str, Any]] = []
+        with self.runtime._lock:  # noqa: SLF001
+            records = list(self.runtime._records.values())  # noqa: SLF001
+        for rec in records:
+            if rec.addr.id in ("@user", "@system"):
+                continue
+            envs = rec.inbox.read(since_seq=0, max_n=limit)
+            for e in envs[-limit:]:
+                rows.append(
+                    {
+                        "ts": e.ts,
+                        "from": e.from_.id,
+                        "from_label": e.from_.label,
+                        "to": rec.addr.id,
+                        "to_label": rec.addr.label,
+                        "body": e.body,
+                    }
+                )
+        rows.sort(key=lambda r: r.get("ts") or 0)
+        return {"ok": True, "activity": rows[-limit:]}
 
     # ---- methods ----
 

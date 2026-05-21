@@ -160,14 +160,14 @@ class MainApp(App):
     #sidebar.hidden {
         display: none;
     }
-    #tree-pane, #inbox-pane, #cost-pane {
+    #tree-pane, #activity-pane, #cost-pane {
         border: round $primary;
         background: $surface;
         padding: 0 1;
     }
-    #tree-pane    { height: 50%; }
-    #inbox-pane   { height: 30%; }
-    #cost-pane    { height: 20%; }
+    #tree-pane     { height: 50%; }
+    #activity-pane { height: 30%; }
+    #cost-pane     { height: 20%; }
     Tree {
         background: $surface;
         scrollbar-size: 1 1;
@@ -259,7 +259,7 @@ class MainApp(App):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield StatusTree("spawn tree", id="tree-pane")
-                yield Static("(select an agent to see its inbox)", id="inbox-pane")
+                yield Static("(no activity yet)", id="activity-pane")
                 yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
@@ -363,8 +363,8 @@ class MainApp(App):
     # ----- refresh -----
 
     def refresh_all(self) -> None:
-        """One socket call per tick — fetch tree + cost + (selected
-        agent's) inbox in a single round-trip."""
+        """One socket call per tick — fetch tree + cost + activity
+        feed in a single round-trip."""
         try:
             reply = self.client.call("snapshot", addr=self.selected_addr)
         except Exception:
@@ -373,8 +373,7 @@ class MainApp(App):
             return
         self._apply_tree(reply.get("tree"))
         self._apply_cost(reply.get("cost") or {})
-        if self.selected_addr is not None and "inbox" in reply:
-            self._apply_inbox(self.selected_addr, reply.get("inbox") or [])
+        self._apply_activity(reply.get("activity") or [])
 
     def _apply_tree(self, node: dict[str, Any] | None) -> None:
         # Cache the latest tree so the pulse tick can refresh labels
@@ -463,27 +462,29 @@ class MainApp(App):
 
         walk(tree.root)
 
-    def _apply_inbox(self, addr_id: str, envs: list[dict[str, Any]]) -> None:
-        inbox_pane = self.query_one("#inbox-pane", Static)
+    def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
+        """Cross-agent activity feed: who sent what to whom across the
+        whole tree, oldest first so newest sits at the bottom."""
+        pane = self.query_one("#activity-pane", Static)
         from rich.console import Group as _Group
 
-        rows: list[Any] = [
-            Text(f"inbox of {self.selected_label or addr_id}", style="bold"),
-            Text(""),
-        ]
-        if not envs:
-            rows.append(Text("(empty)", style="dim"))
+        out: list[Any] = [Text("activity", style="bold"), Text("")]
+        if not rows:
+            out.append(Text("(no messages yet)", style="dim"))
         else:
-            for env in envs[-8:]:
-                sender = env.get("from_label") or env.get("from") or "?"
-                body = env.get("body")
-                body_repr = body if isinstance(body, str) else _short_repr(body, 140)
-                row = Text()
-                row.append(f"seq={env.get('seq')}  ", style="cyan")
-                row.append(f"from={sender}  ", style="magenta")
-                row.append(str(body_repr))
-                rows.append(row)
-        inbox_pane.update(_Group(*rows))
+            for r in rows:
+                src = r.get("from_label") or r.get("from") or "?"
+                dst = r.get("to_label") or r.get("to") or "?"
+                body = r.get("body")
+                body_repr = body if isinstance(body, str) else _short_repr(body, 80)
+                line = Text()
+                line.append(src, style=_activity_label_style(r.get("from")))
+                line.append(" → ", style="dim")
+                line.append(dst, style=_activity_label_style(r.get("to")))
+                line.append("  ")
+                line.append(_truncate(str(body_repr), 80), style="dim")
+                out.append(line)
+        pane.update(_Group(*out))
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
         cost_pane = self.query_one("#cost-pane", Static)
@@ -726,6 +727,21 @@ def _format_usd(usd: float) -> str:
 def _short_repr(value: object, limit: int = 200) -> str:
     s = repr(value)
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _truncate(s: str, n: int) -> str:
+    s = s.replace("\n", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _activity_label_style(addr_id: str | None) -> str:
+    """Color the sender/recipient label in the activity feed by kind:
+    cyan for the human user, magenta for an agent, dim for system."""
+    if addr_id == "@user":
+        return "bold cyan"
+    if addr_id == "@system":
+        return "dim"
+    return "bold magenta"
 
 
 if __name__ == "__main__":
