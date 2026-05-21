@@ -103,14 +103,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-# Speaker-block layout: 2-column grid (label | body). The label cell
-# is fixed-width so wrapped body text hangs cleanly past the speaker
-# name. ``_LABEL_GAP`` is the horizontal padding between the two
-# columns (visual breathing room).
-_LABEL_WIDTH = 6
-_LABEL_GAP = 2
-_USER_STYLE = "bold cyan"
-_AGENT_STYLE = "bold magenta"
+# Vertical-bar chat layout: a thin ``▎`` glyph in the left column
+# (color-coded by speaker) ties a block's lines together visually.
+# The agent's identity is shown in the window's title; the bar is a
+# silent speaker indicator, not a label. Text + indented tool calls
+# render under the same bar so a response and its tool uses read as
+# one unit.
+_AGENT_BAR = "▎"
+_USER_BAR = "▎"
+_AGENT_BAR_STYLE = "cyan"
+_USER_BAR_STYLE = "bold blue"
+_TOOL_CALL_PREFIX = "● "
+_TOOL_CALL_STYLE = "cyan"
+_TOOL_RESULT_PREFIX = "⎿ "
+_GUTTER = 1  # column between bar and content
 
 
 class ChatView(VerticalScroll):
@@ -136,9 +142,6 @@ class ChatView(VerticalScroll):
     ChatView > Static.subordinate {
         margin-top: 0;
         margin-bottom: 1;
-    }
-    ChatView > Static.user-block {
-        text-align: right;
     }
     """
 
@@ -192,7 +195,10 @@ class ChatView(VerticalScroll):
 
     def replay_events(self, label: str, events: list[dict[str, Any]]) -> None:
         """Replay a backlog: accumulate chunk events into complete
-        responses, mount everything in order, scroll to the bottom."""
+        responses, mount everything in order, scroll to the bottom.
+        ``label`` is no longer rendered per-block (the window title
+        identifies the speaker) but is kept for API compatibility."""
+        del label
         chunk_buffer = ""
         for event in events:
             kind = event.get("kind")
@@ -201,22 +207,22 @@ class ChatView(VerticalScroll):
                 continue
             if kind == "stream_end":
                 self._mount_response(
-                    label, chunk_buffer, event.get("tool_calls", []) or []
+                    chunk_buffer, event.get("tool_calls", []) or []
                 )
                 chunk_buffer = ""
                 continue
-            self._append_event(label, event)
+            self._append_event("", event)
         # Trailing chunks with no stream_end (mid-response when we
         # opened the log) get flushed as text without tool calls.
         if chunk_buffer:
-            self._mount_response(label, chunk_buffer, [])
+            self._mount_response(chunk_buffer, [])
         self._scroll_to_end()
 
     def echo_user(self, text: str) -> None:
         """Mount a user block directly (used by the local-input echo)."""
         block = _user_block(text)
         if block is not None:
-            self._mount(block, classes=("user-block",))
+            self._mount(block)
             self._scroll_to_end()
 
     def write_error(self, text: str) -> None:
@@ -227,7 +233,8 @@ class ChatView(VerticalScroll):
     # ----- internals -----
 
     def _append_event(self, label: str, event: dict[str, Any]) -> None:
-        block, css_classes = _format_event(label, event)
+        del label
+        block, css_classes = _format_event(event)
         if block is not None:
             self._mount(block, classes=css_classes)
             self._scroll_to_end()
@@ -291,9 +298,9 @@ class ChatView(VerticalScroll):
         self._scroll_to_end()
 
     def _mount_response(
-        self, label: str, text: str, tool_calls: list[dict[str, Any]]
+        self, text: str, tool_calls: list[dict[str, Any]]
     ) -> None:
-        block = _response_block(label, text, tool_calls)
+        block = _response_block(text, tool_calls)
         if block is not None:
             self._mount(block)
 
@@ -479,72 +486,65 @@ def _streaming_renderable(
     text: str,
     tool_calls: list[dict[str, Any]],
 ) -> RenderableType:
-    """Renderable for the in-progress streaming block. Empty when the
-    response is empty so the streaming Static reserves space but
-    doesn't draw the label until characters arrive."""
-    block = _response_block(label, text, tool_calls)
+    """Renderable for the in-progress streaming block. ``label`` is
+    accepted for backward compatibility but unused — the bar style
+    encodes "agent" without a per-block label."""
+    del label
+    block = _response_block(text, tool_calls)
     return block if block is not None else Text("")
 
 
+def _bar_grid() -> "Table":
+    """A 2-column grid where the left column is a single-character
+    speaker bar. Body lines flow under the bar with a hanging indent."""
+    table = Table.grid(padding=(0, _GUTTER))
+    table.add_column(width=1, no_wrap=True, justify="left")
+    table.add_column(overflow="fold")
+    return table
+
+
 def _user_block(text: str) -> RenderableType | None:
-    """Right-aligned user message. The ChatView's ``.user-block`` CSS
-    applies ``text-align: right`` to the Static, so each line of the
-    body floats to the right edge with the ``user`` label tagged on
-    the end of the last line."""
+    """Left-aligned user message under a blue speaker bar. No "user"
+    label — the bar's color encodes the speaker."""
     if not text:
         return None
-    rendered = Text()
-    lines = text.split("\n")
-    last_idx = len(lines) - 1
-    for i, line in enumerate(lines):
-        if i > 0:
-            rendered.append("\n")
-        rendered.append(line)
-        if i == last_idx:
-            rendered.append("  ")
-            rendered.append("user", style=_USER_STYLE)
-    return rendered
+    table = _bar_grid()
+    bar = Text(_USER_BAR, style=_USER_BAR_STYLE)
+    for line in text.split("\n"):
+        table.add_row(bar, Text(line))
+    return table
 
 
 def _response_block(
-    label: str, text: str, tool_calls: list[dict[str, Any]]
+    text: str, tool_calls: list[dict[str, Any]]
 ) -> RenderableType | None:
+    """Agent response: cyan bar on the left, text under it, tool
+    calls indented one space below. When the assistant turn carried
+    only tool calls (no text), the empty leading line is skipped so
+    the bar doesn't open with a blank row."""
     if not text and not tool_calls:
         return None
-    return _speaker_block(label, _AGENT_STYLE, text, tool_calls)
-
-
-def _speaker_block(
-    label: str,
-    label_style: str,
-    text: str,
-    tool_calls: list[dict[str, Any]],
-) -> RenderableType:
-    """The standard 2-column block: speaker name on the left (fixed
-    column), body on the right (wraps with hanging indent because
-    subsequent rows have an empty left cell)."""
-    table = Table.grid(padding=(0, _LABEL_GAP))
-    table.add_column(width=_LABEL_WIDTH, no_wrap=True, justify="left")
-    table.add_column(overflow="fold")
-    label_text = Text(label, style=label_style)
-    body_lines = (text or "").split("\n")
-    if not body_lines:
-        body_lines = [""]
-    table.add_row(label_text, Text(body_lines[0]))
-    for line in body_lines[1:]:
-        table.add_row("", Text(line))
+    table = _bar_grid()
+    bar = Text(_AGENT_BAR, style=_AGENT_BAR_STYLE)
+    if text:
+        for line in text.split("\n"):
+            table.add_row(bar, Text(line))
     for tc in tool_calls:
-        name = tc.get("name") or tc.get("tool_name") or "?"
-        args = _args_preview(tc.get("args") or tc.get("arguments") or {})
-        tool_text = Text()
-        tool_text.append("● ", style="bold cyan")
-        tool_text.append(name, style="bold cyan")
-        tool_text.append("(", style="dim cyan")
-        if args:
-            tool_text.append(args, style="dim cyan")
-        tool_text.append(")", style="dim cyan")
-        table.add_row("", tool_text)
+        table.add_row(bar, _tool_call_text(tc))
     return table
+
+
+def _tool_call_text(tc: dict[str, Any]) -> Text:
+    name = tc.get("name") or tc.get("tool_name") or "?"
+    args = _args_preview(tc.get("args") or tc.get("arguments") or {})
+    body = Text()
+    body.append(_TOOL_CALL_PREFIX, style=f"bold {_TOOL_CALL_STYLE}")
+    body.append(name, style=f"bold {_TOOL_CALL_STYLE}")
+    body.append("(", style=f"dim {_TOOL_CALL_STYLE}")
+    if args:
+        body.append(args, style=f"dim {_TOOL_CALL_STYLE}")
+    body.append(")", style=f"dim {_TOOL_CALL_STYLE}")
+    return body
 
 
 def _error_block(text: str) -> RenderableType:
@@ -562,31 +562,29 @@ def _error_block(text: str) -> RenderableType:
 
 
 def _tool_result_block(summary: str, failed: bool) -> RenderableType:
-    """Tool result lines align to the body column of the preceding
-    response so the result reads as a continuation of it."""
-    table = Table.grid(padding=(0, _LABEL_GAP))
-    table.add_column(width=_LABEL_WIDTH, no_wrap=True)
-    table.add_column(overflow="fold")
+    """Tool result aligns under the preceding response's bar (same
+    cyan, same column) so the result reads as a continuation. The
+    bar is dimmed to subordinate it visually."""
+    table = _bar_grid()
+    bar = Text(_AGENT_BAR, style=f"dim {_AGENT_BAR_STYLE}")
     body = Text()
-    body.append("⎿ ", style="dim")
+    body.append(_TOOL_RESULT_PREFIX, style="dim")
     body.append(summary, style="red" if failed else "dim")
-    table.add_row("", body)
+    table.add_row(bar, body)
     return table
 
 
 def _format_event(
-    label: str, event: dict[str, Any]
+    event: dict[str, Any],
 ) -> tuple[RenderableType | None, tuple[str, ...]]:
     """Convert one event into a (Renderable, css_classes) pair. The
-    classes are applied to the Static the ChatView mounts — currently
-    ``subordinate`` (tool results: tight margin to the response above)
-    and ``user-block`` (right-aligned user message)."""
+    ``subordinate`` class tightens the top margin so a tool result
+    block sits flush under its response."""
     kind = event.get("kind")
 
     if kind == "response":
         return (
             _response_block(
-                label,
                 event.get("text", "") or "",
                 event.get("tool_calls", []) or [],
             ),
@@ -600,7 +598,7 @@ def _format_event(
 
     if kind == "assistant":
         return (
-            _response_block(label, event.get("text", "") or "", []),
+            _response_block(event.get("text", "") or "", []),
             (),
         )
 
@@ -622,7 +620,7 @@ def _format_event(
         return (row, ())
 
     if kind == "user_input":
-        return (_user_block(event.get("text", "") or ""), ("user-block",))
+        return (_user_block(event.get("text", "") or ""), ())
 
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())

@@ -325,7 +325,7 @@ class ClaudeAgentEngine:
                         pending_tool_calls.extend(tool_calls)
                     if text or tool_calls:
                         # Close the response block: text on top, tool
-                        # calls beneath (chat.py:_speaker_block).
+                        # calls beneath (chat.py:_response_block).
                         self._emit_stream_end(pending_tool_calls)
                         pending_tool_calls = []
                         stream_open = False
