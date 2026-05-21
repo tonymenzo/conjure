@@ -252,7 +252,13 @@ class ControlServer:
         }
 
     def _cost(self) -> dict[str, Any]:
-        rows = self.runtime.costs_by_agent()
+        # Drop the @user / @system sentinels — they have no engine and
+        # never accrue cost; surfacing them as $0 lines is just noise.
+        rows = [
+            (addr, cost)
+            for addr, cost in self.runtime.costs_by_agent()
+            if addr.id not in ("@user", "@system")
+        ]
         return {
             "ok": True,
             "total": sum(c for _addr, c in rows),

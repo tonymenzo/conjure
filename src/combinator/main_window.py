@@ -487,17 +487,17 @@ class MainApp(App):
         pane.update(_Group(*out))
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
+        """Minimal cost pane: just the running total. The per-agent
+        breakdown lives in the meta popup (Ctrl+B M)."""
         cost_pane = self.query_one("#cost-pane", Static)
         from rich.console import Group as _Group
 
         total = cost.get("total", 0.0)
-        rows: list[Any] = [Text("cost", style="bold")]
-        for row in cost.get("rows", []) or []:
-            label = row.get("label") or row.get("addr") or "?"
-            usd = row.get("cost", 0.0)
-            rows.append(Text(f"  {label:<14}  {_format_usd(usd)}"))
-        rows.append(Text(""))
-        rows.append(Text(f"total {_format_usd(total)}", style="bold"))
+        rows: list[Any] = [
+            Text("cost", style="bold"),
+            Text(""),
+            Text.from_markup(_format_usd(total)),
+        ]
         cost_pane.update(_Group(*rows))
 
     # ----- selection / chat pane swap -----
