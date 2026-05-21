@@ -137,7 +137,11 @@ class ChatView(VerticalScroll):
     }
     ChatView > Static {
         height: auto;
-        margin: 0;
+        margin-bottom: 1;
+    }
+    ChatView > Static.subordinate {
+        margin-top: 0;
+        margin-bottom: 1;
     }
     """
 
