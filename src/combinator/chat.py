@@ -136,9 +136,9 @@ class ChatView(VerticalScroll):
     # ``_stream_shown`` at a steady cadence so visible streaming is
     # smooth even when chunks arrive in bursts. When already caught
     # up, the pump is effectively a no-op.
-    _TYPE_INTERVAL = 0.033          # 30 fps
-    _TYPE_BASE_CHARS = 4            # minimum chars revealed per tick
-    _TYPE_CATCHUP_DIVISOR = 6       # additional advance = remaining // N
+    _TYPE_INTERVAL = 0.016          # ~60 fps (terminal refresh ceiling)
+    _TYPE_BASE_CHARS = 2            # min chars/tick → ~120 chars/sec floor
+    _TYPE_CATCHUP_DIVISOR = 6       # extra advance = remaining // N
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
