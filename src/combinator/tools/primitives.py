@@ -69,6 +69,9 @@ def spawn_impl(
     capabilities: list[str] | None = None,
     initial_message: str = "",
     lazy: bool = False,
+    engine: str = "orchestral",
+    sandbox_dir: str | None = None,
+    permissions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     resolved = _resolve(token)
     if isinstance(resolved, dict):
@@ -96,11 +99,14 @@ def spawn_impl(
     spec = AgentSpec(
         role_prompt=role_prompt,
         label=label,
+        engine=engine,
         tools=list(tools or []),
         llm=llm,
         capabilities=cap_addrs,
         initial_message=initial_message or None,
         lazy=lazy,
+        sandbox_dir=sandbox_dir,
+        permissions=permissions or {},
     )
 
     try:
@@ -399,6 +405,31 @@ class SpawnTool(StatelessRuntimeTool):
         default=False,
         description="If true, do not start the child's driver until first inbox arrival.",
     )
+    engine: str = RuntimeField(
+        default="orchestral",
+        description=(
+            "Engine for the child agent. ``orchestral`` (default) wraps "
+            "an LLM client with combinator tools. ``claude_agent`` runs "
+            "the child as a claude-agent-sdk session with Claude Code's "
+            "tool surface — pass claude tool names in ``tools`` and a "
+            "sandbox dir."
+        ),
+    )
+    sandbox_dir: str | None = RuntimeField(
+        default=None,
+        description=(
+            "Filesystem sandbox path for the child. None auto-allocates "
+            "under the runtime's store_dir. Required for any agent that "
+            "should use the filesystem tool group."
+        ),
+    )
+    permissions: dict[str, str] | None = RuntimeField(
+        default=None,
+        description=(
+            "Per-tool permission decisions for the child, e.g. "
+            "``{'Bash': 'ask', 'Write': 'allow'}``."
+        ),
+    )
     runtime_token: str = StateField(
         description="(internal) runtime token identifying the calling agent.",
     )
@@ -413,6 +444,9 @@ class SpawnTool(StatelessRuntimeTool):
             capabilities=self.capabilities or [],
             initial_message=self.initial_message or "",
             lazy=bool(self.lazy),
+            engine=self.engine or "orchestral",
+            sandbox_dir=self.sandbox_dir,
+            permissions=self.permissions,
         )
 
 

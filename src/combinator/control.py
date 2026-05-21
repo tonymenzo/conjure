@@ -127,6 +127,8 @@ class ControlServer:
             return self._resolve_permission(
                 request.get("req_id"), request.get("decision")
             )
+        if method == "tool_call":
+            return self._tool_call(request)
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -156,6 +158,33 @@ class ControlServer:
                 for r in reqs
             ],
         }
+
+    def _tool_call(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Execute a combinator tool against the runtime, on behalf
+        of the token-holding agent. Used by ``combinator-mcp`` to
+        forward claude_agent SDK tool calls into the daemon's tool
+        surface (capability checks, journaling, etc. all happen the
+        same way they do for orchestral agents)."""
+        token = request.get("token")
+        name = request.get("name")
+        args = request.get("args") or {}
+        if not token or not name:
+            return {"ok": False, "error": "missing token or name"}
+        cls = _TOOL_CLASS_REGISTRY.get(name)
+        if cls is None:
+            return {"ok": False, "error": f"unknown tool: {name}"}
+        try:
+            tool = cls(runtime_token=token, **args)
+            result = tool._run()  # noqa: SLF001
+        except TypeError as exc:
+            return {"ok": False, "code": "bad_args", "error": str(exc)}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "code": "exec_error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
 
     def _resolve_permission(
         self, req_id: str | None, decision: str | None
@@ -568,6 +597,46 @@ def _read_line(conn: socket.socket, *, timeout: float | None = None) -> str | No
 def _write_line(conn: socket.socket, payload: dict[str, Any]) -> None:
     line = json.dumps(payload, default=str) + "\n"
     conn.sendall(line.encode("utf-8"))
+
+
+# ---- tool class registry (for the MCP bridge's tool_call RPC) ----
+
+def _build_tool_registry() -> dict[str, type]:
+    """Map tool short names (used over the MCP wire) to their
+    combinator tool classes. Lazily imported so importing
+    ``combinator.control`` doesn't drag the whole tool surface in."""
+    from combinator.tools.combinators import (
+        AgentFilterTool,
+        AgentFixedPointTool,
+        AgentFoldTool,
+        AgentMapTool,
+    )
+    from combinator.tools.primitives import (
+        IntroduceTool,
+        ListInboxTool,
+        RecvTool,
+        SendTool,
+        SpawnTool,
+        TerminateTool,
+        WaitForTool,
+    )
+
+    return {
+        "spawn": SpawnTool,
+        "send": SendTool,
+        "recv": RecvTool,
+        "wait_for": WaitForTool,
+        "terminate": TerminateTool,
+        "introduce": IntroduceTool,
+        "list_inbox": ListInboxTool,
+        "agent_map": AgentMapTool,
+        "agent_fold": AgentFoldTool,
+        "agent_filter": AgentFilterTool,
+        "agent_fixed_point": AgentFixedPointTool,
+    }
+
+
+_TOOL_CLASS_REGISTRY: dict[str, type] = _build_tool_registry()
 
 
 # ---- engine introspection helpers (optional capabilities) ----

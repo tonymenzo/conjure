@@ -31,6 +31,7 @@ def build_runtime(
     event_log_router: Callable[[AgentRecord], Any] | None = None,
     spawn_listener: Callable[[AgentRecord], None] | None = None,
     stream: bool = False,
+    control_socket: "Path | None" = None,
 ) -> tuple[Runtime, Address]:
     """Build a ``Runtime`` and spawn the root agent per ``config``.
 
@@ -70,6 +71,7 @@ def build_runtime(
                 record=record,
                 runtime=runtime,
                 event_log_router=event_log_router,
+                control_socket=control_socket,
             )
         raise ValueError(
             f"unknown engine {engine_name!r} on agent {record.addr.id}; "
@@ -103,10 +105,14 @@ def _build_claude_agent_engine(
     record: AgentRecord,
     runtime: Runtime,
     event_log_router: Callable[[AgentRecord], Any] | None,
+    control_socket: "Path | None",
 ):
     """Construct a ``ClaudeAgentEngine`` for this record. Resolves
     the agent's sandbox (same logic the FS tools use) and routes
-    streaming chunks to the agent's event log if one is configured."""
+    streaming chunks to the agent's event log if one is configured.
+    Also passes the daemon's control socket so the engine can
+    register the combinator-mcp bridge — giving the SDK access to
+    spawn/send/recv/agent_map/... via MCP."""
     from combinator.engines.claude_agent import ClaudeAgentEngine
     from combinator.tools.filesystem import _sandbox_for
 
@@ -122,4 +128,5 @@ def _build_claude_agent_engine(
         sandbox_dir=sandbox,
         allowed_tools=record.spec.tools,
         stream_emit=stream_emit,
+        mcp_socket=control_socket,
     )

@@ -29,6 +29,7 @@ is underneath.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
@@ -66,6 +67,7 @@ class ClaudeAgentEngine:
         allowed_tools: Sequence[str] | None = None,
         system_prompt: str | None = None,
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
+        mcp_socket: Path | None = None,
     ) -> None:
         # Import lazily so the runtime doesn't hard-require
         # claude-agent-sdk for agents that only use the orchestral
@@ -128,13 +130,47 @@ class ClaudeAgentEngine:
                 )
             return PermissionResultAllow()
 
+        # MCP bridge: expose combinator's orchestration surface
+        # (spawn, send, recv, agent_map, ...) to claude_agent. We
+        # launch ``combinator-mcp`` as a stdio MCP subprocess; it
+        # forwards calls back to the daemon's control socket. The
+        # caller passes the daemon's socket path; if absent, the
+        # SDK still works but only sees Claude Code's built-in tools.
+        mcp_servers: dict[str, Any] = {}
+        bridged_tools: list[str] = []
+        if mcp_socket is not None:
+            import shutil
+
+            from claude_agent_sdk.types import McpStdioServerConfig
+            mcp_bin = shutil.which("combinator-mcp") or "combinator-mcp"
+            mcp_servers["combinator"] = McpStdioServerConfig(
+                command=mcp_bin,
+                env={
+                    "COMBINATOR_TOKEN": record.token,
+                    "COMBINATOR_SOCKET": str(mcp_socket),
+                    # Propagate PATH so the subprocess can find python
+                    # / mcp lib if it shells out.
+                    "PATH": os.environ.get("PATH", ""),
+                },
+            )
+            # Whitelist every bridged tool with the SDK-mandated
+            # mcp__<server>__<name> prefix.
+            for short in (
+                "spawn", "send", "recv", "wait_for",
+                "terminate", "introduce", "list_inbox",
+                "agent_map", "agent_fold", "agent_filter",
+                "agent_fixed_point",
+            ):
+                bridged_tools.append(f"mcp__combinator__{short}")
+
         opts = ClaudeAgentOptions(
             system_prompt=system_prompt or self._build_system_prompt(record, runtime),
             cwd=str(sandbox_dir) if sandbox_dir is not None else None,
-            allowed_tools=list(allowed_tools or []),
+            allowed_tools=list(allowed_tools or []) + bridged_tools,
             can_use_tool=can_use_tool,
             # ``default`` consults can_use_tool for every tool call.
             permission_mode="default",
+            mcp_servers=mcp_servers if mcp_servers else {},
         )
         self._options = opts
         self._client = ClaudeSDKClient(opts)

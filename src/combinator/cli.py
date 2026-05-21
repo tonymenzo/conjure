@@ -244,12 +244,14 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log
 
+    control_path = socket_path_for(session_name)
     try:
         runtime, root = build_runtime(
             cfg,
             event_log_router=event_log_router,
             spawn_listener=spawn_listener,
             stream=True,  # tmux mode: agent text streams into chat panes
+            control_socket=control_path,
         )
     except Exception as exc:
         print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)
@@ -279,8 +281,9 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     )
 
     # Start the JSON-RPC control server so chat windows can send
-    # messages and the meta-view popup can query state.
-    control_path = socket_path_for(session_name)
+    # messages and the meta-view popup can query state. ``control_path``
+    # was computed earlier so claude_agent engines could embed it in
+    # their MCP subprocess env.
     control_server = ControlServer(runtime=runtime, socket_path=control_path)
     try:
         control_server.start()
