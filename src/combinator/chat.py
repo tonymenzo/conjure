@@ -393,15 +393,16 @@ class ChatApp(App):
                 break
         if my_status is None:
             return
-        # Same legend as the main tree: filled circle, colored + blink
-        # encodes lifecycle. The Header renders rich markup, so the
-        # style tags here actually take effect.
+        # Same legend as the main tree: filled circle, colored by
+        # lifecycle. The Header subtitle renders rich markup, so the
+        # style tags here take effect. Static colors here (no pulse —
+        # the subtitle line isn't a great place for animation).
         circle = {
-            "lazy": "[blink green]●[/]",
-            "running": "[blink yellow]●[/]",
+            "lazy": "[bold green]●[/]",
+            "running": "[bold yellow]●[/]",
             "idle": "[green]●[/]",
             "terminated": "[dim]●[/]",
-            "error": "[blink red]●[/]",
+            "error": "[bold red]●[/]",
         }.get(my_status, "[dim]●[/]")
         self.sub_title = f"({self.addr})  {circle} {my_status}"
 

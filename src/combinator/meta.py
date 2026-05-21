@@ -47,6 +47,7 @@ from textual.widgets.tree import TreeNode
 
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
+from combinator.status_tree import StatusTree
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -120,25 +121,21 @@ def _current_tmux_session() -> str | None:
     return out.stdout.strip() or None
 
 
-# Status icon legend (mirrors combinator-main):
-#   ● blink green  → lazy / waiting for a message
-#   ● blink yellow → running / generating
-#   ● solid green  → idle / done with current work
-#   ● dim grey     → terminated
-#   ● blink red    → error (reserved)
-_STATUS_ICON = {
-    "lazy": "●",
-    "running": "●",
-    "idle": "●",
-    "terminated": "●",
-    "error": "●",
+# Status icon legend (mirrors combinator-main): filled circle; colour
+# encodes the agent's lifecycle. Active states pulse via a 4-step
+# brightness cycle, driven by a 250ms timer (smoother than the
+# terminal's hard blink attribute).
+_STATUS_ICON = "●"
+_PULSE_STEPS = 4
+_PULSE_INTERVAL = 0.25
+_PULSE_STYLES = {
+    "lazy":    ["bold green",  "green",  "dim green",  "green"],
+    "running": ["bold yellow", "yellow", "dim yellow", "yellow"],
+    "error":   ["bold red",    "red",    "dim red",    "red"],
 }
-_STATUS_STYLE = {
-    "lazy": "blink green",
-    "running": "blink yellow",
+_STATIC_STYLES = {
     "idle": "green",
     "terminated": "dim",
-    "error": "blink red",
 }
 
 
@@ -220,12 +217,17 @@ class MetaApp(App):
         # Optional: agents the user explicitly collapsed. Applied when
         # a rebuild does happen (e.g. a new agent appears).
         self._collapsed: set[str] = set()
+        # Smooth pulse for active agent dots — same scheme as the main
+        # window. Phase advances on its own timer; refresh ticks reuse
+        # the latest cached tree.
+        self._pulse_phase: int = 0
+        self._last_tree: dict[str, Any] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Horizontal():
             with Vertical(id="left"):
-                yield Tree("spawn tree", id="tree-pane")
+                yield StatusTree("spawn tree", id="tree-pane")
                 yield Static("(no costs yet)", id="cost-pane")
             yield Static(
                 "(select an agent to preview its activity)",
@@ -236,7 +238,13 @@ class MetaApp(App):
     def on_mount(self) -> None:
         self.refresh_all()
         self.set_interval(1.0, self.refresh_all)
-        self.query_one("#tree-pane", Tree).focus()
+        self.set_interval(_PULSE_INTERVAL, self._tick_pulse)
+        self.query_one("#tree-pane", StatusTree).focus()
+
+    def _tick_pulse(self) -> None:
+        self._pulse_phase = (self._pulse_phase + 1) % _PULSE_STEPS
+        if self._last_tree is not None:
+            self._update_labels(self._last_tree)
 
     # ---- data refresh ----
 
@@ -267,6 +275,7 @@ class MetaApp(App):
         if not reply.get("ok"):
             return
         node = reply.get("tree")
+        self._last_tree = node
         new_sig = _structure_signature(node)
         if new_sig == self._tree_signature:
             self._update_labels(node)
@@ -275,7 +284,7 @@ class MetaApp(App):
         self._rebuild_tree(node)
 
     def _rebuild_tree(self, node: dict[str, Any] | None) -> None:
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         tree.clear()
         if node is None:
             tree.root.set_label("(no agents)")
@@ -290,7 +299,11 @@ class MetaApp(App):
         # Honor a prior user collapse if the agent still exists;
         # otherwise default to expanded (new agents are visible).
         expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
-        child = parent.add(_format_node_label(node), data=addr_id, expand=expand)
+        child = parent.add(
+            _format_node_label(node, self._pulse_phase),
+            data=addr_id,
+            expand=expand,
+        )
         for c in node.get("children", []):
             self._populate(child, c)
 
@@ -299,7 +312,7 @@ class MetaApp(App):
         status changes. Does not touch expand/collapse state."""
         if node is None:
             return
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         by_addr: dict[str, dict[str, Any]] = {}
 
         def collect(n: dict[str, Any]) -> None:
@@ -313,7 +326,9 @@ class MetaApp(App):
 
         def walk(tnode: TreeNode) -> None:
             if isinstance(tnode.data, str) and tnode.data in by_addr:
-                new_label = _format_node_label(by_addr[tnode.data])
+                new_label = _format_node_label(
+                    by_addr[tnode.data], self._pulse_phase
+                )
                 # Only update if the label string changed — avoids
                 # unnecessary repaints on quiet ticks.
                 if str(tnode.label) != new_label:
@@ -456,11 +471,14 @@ def _structure_signature(node: dict[str, Any] | None) -> tuple | None:
     )
 
 
-def _format_node_label(node: dict[str, Any]) -> str:
-    icon = _STATUS_ICON.get(node.get("status", ""), "?")
-    style = _STATUS_STYLE.get(node.get("status", ""), "white")
+def _format_node_label(node: dict[str, Any], pulse_phase: int = 0) -> str:
+    status = node.get("status", "")
+    if status in _PULSE_STYLES:
+        style = _PULSE_STYLES[status][pulse_phase % _PULSE_STEPS]
+    else:
+        style = _STATIC_STYLES.get(status, "white")
     label_text = node.get("label") or node.get("addr") or "?"
-    return f"[{style}]{icon}[/] [bold]{label_text}[/]"
+    return f"[{style}]{_STATUS_ICON}[/] [bold]{label_text}[/]"
 
 
 def _format_usd(usd: float) -> str:

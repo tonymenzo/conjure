@@ -48,28 +48,28 @@ from textual.widgets.tree import TreeNode
 from combinator.chat import ChatView
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
+from combinator.status_tree import StatusTree
 
 
-# Status icon = filled circle in every state; only the color (and
-# blink) communicates the agent's life-cycle. ``lazy`` (waiting for
-# its first message) and ``running`` (currently generating /
-# streaming) both blink so the user's eye is drawn to active agents
-# in the tree. Red is reserved for an explicit ``error`` state if
-# we add one later — ``terminated`` is dim grey since it isn't a
-# fault, just a finished agent.
-_STATUS_ICON = {
-    "lazy": "●",
-    "running": "●",
-    "idle": "●",
-    "terminated": "●",
-    "error": "●",
+# Status icon = filled circle in every state; only the color
+# communicates the agent's life-cycle. "active" states (lazy,
+# running, error) pulse via a 4-step brightness cycle driven by a
+# 250ms timer — smoother than the terminal's hard blink attribute
+# and consistent across terminals. ``idle`` (done with current
+# work) and ``terminated`` (finished) are solid.
+_STATUS_ICON = "●"
+_PULSE_STEPS = 4
+_PULSE_INTERVAL = 0.25  # seconds per step → 1 Hz full cycle
+_PULSE_STYLES = {
+    # The 4-step pattern goes bold → normal → dim → normal so it
+    # reads as a continuous up-down pulse rather than a sharp blink.
+    "lazy":    ["bold green",  "green",  "dim green",  "green"],
+    "running": ["bold yellow", "yellow", "dim yellow", "yellow"],
+    "error":   ["bold red",    "red",    "dim red",    "red"],
 }
-_STATUS_STYLE = {
-    "lazy": "blink green",
-    "running": "blink yellow",
+_STATIC_STYLES = {
     "idle": "green",
     "terminated": "dim",
-    "error": "blink red",
 }
 
 # Initial backlog of events to load when the chat pane swaps to a new
@@ -244,6 +244,13 @@ class MainApp(App):
         # event it sees and skips rendering — otherwise live
         # submissions would show twice (local echo + log replay).
         self._pending_user_echoes: int = 0
+        # Pulse animation state for active agent status dots. The
+        # pulse timer increments this every ``_PULSE_INTERVAL`` and
+        # triggers a label refresh for tree rows whose status pulses.
+        self._pulse_phase: int = 0
+        # Cache the most recent tree node dict so the pulse tick can
+        # refresh labels without re-fetching from the daemon.
+        self._last_tree: dict[str, Any] | None = None
 
     # ----- compose -----
 
@@ -251,7 +258,7 @@ class MainApp(App):
         yield Header(show_clock=False)
         with Horizontal():
             with Vertical(id="sidebar"):
-                yield Tree("spawn tree", id="tree-pane")
+                yield StatusTree("spawn tree", id="tree-pane")
                 yield Static("(select an agent to see its inbox)", id="inbox-pane")
                 yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
@@ -262,7 +269,7 @@ class MainApp(App):
                 )
 
     def on_mount(self) -> None:
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         # The synthetic "agents" root would render its own expand
         # arrow next to iota's; hide it so the user sees only the
         # real agents (one arrow per agent that has children).
@@ -274,6 +281,8 @@ class MainApp(App):
         # 500ms tick: light enough that interaction feels live, heavy
         # enough that we're not spamming the control socket.
         self.set_interval(0.5, self.refresh_all)
+        # Smooth status-dot pulse for active agents.
+        self.set_interval(_PULSE_INTERVAL, self._tick_pulse)
         # Pre-select iota in the tree (drives the chat pane) but land
         # the cursor in the input box so the user can just start typing.
         self._select_root_if_available()
@@ -289,7 +298,7 @@ class MainApp(App):
         sidebar.set_class(not sidebar.has_class("hidden"), "hidden")
 
     def action_focus_tree(self) -> None:
-        self.query_one("#tree-pane", Tree).focus()
+        self.query_one("#tree-pane", StatusTree).focus()
 
     def action_refresh(self) -> None:
         self.refresh_all()
@@ -368,6 +377,9 @@ class MainApp(App):
             self._apply_inbox(self.selected_addr, reply.get("inbox") or [])
 
     def _apply_tree(self, node: dict[str, Any] | None) -> None:
+        # Cache the latest tree so the pulse tick can refresh labels
+        # without a fresh daemon round-trip.
+        self._last_tree = node
         new_sig = _structure_signature(node)
         if new_sig == self._tree_signature:
             self._update_labels(node)
@@ -381,8 +393,16 @@ class MainApp(App):
         self._tree_signature = new_sig
         self._rebuild_tree(node)
 
+    def _tick_pulse(self) -> None:
+        """Advance the pulse phase and refresh tree labels so active
+        agents (lazy/running/error) animate smoothly. No daemon call —
+        we use the cached tree from the last snapshot tick."""
+        self._pulse_phase = (self._pulse_phase + 1) % _PULSE_STEPS
+        if self._last_tree is not None:
+            self._update_labels(self._last_tree)
+
     def _rebuild_tree(self, node: dict[str, Any] | None) -> None:
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         tree.clear()
         if node is None:
             tree.root.set_label("(no agents)")
@@ -402,14 +422,18 @@ class MainApp(App):
             if isinstance(label, str):
                 self._addr_labels[addr_id] = label
         expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
-        child = parent.add(_format_node_label(node), data=addr_id, expand=expand)
+        child = parent.add(
+            _format_node_label(node, self._pulse_phase),
+            data=addr_id,
+            expand=expand,
+        )
         for c in node.get("children", []):
             self._populate(child, c)
 
     def _update_labels(self, node: dict[str, Any] | None) -> None:
         if node is None:
             return
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         by_addr: dict[str, dict[str, Any]] = {}
 
         def collect(n: dict[str, Any]) -> None:
@@ -429,7 +453,9 @@ class MainApp(App):
 
         def walk(tnode: TreeNode) -> None:
             if isinstance(tnode.data, str) and tnode.data in by_addr:
-                new_label = _format_node_label(by_addr[tnode.data])
+                new_label = _format_node_label(
+                    by_addr[tnode.data], self._pulse_phase
+                )
                 if str(tnode.label) != new_label:
                     tnode.set_label(new_label)
             for child in tnode.children:
@@ -478,7 +504,7 @@ class MainApp(App):
     def _select_root_if_available(self) -> None:
         """First tree population may not have happened yet at on_mount;
         try once, then retry on the first refresh tick if needed."""
-        tree = self.query_one("#tree-pane", Tree)
+        tree = self.query_one("#tree-pane", StatusTree)
         for top in tree.root.children:
             if isinstance(top.data, str):
                 tree.select_node(top)
@@ -679,11 +705,14 @@ def _structure_signature(node: dict[str, Any] | None) -> tuple | None:
     )
 
 
-def _format_node_label(node: dict[str, Any]) -> str:
-    icon = _STATUS_ICON.get(node.get("status", ""), "?")
-    style = _STATUS_STYLE.get(node.get("status", ""), "white")
+def _format_node_label(node: dict[str, Any], pulse_phase: int = 0) -> str:
+    status = node.get("status", "")
+    if status in _PULSE_STYLES:
+        style = _PULSE_STYLES[status][pulse_phase % _PULSE_STEPS]
+    else:
+        style = _STATIC_STYLES.get(status, "white")
     label_text = node.get("label") or node.get("addr") or "?"
-    return f"[{style}]{icon}[/] [bold]{label_text}[/]"
+    return f"[{style}]{_STATUS_ICON}[/] [bold]{label_text}[/]"
 
 
 def _format_usd(usd: float) -> str:
