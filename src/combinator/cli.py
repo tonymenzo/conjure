@@ -202,11 +202,11 @@ def _cmd_run_tmux(config_path: Path) -> int:
 def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     """Daemon body: build the runtime, set up tmux, block on signal.
 
-    Each agent gets one tmux window running ``combinator-chat`` — a
-    self-contained textual chat (history + prompt) for that agent. The
-    root agent (iota) takes window 0; spawned children get new windows
-    as they appear. There is no separate "input" window — each chat
-    has its own input.
+    Tmux layout is a single window (``combinator-main``) hosting the
+    sidebar + swappable chat pane. Per-agent dedicated chat windows
+    are created on-demand by the main window (``o`` keypress) rather
+    than auto-created on spawn — that keeps the window list focused
+    on agents the user has actually drilled into.
     """
     shutdown_event = threading.Event()
 
@@ -222,58 +222,24 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     agents_dir = store_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # The tmux session is created AFTER build_runtime so iota's chat
-    # can be window 0. Spawn listener queues windows in a list; we
-    # apply them once tmux exists. Iota goes first; later spawns
-    # arrive while tmux is alive and get windows immediately.
-    tmux_holder: dict[str, TmuxSession | None] = {"session": None}
-    pending_windows: list[tuple[str, str]] = []  # (label, command)
-
-    # Resolve absolute paths to our scripts so tmux's new-window shell
-    # finds them even when the user's login shell PATH doesn't include
-    # the conda env where combinator is installed.
+    # Resolve absolute path to combinator-main so tmux's shell finds it
+    # regardless of the user's login-shell PATH (conda envs are rarely
+    # on the login PATH).
     import shutil as _shutil
-    chat_bin = _shutil.which("combinator-chat") or "combinator-chat"
     main_bin = _shutil.which("combinator-main") or "combinator-main"
 
-    def _chat_command(record: AgentRecord) -> str:
-        """Build a shell-safe command line that runs ``combinator-chat``
-        for one agent's dedicated fullscreen chat window. Every arg is
-        ``shlex.quote``'d so labels with spaces or shell metachars
-        can't break the invocation."""
-        log_path = agents_dir / f"{record.addr.id}.jsonl"
-        label = record.addr.label or record.addr.id
-        parts = [
-            chat_bin,
-            "--log", str(log_path),
-            "--addr", record.addr.id,
-            "--label", label,
-            "--session", session_name,
-        ]
-        return " ".join(shlex.quote(p) for p in parts)
-
     def _main_command() -> str:
-        """Build the command for the main window (sidebar + swappable
-        chat). Lives in window 0 of the tmux session."""
         parts = [main_bin, "--session", session_name]
         return " ".join(shlex.quote(p) for p in parts)
 
     def spawn_listener(record: AgentRecord) -> None:
+        """Attach an event log to every spawned agent so the main
+        window can tail it. We deliberately do NOT create a tmux
+        window per agent — the main window's sidebar + swappable
+        chat pane is the primary interface; the ``o`` keypress in
+        the main window creates a dedicated window on-demand."""
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         record.event_log = EventLog(log_path)
-        label = record.addr.label or record.addr.id
-        cmd = _chat_command(record)
-        tmux = tmux_holder["session"]
-        if tmux is None:
-            pending_windows.append((label, cmd))
-            return
-        try:
-            tmux.new_window(name=label, command=cmd)
-        except Exception as exc:
-            print(
-                f"daemon: tmux window for {label} failed: {exc}",
-                file=sys.stderr,
-            )
 
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log
@@ -290,15 +256,8 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         _remove_pid(pid_path)
         return 2
 
-    # Tmux session layout:
-    #   window 0 ("main")     — combinator-main (sidebar + chat)
-    #   window 1 (iota label) — iota's dedicated fullscreen chat
-    #   window N+             — one per spawned agent, dedicated chat
-    #
-    # We create the session with the main window as window 0, then add
-    # iota's dedicated chat as window 1, then drain any other pending
-    # windows that arrived during build_runtime.
-    root_label = root.label or "iota"
+    # Single tmux window (combinator-main) hosts everything. Dedicated
+    # per-agent windows are spawned on-demand by the main window.
     try:
         tmux = TmuxSession.attach_or_create(
             session_name,
@@ -309,34 +268,15 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
         _remove_pid(pid_path)
         return 2
-    tmux_holder["session"] = tmux
 
     # ``remain-on-exit on`` keeps windows around after their command
-    # exits so a crashing chat surfaces its traceback instead of
+    # exits so a crashing window surfaces its traceback instead of
     # vanishing. Close with ``Ctrl+B &`` once diagnosed.
     subprocess.run(
         ["tmux", "set-option", "-t", session_name, "remain-on-exit", "on"],
         check=False,
         timeout=3,
     )
-
-    # Add iota's dedicated chat window (window 1).
-    try:
-        tmux.new_window(
-            name=root_label,
-            command=_chat_command(runtime.record_for(root)),
-        )
-    except Exception as exc:
-        print(f"daemon: iota's chat window failed: {exc}", file=sys.stderr)
-
-    # Anything else pending (e.g., children that spawned during
-    # build_runtime — uncommon but possible if the runtime is later
-    # extended) gets a dedicated window now.
-    for label, cmd in pending_windows[1:]:
-        try:
-            tmux.new_window(name=label, command=cmd)
-        except Exception:
-            pass
 
     # Start the JSON-RPC control server so chat windows can send
     # messages and the meta-view popup can query state.
