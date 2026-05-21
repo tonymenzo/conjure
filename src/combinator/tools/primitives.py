@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from combinator.address import Address
 from combinator.envelope import Envelope
-from combinator.errors import MaxDepthExceeded, NoSuchAddress, Terminated
+from combinator.errors import MaxDepthExceeded, NoSuchAddress, Terminated, Timeout
 from combinator.ids import new_message_id
 from combinator.record import AgentSpec
 from combinator.tools._base import (
@@ -35,6 +35,18 @@ from combinator.tools._base import (
     StateField,
     StatelessRuntimeTool,
     resolve_token,
+)
+
+
+_CALL_WORKER_SUFFIX = (
+    "\n\nIMPORTANT INSTRUCTIONS (Call worker):\n"
+    "1. Your task body is in the new message shown in this prompt — "
+    "read it directly. Do NOT call Recv or ListInbox.\n"
+    "2. Compute the answer. Reply with ONE `Send(to=\"caller\", "
+    "body=<result>)` call.\n"
+    "3. After the send returns ok, you are DONE. The runtime will "
+    "auto-terminate you. End your turn with a single short "
+    "sentence confirming completion — no narration."
 )
 
 if TYPE_CHECKING:
@@ -455,6 +467,101 @@ def peek_impl(
     }
 
 
+def call_impl(
+    *,
+    token: str,
+    spec: dict[str, Any] | None,
+    body: Any,
+    timeout_s: float = 60.0,
+) -> dict[str, Any]:
+    """Synchronous request/reply: spawn a oneshot worker, hand it
+    ``body``, wait for its single reply, return it. Atomic ``Spawn``
+    + ``Send`` + ``WaitFor`` + cleanup as one tool call — the natural
+    "evaluate worker(input)" shape that most one-off agent invocations
+    reduce to.
+
+    Mechanics: a private lazy collector is spawned alongside the
+    worker; the worker receives the envelope from the collector (so
+    its ``"caller"`` shortcut resolves to the collector); a Call-
+    specific role-prompt suffix tells the worker to reply with
+    ``Send(to="caller", body=...)``; the reply lands in the
+    collector's inbox; we drain and return it. Both worker and
+    collector are torn down before we return."""
+    from combinator.combinators import _collect, _dispatch, _spawn_collector
+
+    resolved = _resolve(token)
+    if isinstance(resolved, dict):
+        return resolved
+    runtime, caller_addr = resolved
+
+    template = spec or {}
+    role_prompt = (template.get("role_prompt") or "") + _CALL_WORKER_SUFFIX
+    base_spec = AgentSpec(
+        role_prompt=role_prompt,
+        label=template.get("label") or "call-worker",
+        engine=template.get("engine", "auto"),
+        tools=list(template.get("tools") or []),
+        llm=template.get("llm", "default"),
+        model=template.get("model"),
+        oneshot=True,
+    )
+
+    try:
+        collector = _spawn_collector(
+            runtime, caller_addr, label="call-collector"
+        )
+    except MaxDepthExceeded as e:
+        return _err("depth_exceeded", str(e))
+
+    worker_spec = base_spec.model_copy(
+        update={"capabilities": list(base_spec.capabilities) + [collector]}
+    )
+
+    worker: Address | None = None
+    try:
+        try:
+            worker = runtime._spawn(parent=caller_addr, spec=worker_spec)
+        except MaxDepthExceeded as e:
+            return _err("depth_exceeded", str(e))
+        # Dispatch with ``sender=collector`` so the worker's ``"caller"``
+        # shortcut routes its reply back into the collector's inbox
+        # (clean private channel) rather than the caller's inbox.
+        _dispatch(
+            runtime=runtime,
+            sender=collector,
+            recipient=worker,
+            body=body,
+        )
+        try:
+            [reply] = _collect(
+                runtime=runtime,
+                collector=collector,
+                expected_senders=[worker],
+                timeout_s=float(timeout_s),
+            )
+        except Timeout as e:
+            return {
+                "ok": False,
+                "code": "timeout",
+                "error": str(e),
+                "worker": worker.id,
+            }
+        return {"ok": True, "result": reply, "worker": worker.id}
+    finally:
+        # ``oneshot=True`` auto-terminates the worker once it replies,
+        # but on timeout (or a worker that errored before replying)
+        # we may need to clean up explicitly.
+        if worker is not None:
+            try:
+                runtime.terminate(worker, cascade=True)
+            except Exception:
+                pass
+        try:
+            runtime.terminate(collector)
+        except Exception:
+            pass
+
+
 def list_inbox_impl(
     *,
     token: str,
@@ -726,6 +833,59 @@ class ListInboxTool(StatelessRuntimeTool):
         )
 
 
+class CallTool(StatelessRuntimeTool):
+    """Synchronous request/reply against a one-shot worker. The
+    simplest possible shape for "evaluate worker(body) and return the
+    reply" — atomic Spawn + Send + WaitFor + cleanup as one tool
+    call. Use this for the bulk of fan-out work; reach for the
+    primitives (Spawn / Send / WaitFor) only when you need to keep a
+    worker alive across multiple turns, dispatch heterogeneous specs,
+    or stream replies as they arrive.
+
+    The worker is spawned with ``oneshot=True`` and a Call-specific
+    role-prompt suffix telling it to reply with ``Send(to="caller",
+    body=...)``. The reply is the value the worker's send call
+    carried; it is returned to you under the ``result`` key.
+
+    Error codes: ``timeout`` (worker didn't reply in time;
+    ``worker`` field carries the dead worker's address for
+    inspection), ``depth_exceeded`` (you're already at max_depth).
+    """
+
+    spec: dict = RuntimeField(
+        description=(
+            "Worker spec template — same shape as the combinator "
+            "tools' ``spec``: ``role_prompt`` (required), plus "
+            "optional ``label``, ``tools``, ``engine``, ``llm``, "
+            "``model``. The runtime adds ``oneshot=True`` and a "
+            "reply-with-Send suffix to the role_prompt."
+        ),
+    )
+    body: Any = RuntimeField(
+        description=(
+            "Message body delivered to the worker as-is. Any JSON-"
+            "serializable value — string, dict, list, etc. The "
+            "worker sees the exact shape you pass."
+        ),
+    )
+    timeout_s: float = RuntimeField(
+        default=60.0,
+        description=(
+            "Maximum seconds to wait for the worker's reply before "
+            "terminating it and returning ``code=timeout``."
+        ),
+    )
+    runtime_token: str = StateField(description="(internal) caller token.")
+
+    def _run(self) -> dict[str, Any]:
+        return call_impl(
+            token=self.runtime_token,
+            spec=self.spec or {},
+            body=self.body,
+            timeout_s=float(self.timeout_s or 60.0),
+        )
+
+
 class PeekTool(StatelessRuntimeTool):
     """Snapshot a descendant agent's status + recent inbox without
     consuming any messages. Use this to diagnose stalled fan-ins
@@ -763,6 +923,7 @@ PRIMITIVE_TOOL_CLASSES = (
     IntroduceTool,
     ListInboxTool,
     PeekTool,
+    CallTool,
 )
 
 

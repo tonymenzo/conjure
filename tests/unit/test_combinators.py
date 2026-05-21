@@ -27,7 +27,7 @@ from combinator.errors import Timeout
 from combinator.record import AgentSpec
 from combinator.runtime import Runtime
 from combinator.scripted import BehaviorRegistry
-from combinator.tools.primitives import send_impl
+from combinator.tools.primitives import call_impl, send_impl
 
 
 def _idle_root(prompt, envelopes):
@@ -308,4 +308,74 @@ def test_agent_fixed_point_terminates_collector():
     record = rt.record_for(root)
     for child in record.children:
         assert rt.record_for(child).status == "terminated"
+    rt.shutdown()
+
+
+# ----- call_impl -----
+
+def test_call_returns_worker_reply_via_caller_shortcut():
+    """``Call`` spawns a oneshot worker that replies via
+    ``Send(to="caller", body=...)``. The reply is routed through a
+    private collector so the parent's inbox stays clean; ``call_impl``
+    returns that body under ``result``."""
+
+    def echo_caller(engine, prompt, envelopes):
+        for env in envelopes:
+            # Reply via the "caller" shortcut — which resolves to the
+            # collector (the dispatcher's apparent sender), giving the
+            # parent a private return channel.
+            send_impl(
+                token=engine.token,
+                to="caller",
+                body={"echo": env.body},
+            )
+        return "ok"
+
+    rt = _make_runtime({"echoer": echo_caller})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    root_token = rt.record_for(root).token
+
+    out = call_impl(
+        token=root_token,
+        spec={"role_prompt": "echoer", "label": "echo"},
+        body="hello world",
+        timeout_s=5.0,
+    )
+    assert out["ok"] is True
+    assert out["result"] == {"echo": "hello world"}
+    # Worker should have auto-terminated (oneshot) + been cleaned up.
+    worker_addr = rt.address_by_id(out["worker"])
+    if worker_addr is not None:
+        assert rt.record_for(worker_addr).status == "terminated"
+    # Parent's inbox should NOT contain the reply — the collector
+    # absorbed it.
+    parent_envs = rt.read_inbox(root)
+    assert all(
+        not (isinstance(e.body, dict) and "echo" in e.body)
+        for e in parent_envs
+    )
+    rt.shutdown()
+
+
+def test_call_timeout_returns_structured_error():
+    """If the worker never replies, ``call_impl`` returns
+    ``code=timeout`` with the dead worker's address for inspection."""
+
+    def never_reply(engine, prompt, envelopes):
+        # Just sit on the message — never send back.
+        return "ok"
+
+    rt = _make_runtime({"silent": never_reply})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    root_token = rt.record_for(root).token
+
+    out = call_impl(
+        token=root_token,
+        spec={"role_prompt": "silent"},
+        body="anything",
+        timeout_s=0.3,
+    )
+    assert out["ok"] is False
+    assert out["code"] == "timeout"
+    assert "worker" in out
     rt.shutdown()

@@ -102,6 +102,21 @@ These let you grow and coordinate the agent graph. They appear in your
 tool list as `mcp__combinator__<Name>` (PascalCase, matching the
 built-in tool convention); the chat UI renders them as the bare name.
 
+**Reach for `Call` first.** For most one-off "evaluate worker(body)
+and give me the answer" use cases, `Call` is the right shape — one
+tool call, no manual plumbing. Reach for the primitives
+(`Spawn` + `Send` + `WaitFor`) only when you need a worker to stay
+alive across multiple turns, dispatch heterogeneous specs in
+parallel, or stream replies as they arrive.
+
+- `Call(spec, body, timeout_s)` — synchronous request/reply.
+  Spawns a oneshot worker with the spec, sends it `body`, returns
+  the worker's reply as ``result``. Atomic ``Spawn`` + ``Send`` +
+  ``WaitFor`` + cleanup as one call. The worker is told (via a
+  runtime-injected suffix) to reply with ``Send(to="caller",
+  body=...)``. Use this for: per-item transformations, one-shot
+  classifications, single-question lookups, anything you'd otherwise
+  hand-roll as ``Spawn → Send → WaitFor → maybe-cleanup``.
 - `Spawn(role_prompt, label, tools, engine, model?, oneshot?, ...)`
   — create a child agent. Returns its address. The child has its
   own sandbox, its own context, and its own mailbox. **`Spawn` alone
@@ -148,6 +163,24 @@ The combinator tools internally use `Spawn` + `Send` + a lazy collector;
 prefer them over hand-rolling the same loop when the shape fits.
 
 ## Common patterns
+
+### Synchronous RPC (the common case)
+
+For a single one-shot worker invocation, use `Call`:
+
+```
+result = Call(
+    spec={"role_prompt": "Paraphrase the message body in two sentences.",
+          "label": "paraphraser"},
+    body="<the text to paraphrase>",
+    timeout_s=30,
+)
+# result["result"] is the worker's reply body
+```
+
+That's one tool call instead of three (`Spawn` → `Send` → `WaitFor`),
+no opaque addresses to thread through, oneshot cleanup is automatic.
+Most of the worker patterns you'd naturally write are this shape.
 
 ### Fan-out + fan-in (manual)
 
