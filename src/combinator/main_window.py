@@ -194,6 +194,13 @@ class MainApp(App):
         scrollbar-size: 1 1;
         border: none;
     }
+    #context-bar {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $foreground;
+    }
     #perm-banner {
         dock: bottom;
         height: auto;
@@ -250,6 +257,11 @@ class MainApp(App):
         self._collapsed: set[str] = set()
         self._log_paths: dict[str, str] = {}
         self._addr_labels: dict[str, str] = {}
+        # Per-agent model name + context-window usage, captured during
+        # tree walk. Used by the context bar at the bottom of the
+        # chat pane and by the header subtitle.
+        self._addr_models: dict[str, str] = {}
+        self._addr_context: dict[str, tuple[int, int]] = {}
         # Track which agents already have a dedicated tmux window so
         # ``o`` can create-on-demand instead of failing with a missing
         # target.
@@ -286,6 +298,7 @@ class MainApp(App):
                 yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
+                yield Static("", id="context-bar")
                 yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
@@ -399,6 +412,7 @@ class MainApp(App):
         self._apply_cost(reply.get("cost") or {})
         self._apply_activity(reply.get("activity") or [])
         self._apply_permissions(reply.get("pending_permissions") or [])
+        self._refresh_context_bar()
 
     def _apply_tree(self, node: dict[str, Any] | None) -> None:
         # Cache the latest tree so the pulse tick can refresh labels
@@ -445,6 +459,7 @@ class MainApp(App):
                 self._log_paths[addr_id] = log_path
             if isinstance(label, str):
                 self._addr_labels[addr_id] = label
+            self._cache_extras(addr_id, node)
         expand = not (isinstance(addr_id, str) and addr_id in self._collapsed)
         child = parent.add(
             _format_node_label(node, self._pulse_phase),
@@ -470,6 +485,7 @@ class MainApp(App):
                 label = n.get("label")
                 if isinstance(label, str):
                     self._addr_labels[addr] = label
+                self._cache_extras(addr, n)
             for c in n.get("children", []):
                 collect(c)
 
@@ -486,6 +502,53 @@ class MainApp(App):
                 walk(child)
 
         walk(tree.root)
+
+    def _update_subtitle(self) -> None:
+        """Header subtitle reflects the selected agent + its model."""
+        base = f"session: {self.socket_path.stem}"
+        if not self.selected_addr:
+            self.sub_title = base
+            return
+        label = self.selected_label or self.selected_addr
+        model = self._addr_models.get(self.selected_addr)
+        if model:
+            self.sub_title = f"{base}  ·  {label}  ·  {model}"
+        else:
+            self.sub_title = f"{base}  ·  {label}"
+
+    def _cache_extras(self, addr_id: str, node: dict[str, Any]) -> None:
+        """Pluck the per-agent ``model`` and ``context`` payload off
+        a tree node. Used to feed the context bar at the bottom of
+        the chat pane and the header subtitle."""
+        model = node.get("model")
+        if isinstance(model, str) and model:
+            self._addr_models[addr_id] = model
+        ctx = node.get("context")
+        if isinstance(ctx, dict):
+            used = ctx.get("used")
+            total = ctx.get("max")
+            if isinstance(used, int) and isinstance(total, int) and total > 0:
+                self._addr_context[addr_id] = (used, total)
+
+    def _refresh_context_bar(self) -> None:
+        """Render the model + context-window meter for the selected
+        agent at the bottom of the chat pane."""
+        bar = self.query_one("#context-bar", Static)
+        if not self.selected_addr:
+            bar.update("")
+            return
+        model = self._addr_models.get(self.selected_addr)
+        ctx = self._addr_context.get(self.selected_addr)
+        line = Text()
+        if model:
+            line.append(model, style="dim cyan")
+        if ctx is not None:
+            used, total = ctx
+            line.append("   ")
+            line.append(_render_token_bar(used, total))
+        bar.update(line)
+        # Refresh subtitle too — the model may have just become known.
+        self._update_subtitle()
 
     def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
         """Show the first pending permission for the selected agent as
@@ -563,17 +626,27 @@ class MainApp(App):
         pane.update(_Group(*out))
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
-        """Minimal cost pane: just the running total. The per-agent
-        breakdown lives in the meta popup (Ctrl+B M)."""
+        """Minimal cost pane: just the running total. A trailing
+        ``*`` marks the total when any agent runs on a subscription
+        (claude_agent engine) — those USD figures are API-equivalent
+        estimates, not literal billing."""
         cost_pane = self.query_one("#cost-pane", Static)
         from rich.console import Group as _Group
 
         total = cost.get("total", 0.0)
+        has_sub = bool(cost.get("has_subscription_agent"))
+        total_line = Text.from_markup(_format_usd(total))
+        if has_sub:
+            total_line.append(" *", style="bold magenta")
         rows: list[Any] = [
             Text("cost", style="bold"),
             Text(""),
-            Text.from_markup(_format_usd(total)),
+            total_line,
         ]
+        if has_sub:
+            rows.append(
+                Text("* claude_agent (subscription)", style="dim magenta")
+            )
         cost_pane.update(_Group(*rows))
 
     # ----- selection / chat pane swap -----
@@ -638,6 +711,7 @@ class MainApp(App):
         self.selected_addr = addr
         self.selected_label = label
         self._pending_user_echoes = 0
+        self._update_subtitle()
 
         view = self.query_one(ChatView)
         view.reset()
@@ -808,6 +882,38 @@ def _short_repr(value: object, limit: int = 200) -> str:
 def _truncate(s: str, n: int) -> str:
     s = s.replace("\n", " ")
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _render_token_bar(used: int, total: int) -> Text:
+    """A 16-cell progress bar + token counts. Color shifts from green
+    (under 70%) to yellow (70-90%) to red (over 90%) — 70% is where
+    Claude Code's compaction typically kicks in, so the visual
+    matches the same intuition."""
+    if total <= 0:
+        return Text("")
+    pct = max(0.0, min(1.0, used / total))
+    width = 16
+    filled = int(round(pct * width))
+    if pct < 0.7:
+        color = "green"
+    elif pct < 0.9:
+        color = "yellow"
+    else:
+        color = "red"
+    bar = Text()
+    bar.append("[", style="dim")
+    bar.append("█" * filled, style=color)
+    bar.append("░" * (width - filled), style="dim")
+    bar.append("] ", style="dim")
+    bar.append(f"{_fmt_tokens(used)}/{_fmt_tokens(total)}", style="dim")
+    bar.append(f" ({pct * 100:.0f}%)", style=f"dim {color}")
+    return bar
+
+
+def _fmt_tokens(n: int) -> str:
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
 
 
 def _args_preview(args: dict[str, Any]) -> str:

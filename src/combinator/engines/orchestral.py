@@ -235,6 +235,42 @@ class OrchestralEngine:
         except Exception:
             pass
 
+    def model_name(self) -> str | None:
+        """Best-effort model identifier (e.g. ``claude-haiku-4-5``)."""
+        llm = getattr(self._agent, "llm", None)
+        if llm is None:
+            return None
+        for attr in ("model", "model_name", "model_id"):
+            value = getattr(llm, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    def context_usage(self) -> tuple[int, int] | None:
+        """Return ``(tokens_used, tokens_max)`` for this agent's
+        context window, or None when we don't have token info.
+
+        Estimated from message text lengths (~4 chars/token), since
+        orchestral doesn't expose an authoritative token count.
+        Max defaults to 200K (modern Claude default) — accurate
+        enough for a progress bar, not for billing."""
+        messages = getattr(getattr(self._agent, "context", None), "messages", None)
+        if messages is None:
+            return None
+        total_chars = 0
+        for msg in messages:
+            text = getattr(msg, "text", None)
+            if isinstance(text, str):
+                total_chars += len(text)
+                continue
+            inner = getattr(msg, "message", None)
+            if inner is not None:
+                text = getattr(inner, "text", "") or ""
+                total_chars += len(text)
+        tokens_used = max(1, total_chars // 4)
+        tokens_max = _model_context_window(self.model_name() or "")
+        return (tokens_used, tokens_max)
+
     def cost(self) -> float:
         """Return the cumulative LLM cost (USD) seen by this engine."""
         try:
@@ -373,3 +409,36 @@ def _build_hook(
     if display_hook_builder is not None:
         return display_hook_builder(record)
     return None
+
+
+# ---------- model context-window lookup ----------
+
+# Maximum input-token capacity per model. Used by the UI's context
+# meter to render a progress bar (where roughly does the agent sit
+# in its window, when would compaction kick in). Not authoritative —
+# tune as Anthropic ships new variants.
+_DEFAULT_CONTEXT_WINDOW = 200_000
+_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-haiku-4-5": 200_000,
+    "claude-sonnet-4": 200_000,
+    "claude-sonnet-4-5": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-opus-4": 200_000,
+    "claude-opus-4-7": 200_000,
+    "claude-3-5-sonnet": 200_000,
+    "claude-3-5-sonnet-20240620": 200_000,
+    "claude-3-haiku": 200_000,
+    "claude-3-opus": 200_000,
+}
+
+
+def _model_context_window(model: str) -> int:
+    if not model:
+        return _DEFAULT_CONTEXT_WINDOW
+    if model in _CONTEXT_WINDOWS:
+        return _CONTEXT_WINDOWS[model]
+    # Best-effort prefix match (handles versioned variants).
+    for known, window in _CONTEXT_WINDOWS.items():
+        if model.startswith(known):
+            return window
+    return _DEFAULT_CONTEXT_WINDOW

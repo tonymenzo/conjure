@@ -136,6 +136,7 @@ class ClaudeAgentEngine:
             # ``default`` consults can_use_tool for every tool call.
             permission_mode="default",
         )
+        self._options = opts
         self._client = ClaudeSDKClient(opts)
         asyncio.run_coroutine_threadsafe(
             self._client.connect(), self._loop
@@ -151,6 +152,46 @@ class ClaudeAgentEngine:
 
     def cost(self) -> float:
         return self._cost_used
+
+    def model_name(self) -> str | None:
+        """Best-effort model identifier from the SDK options. Falls
+        back to ``None`` when the SDK uses its CLI default."""
+        return getattr(self._options, "model", None) if hasattr(self, "_options") else None
+
+    def context_usage(self) -> tuple[int, int] | None:
+        """Pull the SDK's authoritative context-usage counter. The
+        call is async; we hop onto the engine's event loop and wait
+        a short time so the synchronous UI tick doesn't stall."""
+        try:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._client.get_context_usage(), self._loop
+            )
+            usage = fut.result(timeout=2.0)
+        except Exception:
+            return None
+        used = (
+            getattr(usage, "tokens_used", None)
+            or getattr(usage, "input_tokens", None)
+            or getattr(usage, "used_tokens", None)
+        )
+        total = (
+            getattr(usage, "tokens_max", None)
+            or getattr(usage, "context_window", None)
+            or getattr(usage, "max_tokens", None)
+            or 200_000
+        )
+        if used is None:
+            return None
+        try:
+            return (int(used), int(total))
+        except (TypeError, ValueError):
+            return None
+
+    def uses_subscription(self) -> bool:
+        """True — the SDK always delegates to the local ``claude`` CLI,
+        which uses whatever auth that CLI is logged into (typically a
+        Max / Pro subscription)."""
+        return True
 
     def shutdown(self) -> None:
         """Disconnect the client and stop the event loop. Safe to call

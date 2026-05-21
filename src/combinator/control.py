@@ -377,10 +377,14 @@ class ControlServer:
                 if event_log is not None and getattr(event_log, "path", None)
                 else None
             )
+            engine = self.runtime._engine_for(rec)  # noqa: SLF001
             return {
                 "addr": addr.id,
                 "label": addr.label or addr.id,
                 "status": rec.status,
+                "engine": rec.spec.engine,
+                "model": _engine_model_name(engine),
+                "context": _engine_context_usage(engine),
                 "log_path": log_path,
                 "children": [
                     walk(c) for c in sorted(rec.children, key=lambda a: a.id)
@@ -414,17 +418,30 @@ class ControlServer:
             for addr, cost in self.runtime.costs_by_agent()
             if addr.id not in ("@user", "@system")
         ]
-        return {
-            "ok": True,
-            "total": sum(c for _addr, c in rows),
-            "rows": [
+        has_subscription_agent = False
+        out_rows: list[dict[str, Any]] = []
+        for addr, cost in rows:
+            rec = self.runtime.record_for(addr)
+            engine = self.runtime._engine_for(rec)  # noqa: SLF001
+            uses_sub = bool(
+                getattr(engine, "uses_subscription", None)
+                and engine.uses_subscription()
+            )
+            if uses_sub:
+                has_subscription_agent = True
+            out_rows.append(
                 {
                     "addr": addr.id,
                     "label": addr.label or addr.id,
                     "cost": cost,
+                    "uses_subscription": uses_sub,
                 }
-                for addr, cost in rows
-            ],
+            )
+        return {
+            "ok": True,
+            "total": sum(c for _addr, c in rows),
+            "rows": out_rows,
+            "has_subscription_agent": has_subscription_agent,
         }
 
     def _inbox(self, addr_id: str | None) -> dict[str, Any]:
@@ -532,3 +549,33 @@ def _read_line(conn: socket.socket, *, timeout: float | None = None) -> str | No
 def _write_line(conn: socket.socket, payload: dict[str, Any]) -> None:
     line = json.dumps(payload, default=str) + "\n"
     conn.sendall(line.encode("utf-8"))
+
+
+# ---- engine introspection helpers (optional capabilities) ----
+
+def _engine_model_name(engine: Any) -> str | None:
+    if engine is None:
+        return None
+    fn = getattr(engine, "model_name", None)
+    if not callable(fn):
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
+def _engine_context_usage(engine: Any) -> dict[str, int] | None:
+    if engine is None:
+        return None
+    fn = getattr(engine, "context_usage", None)
+    if not callable(fn):
+        return None
+    try:
+        result = fn()
+    except Exception:
+        return None
+    if result is None:
+        return None
+    used, total = result
+    return {"used": int(used), "max": int(total)}
