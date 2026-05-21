@@ -30,6 +30,7 @@ test = [
 
 [project.scripts]
 combinator = "combinator.cli:main"
+combinator-main = "combinator.main_window:main"
 combinator-chat = "combinator.chat:main"
 combinator-meta = "combinator.meta:main"
 combinator-render = "combinator.render:main"

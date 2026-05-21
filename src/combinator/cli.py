@@ -229,17 +229,18 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     tmux_holder: dict[str, TmuxSession | None] = {"session": None}
     pending_windows: list[tuple[str, str]] = []  # (label, command)
 
-    # Resolve absolute path to combinator-chat so tmux's display-popup /
-    # new-window shell finds it even when the user's login shell PATH
-    # doesn't include the conda env where combinator is installed.
+    # Resolve absolute paths to our scripts so tmux's new-window shell
+    # finds them even when the user's login shell PATH doesn't include
+    # the conda env where combinator is installed.
     import shutil as _shutil
     chat_bin = _shutil.which("combinator-chat") or "combinator-chat"
+    main_bin = _shutil.which("combinator-main") or "combinator-main"
 
     def _chat_command(record: AgentRecord) -> str:
         """Build a shell-safe command line that runs ``combinator-chat``
-        for this agent. Every arg is ``shlex.quote``'d so labels with
-        spaces, parens, or other shell metacharacters can't break the
-        invocation."""
+        for one agent's dedicated fullscreen chat window. Every arg is
+        ``shlex.quote``'d so labels with spaces or shell metachars
+        can't break the invocation."""
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         label = record.addr.label or record.addr.id
         parts = [
@@ -249,6 +250,12 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
             "--label", label,
             "--session", session_name,
         ]
+        return " ".join(shlex.quote(p) for p in parts)
+
+    def _main_command() -> str:
+        """Build the command for the main window (sidebar + swappable
+        chat). Lives in window 0 of the tmux session."""
+        parts = [main_bin, "--session", session_name]
         return " ".join(shlex.quote(p) for p in parts)
 
     def spawn_listener(record: AgentRecord) -> None:
@@ -282,16 +289,20 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         _remove_pid(pid_path)
         return 2
 
-    # Now iota is spawned and pending_windows has at least one entry
-    # (iota's chat). Create the tmux session with iota as window 0,
-    # then drain any remaining pending windows.
+    # Tmux session layout:
+    #   window 0 ("main")     — combinator-main (sidebar + chat)
+    #   window 1 (iota label) — iota's dedicated fullscreen chat
+    #   window N+             — one per spawned agent, dedicated chat
+    #
+    # We create the session with the main window as window 0, then add
+    # iota's dedicated chat as window 1, then drain any other pending
+    # windows that arrived during build_runtime.
     root_label = root.label or "iota"
-    root_cmd = _chat_command(runtime.record_for(root))
     try:
         tmux = TmuxSession.attach_or_create(
             session_name,
-            initial_window_name=root_label,
-            initial_command=root_cmd,
+            initial_window_name="main",
+            initial_command=_main_command(),
         )
     except Exception as exc:
         print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
@@ -299,20 +310,27 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         return 2
     tmux_holder["session"] = tmux
 
-    # ``remain-on-exit on`` keeps a window around after its command
-    # exits. Without it, if a chat process crashes the window
-    # closes instantly and the user can't see why. With it, the user
-    # sees the traceback and can close the window manually with
-    # ``Ctrl+B &`` once they're done diagnosing.
+    # ``remain-on-exit on`` keeps windows around after their command
+    # exits so a crashing chat surfaces its traceback instead of
+    # vanishing. Close with ``Ctrl+B &`` once diagnosed.
     subprocess.run(
         ["tmux", "set-option", "-t", session_name, "remain-on-exit", "on"],
         check=False,
         timeout=3,
     )
 
-    # Anything pending besides iota's first entry (e.g., children that
-    # spawned during build_runtime, which shouldn't happen but is
-    # possible if the runtime is extended later) gets a window now.
+    # Add iota's dedicated chat window (window 1).
+    try:
+        tmux.new_window(
+            name=root_label,
+            command=_chat_command(runtime.record_for(root)),
+        )
+    except Exception as exc:
+        print(f"daemon: iota's chat window failed: {exc}", file=sys.stderr)
+
+    # Anything else pending (e.g., children that spawned during
+    # build_runtime — uncommon but possible if the runtime is later
+    # extended) gets a dedicated window now.
     for label, cmd in pending_windows[1:]:
         try:
             tmux.new_window(name=label, command=cmd)
