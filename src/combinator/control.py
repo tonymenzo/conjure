@@ -208,6 +208,20 @@ class ControlServer:
         addr = self.runtime.address_by_id(addr_id)
         if addr is None:
             return {"ok": False, "error": f"unknown addr: {addr_id}"}
+        # Drop a clean ``user_input`` event into the target agent's
+        # event log before dispatching to the runtime. The agent's
+        # context will receive a driver-wrapped multiline prompt
+        # (which serializes as a noisy ``user`` event); the UI uses
+        # this cleaner event for the chat-history replay so swapping
+        # panes shows what the human actually typed.
+        record = self.runtime.record_for(addr)
+        event_log = getattr(record, "event_log", None)
+        if event_log is not None:
+            text = body if isinstance(body, str) else repr(body)
+            try:
+                event_log.emit({"kind": "user_input", "text": text})
+            except Exception:
+                pass
         msg_id = self.runtime.send_external(to=addr, body=body)
         return {"ok": True, "msg_id": msg_id}
 

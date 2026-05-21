@@ -40,7 +40,8 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Header, Input, RichLog, Static
+from textual.geometry import Size
+from textual.widgets import Header, Input, RichLog
 
 from combinator.control import ControlClient
 from combinator.daemon import socket_path_for
@@ -106,20 +107,10 @@ class ChatApp(App):
     }
     RichLog {
         background: $surface;
-        border: round $primary;
+        border: none;
         padding: 0 1;
         scrollbar-size: 1 1;
         scrollbar-gutter: stable;
-    }
-    #stream-pane {
-        background: $surface;
-        padding: 0 1;
-        height: auto;
-        max-height: 30%;
-        display: none;
-    }
-    #stream-pane.active {
-        display: block;
     }
     Input {
         dock: bottom;
@@ -160,20 +151,28 @@ class ChatApp(App):
         self._tail_stop = threading.Event()
         self._tail_thread: threading.Thread | None = None
         # Streaming state — accumulating chunks live until stream_end.
+        # ``_stream_marker`` is the RichLog row count at the moment
+        # the response started; truncating to it lets each chunk
+        # rewrite the in-progress response so text grows top-down.
         self._stream_buffer: str = ""
         self._streaming: bool = False
+        self._stream_marker: int = 0
+        # See main_window for the same pattern: local echo + log tail
+        # would otherwise double-render the user's own messages.
+        self._pending_user_echoes: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical():
-            yield RichLog(
+            history = RichLog(
                 id="history",
                 wrap=True,
                 markup=True,
                 highlight=False,
                 auto_scroll=True,
             )
-            yield Static(id="stream-pane")
+            history.can_focus = False
+            yield history
         yield Input(placeholder="type a message — Enter to send", id="input")
 
     def on_mount(self) -> None:
@@ -249,17 +248,17 @@ class ChatApp(App):
         # ``user`` event into the log; the renderer skips that to avoid
         # a duplicate.
         log = self.query_one("#history", RichLog)
-        echo = Text()
-        echo.append("you ", style="bold cyan")
-        echo.append("› ", style="dim")
-        echo.append(text)
-        log.write(echo)
+        for row in _user_rows(text):
+            log.write(row)
+        self._pending_user_echoes += 1
         try:
             reply = self.client.call("send", addr=self.addr, body=text)
         except Exception as exc:
+            self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
             log.write(Text(f"send failed: {exc}", style="red"))
             return
         if not reply.get("ok"):
+            self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
             log.write(Text(f"send rejected: {reply.get('error', '?')}", style="red"))
 
     # ---- log tailing ----
@@ -290,6 +289,9 @@ class ChatApp(App):
         if kind == "stream_end":
             self._on_stream_end(event.get("tool_calls", []) or [])
             return
+        if kind == "user_input" and self._pending_user_echoes > 0:
+            self._pending_user_echoes -= 1
+            return
         log = self.query_one("#history", RichLog)
         try:
             rows = list(_format_event(self.agent_label, event))
@@ -302,42 +304,59 @@ class ChatApp(App):
     def _on_chunk(self, text: str) -> None:
         if not text:
             return
-        pane = self.query_one("#stream-pane", Static)
+        log = self.query_one("#history", RichLog)
         if not self._streaming:
             self._streaming = True
             self._stream_buffer = ""
-            pane.set_class(True, "active")
+            self._stream_marker = len(log.lines)
         self._stream_buffer += text
-        pane.update(_render_streaming_block(self.agent_label, self._stream_buffer))
+        _rewrite_stream(
+            log, self.agent_label, self._stream_buffer, [], self._stream_marker
+        )
 
     def _on_stream_end(self, tool_calls: list[dict[str, Any]]) -> None:
         log = self.query_one("#history", RichLog)
-        pane = self.query_one("#stream-pane", Static)
         if self._stream_buffer or tool_calls:
-            for row in _format_response_rows(
-                self.agent_label, self._stream_buffer, tool_calls
-            ):
-                log.write(row)
+            _rewrite_stream(
+                log,
+                self.agent_label,
+                self._stream_buffer,
+                tool_calls,
+                self._stream_marker,
+            )
         self._stream_buffer = ""
         self._streaming = False
-        pane.update("")
-        pane.set_class(False, "active")
+        self._stream_marker = 0
 
 
-def _render_streaming_block(label: str, accumulated: str) -> Any:
-    """Build the renderable for the active streaming pane: the agent's
-    label followed by the in-progress text, with the same bar-prefix
-    style ``_format_response_rows`` uses so the live block visually
-    matches the committed history."""
-    from rich.console import Group as _Group
+# Background colors used to differentiate user vs agent message
+# blocks. User rows get a noticeable dark tint so they read as
+# quoted input; agent rows get a subtler highlight so the response
+# feels like the "main flow". Hex values are picked to read on both
+# default light and dark Textual themes — applied as rich background
+# styles directly to the Text rows since the rows live inside a
+# RichLog (textual CSS doesn't reach row-level styles).
+_USER_BG = "on #14202c"
+_AGENT_BG = "on #1c1c1c"
 
-    rows: list[Text] = [_label_row(label)]
-    for line in accumulated.split("\n"):
-        row = Text()
-        row.append("│ ", style="bold magenta")
-        row.append(line)
-        rows.append(row)
-    return _Group(*rows)
+
+def _rewrite_stream(
+    history: RichLog,
+    label: str,
+    text: str,
+    tool_calls: list[dict[str, Any]],
+    marker: int,
+) -> None:
+    """Truncate ``history`` back to ``marker`` and re-write the
+    in-progress response. Each streaming chunk calls this with the
+    full accumulated text so the visible content grows top-down inside
+    the chat history (new lines appear below the previous, the header
+    stays where it landed when the response started)."""
+    marker = max(0, min(marker, len(history.lines)))
+    history.lines = history.lines[:marker]
+    history.virtual_size = Size(history.virtual_size.width, len(history.lines))
+    for row in _format_response_rows(label, text, tool_calls):
+        history.write(row)
 
 
 def _format_response_rows(
@@ -346,79 +365,79 @@ def _format_response_rows(
     tool_calls: list[dict[str, Any]],
 ) -> list[Text]:
     """Build the rows that a completed response writes to the chat
-    history. Same shape ``_format_event`` produces for a
-    ``response`` event, but driven by separate ``text`` and
-    ``tool_calls`` arguments so the streaming path can call it after a
-    ``stream_end``.
+    history. Agent blocks use a subtle background tint to stand apart
+    from user messages, with the agent label as a bold-magenta header
+    and tool calls indented underneath.
     """
     rows: list[Text] = []
     if not text and not tool_calls:
         return rows
-    rows.append(_label_row(label))
+    rows.append(_agent_header(label))
     if text:
         for line in text.split("\n"):
-            row = Text()
-            row.append("│ ", style="bold magenta")
+            row = Text(no_wrap=False)
+            row.append("  ")
             row.append(line)
+            row.stylize(_AGENT_BG)
             rows.append(row)
     for tc in tool_calls:
         name = tc.get("name") or tc.get("tool_name") or "?"
         args = _args_preview(tc.get("args") or tc.get("arguments") or {})
-        row = Text()
-        row.append("│   ", style="bold magenta")
+        row = Text(no_wrap=False)
+        row.append("  ")
         row.append("← ", style="cyan")
         row.append(name, style="bold cyan")
         row.append(f"({args})", style="cyan")
+        row.stylize(_AGENT_BG)
         rows.append(row)
     rows.append(Text(""))
     return rows
 
 
-def _label_row(label: str) -> Text:
-    row = Text()
-    row.append("│ ", style="bold magenta")
-    row.append(label, style="bold magenta")
+def _agent_header(label: str) -> Text:
+    row = Text(no_wrap=False)
+    row.append(f" {label} ", style="bold magenta")
+    row.stylize(_AGENT_BG)
     return row
+
+
+def _user_rows(text: str) -> list[Text]:
+    rows: list[Text] = []
+    if not text:
+        return rows
+    lines = text.split("\n")
+    header = Text(no_wrap=False)
+    header.append(" you ", style="bold cyan")
+    header.append("  ")
+    header.append(lines[0])
+    header.stylize(_USER_BG)
+    rows.append(header)
+    for line in lines[1:]:
+        row = Text(no_wrap=False)
+        row.append("      ")  # align past " you  "
+        row.append(line)
+        row.stylize(_USER_BG)
+        rows.append(row)
+    rows.append(Text(""))
+    return rows
 
 
 def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
     """Convert one event dict into the rows to write to a RichLog.
 
-    Width-independent rendering: agent responses get a magenta bar
-    prefix instead of a bordered Panel, tool calls get a cyan arrow
-    prefix, and tool results get a compact one-line summary.
+    User and agent blocks are visually distinguished by background
+    color (no bar prefix); tool calls / results render as compact
+    indented one-liners.
     """
     rows: list[Text] = []
     kind = event.get("kind")
 
     if kind == "response":
-        text = event.get("text", "") or ""
-        tool_calls = event.get("tool_calls", []) or []
-        if not text and not tool_calls:
-            return rows
-        header = Text()
-        header.append("│ ", style="bold magenta")
-        header.append(label, style="bold magenta")
-        rows.append(header)
-        if text:
-            for line in text.split("\n"):
-                row = Text()
-                row.append("│ ", style="bold magenta")
-                row.append(line)
-                rows.append(row)
-        if tool_calls:
-            for tc in tool_calls:
-                name = tc.get("name") or tc.get("tool_name") or "?"
-                args = _args_preview(tc.get("args") or tc.get("arguments") or {})
-                row = Text()
-                row.append("│   ", style="bold magenta")
-                row.append("← ", style="cyan")
-                row.append(name, style="bold cyan")
-                row.append(f"({args})", style="cyan")
-                rows.append(row)
-        # Trailing spacer for breathing room before the next event.
-        rows.append(Text(""))
-        return rows
+        return _format_response_rows(
+            label,
+            event.get("text", "") or "",
+            event.get("tool_calls", []) or [],
+        )
 
     if kind == "tool":
         failed = bool(event.get("failed"))
@@ -433,20 +452,7 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         return rows
 
     if kind == "assistant":
-        text = event.get("text", "") or ""
-        if not text:
-            return rows
-        header = Text()
-        header.append("│ ", style="bold magenta")
-        header.append(label, style="bold magenta")
-        rows.append(header)
-        for line in text.split("\n"):
-            row = Text()
-            row.append("│ ", style="bold magenta")
-            row.append(line)
-            rows.append(row)
-        rows.append(Text(""))
-        return rows
+        return _format_response_rows(label, event.get("text", "") or "", [])
 
     if kind == "spawned":
         spawned_label = event.get("label") or event.get("addr") or "?"
@@ -467,7 +473,11 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         rows.append(row)
         return rows
 
-    # user / unknown — skip silently.
+    if kind == "user_input":
+        return _user_rows(event.get("text", "") or "")
+
+    # ``user`` is the noisy driver-wrapped prompt; skip silently.
+    # ``unknown`` is anything we can't classify.
     return rows
 
 
