@@ -6,13 +6,18 @@
 # list under ``root.tools``, and per-tool permission decisions ride
 # on ``root.permissions``.
 #
+# Authentication: the SDK delegates to the ``claude`` CLI. Whatever
+# account that CLI is logged into is what gets used — including a
+# Claude Max / Pro subscription (no API key, no per-token charges).
+# Verify with ``claude /status`` before running.
+#
 # Setup:
 #   pip install -e .[claude_agent]
-#   # ANTHROPIC_API_KEY in shell or ~/.config/combinator/.env
-#   combinator check examples/claude_agent.yaml
+#   claude /status            # confirm you're logged in
 #   combinator run examples/claude_agent.yaml
 #
 # Browse the agent's sandbox: Ctrl+B F inside the tmux session.
+# Approve permission requests: F3 (allow) / F4 (deny).
 
 runtime:
   store_dir: ./.combinator/store
@@ -20,8 +25,10 @@ runtime:
   max_depth: 3
 
 llms:
-  # The orchestral engine needs at least one LLM entry to validate;
-  # claude_agent ignores it and talks to Claude directly.
+  # The Config schema requires at least one LLM entry, but the
+  # claude_agent engine ignores it entirely and talks to Claude via
+  # the ``claude`` CLI (using whatever account that CLI is logged
+  # into — including a Max subscription).
   default:
     provider: anthropic
 
