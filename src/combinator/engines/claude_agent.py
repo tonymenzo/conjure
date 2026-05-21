@@ -203,15 +203,14 @@ class ClaudeAgentEngine:
         self._client = ClaudeSDKClient(opts)
         self._last_context: tuple[int, int] | None = None
         self._context_fetch_in_flight: bool = False
-        try:
-            asyncio.run_coroutine_threadsafe(
-                self._client.connect(), self._loop
-            ).result(timeout=30)
-        except BaseException:
-            # Without this the daemon loop thread leaks for the
-            # lifetime of the process.
-            self.shutdown()
-            raise
+        # Lazy connect: ``_client.connect()`` shells out to the ``claude``
+        # CLI and can take 3–30s. Deferring it to the first ``step``
+        # means ``Spawn`` over MCP returns immediately, multiple spawns
+        # connect concurrently (each child on its own first turn), and
+        # the parent agent isn't held hostage by child CLI startup.
+        # Single-step-at-a-time is enforced by the driver, so a bare
+        # bool here is enough — no lock needed.
+        self._connected = False
 
     # ----- interface mirroring OrchestralEngine -----
 
@@ -242,6 +241,11 @@ class ClaudeAgentEngine:
         First-ever call returns ``None`` until the background fetch
         completes; subsequent calls return progressively-fresh
         readings."""
+        # Skip the fetch entirely until the client has connected
+        # (which now happens lazily on first step). No usage to read
+        # before then.
+        if not self._connected:
+            return None
         if not self._context_fetch_in_flight:
             self._context_fetch_in_flight = True
             try:
@@ -286,16 +290,18 @@ class ClaudeAgentEngine:
         return self._uses_subscription
 
     def shutdown(self) -> None:
-        """Disconnect the client and stop the event loop. Safe to call
-        multiple times — combinator's terminate path may call this
-        more than once."""
-        try:
-            fut = asyncio.run_coroutine_threadsafe(
-                self._client.disconnect(), self._loop
-            )
-            fut.result(timeout=5)
-        except Exception:
-            pass
+        """Disconnect the client (if it was ever connected) and stop
+        the event loop. Safe to call multiple times — combinator's
+        terminate path may call this more than once."""
+        if self._connected:
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._client.disconnect(), self._loop
+                )
+                fut.result(timeout=5)
+            except Exception:
+                pass
+            self._connected = False
         try:
             self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception:
@@ -309,6 +315,10 @@ class ClaudeAgentEngine:
             ResultMessage,
             UserMessage,
         )
+
+        if not self._connected:
+            await self._client.connect()
+            self._connected = True
 
         accumulated = ""
         pending_tool_calls: list[dict[str, Any]] = []
