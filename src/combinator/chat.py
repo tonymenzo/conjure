@@ -32,7 +32,9 @@ import threading
 from pathlib import Path
 from typing import Any, Sequence
 
-from rich.console import Console
+import ast
+import json as _json
+
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -40,7 +42,6 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Header, Input, RichLog
 
-from combinator._ui import render_event
 from combinator.control import ControlClient
 from combinator.daemon import socket_path_for
 from combinator.event_log import tail
@@ -107,6 +108,8 @@ class ChatApp(App):
         background: $surface;
         border: round $primary;
         padding: 0 1;
+        scrollbar-size: 1 1;
+        scrollbar-gutter: stable;
     }
     Input {
         dock: bottom;
@@ -116,9 +119,6 @@ class ChatApp(App):
     Header {
         background: $primary;
         color: $text;
-    }
-    Footer {
-        background: $primary-darken-2;
     }
     """
 
@@ -278,30 +278,163 @@ class ChatApp(App):
         self._tail_thread.start()
 
     def _render_event_into_log(self, event: dict[str, Any]) -> None:
+        """Format one event as one or more ``Text`` rows and write them
+        to the RichLog. We deliberately do NOT render rich ``Panel``s
+        here: a Panel needs a known content width to draw its right
+        border, and RichLog's width is awkward to read from. A vertical
+        bar prefix gives the same visual grouping and is width-safe.
+        """
         log = self.query_one("#history", RichLog)
-        # render_event writes ANSI-escaped rich output to a Console. To
-        # display it in RichLog we capture the ANSI string and parse it
-        # back into a Text() — RichLog treats raw strings as plain
-        # text and would otherwise show the escape codes verbatim.
-        from io import StringIO
-        from rich.console import Console
-
-        buf = StringIO()
-        console = Console(
-            file=buf,
-            force_terminal=True,
-            color_system="truecolor",
-            width=max(self.size.width - 4, 40),
-            highlight=False,
-        )
         try:
-            render_event(console, self.agent_label, event)
+            rows = list(_format_event(self.agent_label, event))
         except Exception as exc:
             log.write(Text(f"render error: {exc}", style="red"))
             return
-        raw = buf.getvalue().rstrip("\n")
-        if raw:
-            log.write(Text.from_ansi(raw))
+        for row in rows:
+            log.write(row)
+
+
+def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
+    """Convert one event dict into the rows to write to a RichLog.
+
+    Width-independent rendering: agent responses get a magenta bar
+    prefix instead of a bordered Panel, tool calls get a cyan arrow
+    prefix, and tool results get a compact one-line summary.
+    """
+    rows: list[Text] = []
+    kind = event.get("kind")
+
+    if kind == "response":
+        text = event.get("text", "") or ""
+        tool_calls = event.get("tool_calls", []) or []
+        if not text and not tool_calls:
+            return rows
+        header = Text()
+        header.append("│ ", style="bold magenta")
+        header.append(label, style="bold magenta")
+        rows.append(header)
+        if text:
+            for line in text.split("\n"):
+                row = Text()
+                row.append("│ ", style="bold magenta")
+                row.append(line)
+                rows.append(row)
+        if tool_calls:
+            for tc in tool_calls:
+                name = tc.get("name") or tc.get("tool_name") or "?"
+                args = _args_preview(tc.get("args") or tc.get("arguments") or {})
+                row = Text()
+                row.append("│   ", style="bold magenta")
+                row.append("← ", style="cyan")
+                row.append(name, style="bold cyan")
+                row.append(f"({args})", style="cyan")
+                rows.append(row)
+        # Trailing spacer for breathing room before the next event.
+        rows.append(Text(""))
+        return rows
+
+    if kind == "tool":
+        failed = bool(event.get("failed"))
+        summary = _summarize_tool_result(event.get("text", "") or "")
+        row = Text()
+        row.append("  ")
+        if failed:
+            row.append(f"✗ {summary}", style="red")
+        else:
+            row.append(f"✓ {summary}", style="dim cyan")
+        rows.append(row)
+        return rows
+
+    if kind == "assistant":
+        text = event.get("text", "") or ""
+        if not text:
+            return rows
+        header = Text()
+        header.append("│ ", style="bold magenta")
+        header.append(label, style="bold magenta")
+        rows.append(header)
+        for line in text.split("\n"):
+            row = Text()
+            row.append("│ ", style="bold magenta")
+            row.append(line)
+            rows.append(row)
+        rows.append(Text(""))
+        return rows
+
+    if kind == "spawned":
+        spawned_label = event.get("label") or event.get("addr") or "?"
+        parent = event.get("parent")
+        suffix = f" under {parent}" if parent else " (root)"
+        row = Text()
+        row.append("  + spawned ", style="dim")
+        row.append(spawned_label, style="bold")
+        row.append(suffix, style="dim")
+        rows.append(row)
+        return rows
+
+    if kind == "terminated":
+        addr = event.get("addr", "?")
+        row = Text()
+        row.append("  × terminated ", style="red dim")
+        row.append(addr, style="red")
+        rows.append(row)
+        return rows
+
+    # user / unknown — skip silently.
+    return rows
+
+
+# ---- helpers (duplicated from _ui to avoid pulling rich.Panel deps) ----
+
+_ARG_PREVIEW_LEN = 60
+_BODY_PREVIEW_LEN = 200
+
+
+def _args_preview(args: Any) -> str:
+    if not isinstance(args, dict):
+        return _truncate(str(args), _ARG_PREVIEW_LEN)
+    parts: list[str] = []
+    for k, v in args.items():
+        s = _json.dumps(v, default=str) if not isinstance(v, str) else repr(v)
+        parts.append(f"{k}={_truncate(s, _ARG_PREVIEW_LEN)}")
+    return ", ".join(parts)
+
+
+def _summarize_tool_result(text: str) -> str:
+    parsed = _parse_dict(text)
+    if not isinstance(parsed, dict):
+        return _truncate(text, _BODY_PREVIEW_LEN)
+    ok = parsed.get("ok")
+    if ok is False:
+        code = parsed.get("code") or "error"
+        msg = parsed.get("error") or ""
+        if msg:
+            return f"{code}: {_truncate(str(msg), 80)}"
+        return str(code)
+    for key in ("address", "result", "msg_id", "terminated", "envelopes", "next_seq"):
+        if key in parsed:
+            v = parsed[key]
+            if isinstance(v, list):
+                return f"{key}=[{len(v)} item(s)]"
+            return f"{key}={_truncate(repr(v), 80)}"
+    return "ok"
+
+
+def _parse_dict(text: str) -> Any:
+    if not text or not text.strip().startswith("{"):
+        return None
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        try:
+            return _json.loads(text)
+        except (ValueError, TypeError):
+            return None
+
+
+def _truncate(s: str, n: int) -> str:
+    s = s.replace("\n", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
 
 
 if __name__ == "__main__":

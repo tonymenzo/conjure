@@ -34,18 +34,16 @@ import argparse
 import os
 import subprocess
 import sys
-from io import StringIO
 from pathlib import Path
 from typing import Any, Sequence
 
-from rich.console import Console
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Static, Tree
 from textual.widgets.tree import TreeNode
 
-from combinator._ui import render_event
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 
@@ -161,9 +159,12 @@ class MetaApp(App):
         background: $surface;
         padding: 0 1;
         overflow-y: auto;
+        scrollbar-size: 1 1;
+        scrollbar-gutter: stable;
     }
     Tree {
         background: $surface;
+        scrollbar-size: 1 1;
     }
     Header {
         background: $primary;
@@ -269,42 +270,70 @@ class MetaApp(App):
         cost.update("\n".join(lines))
 
     def refresh_preview(self, addr_id: str) -> None:
-        reply = self.client.call("inbox", addr=addr_id)
+        try:
+            reply = self.client.call("inbox", addr=addr_id)
+        except Exception as exc:
+            self.query_one("#preview-pane", Static).update(
+                Text(f"control error: {exc}", style="red")
+            )
+            return
         preview = self.query_one("#preview-pane", Static)
         if not reply.get("ok"):
-            preview.update(f"[red]{reply.get('error', '?')}[/]")
+            preview.update(Text(reply.get("error", "?"), style="red"))
             return
         envs = reply.get("envelopes", [])
         if not envs:
             preview.update(
-                f"[dim](inbox empty for[/] [bold]{self.selected_label or addr_id}[/][dim])[/]"
+                Text(
+                    f"(inbox empty for {self.selected_label or addr_id})",
+                    style="dim",
+                )
             )
             return
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=True, color_system="truecolor", width=120)
-        console.print(f"[bold]inbox of {self.selected_label or addr_id}[/]")
-        console.print()
+        # Build a Group of Text rows directly; no ANSI capture needed,
+        # which removes a class of width / parsing bugs and avoids
+        # Static's markup parser seeing escape codes.
+        from rich.console import Group as _Group
+
+        rows: list[Any] = [
+            Text(f"inbox of {self.selected_label or addr_id}", style="bold"),
+            Text(""),
+        ]
         for env in envs[-12:]:
             sender = env.get("from_label") or env.get("from") or "?"
             body = env.get("body")
             body_repr = body if isinstance(body, str) else _short_repr(body, 200)
-            console.print(
-                f"[cyan]seq={env.get('seq')}[/]  "
-                f"from=[magenta]{sender}[/]  {body_repr}"
-            )
-        preview.update(buf.getvalue().rstrip("\n"))
+            row = Text()
+            row.append(f"seq={env.get('seq')}  ", style="cyan")
+            row.append(f"from={sender}  ", style="magenta")
+            row.append(str(body_repr))
+            rows.append(row)
+        preview.update(_Group(*rows))
 
     # ---- selection actions ----
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
-        addr_id = event.node.data
-        if isinstance(addr_id, str):
+        # Guard the whole handler: any exception here would propagate
+        # into textual's event loop and crash the popup. Surface errors
+        # in the preview pane instead so the user can keep navigating.
+        try:
+            addr_id = event.node.data
+            if not isinstance(addr_id, str):
+                return
             self.selected_addr = addr_id
-            label = str(event.node.label).strip()
-            # Strip the icon + style markup we added in _populate.
-            label_clean = label.split()[-1] if label else addr_id
-            self.selected_label = label_clean
+            # ``node.label`` is a ``rich.Text``; ``.plain`` is the
+            # rendered string without markup. Our labels look like
+            # "✗ worker-3" — last token is the agent label.
+            label_text = event.node.label.plain
+            self.selected_label = label_text.split()[-1] if label_text else addr_id
             self.refresh_preview(addr_id)
+        except Exception as exc:
+            try:
+                self.query_one("#preview-pane", Static).update(
+                    Text(f"selection error: {exc}", style="red")
+                )
+            except Exception:
+                pass
 
     def action_select_agent(self) -> None:
         """Switch tmux to the selected agent's window, then close popup."""
