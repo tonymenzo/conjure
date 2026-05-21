@@ -137,11 +137,10 @@ class ChatView(VerticalScroll):
     }
     ChatView > Static {
         height: auto;
-        margin-bottom: 1;
+        margin: 0;
     }
-    ChatView > Static.subordinate {
-        margin-top: 0;
-        margin-bottom: 1;
+    ChatView > Static.user-block {
+        margin: 1 0;
     }
     """
 
@@ -222,7 +221,7 @@ class ChatView(VerticalScroll):
         """Mount a user block directly (used by the local-input echo)."""
         block = _user_block(text)
         if block is not None:
-            self._mount(block)
+            self._mount(block, classes=("user-block",))
             self._scroll_to_end()
 
     def write_error(self, text: str) -> None:
@@ -621,7 +620,7 @@ def _format_event(
         return (row, ())
 
     if kind == "user_input":
-        return (_user_block(event.get("text", "") or ""), ())
+        return (_user_block(event.get("text", "") or ""), ("user-block",))
 
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())
