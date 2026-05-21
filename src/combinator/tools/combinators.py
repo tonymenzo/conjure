@@ -92,6 +92,27 @@ def _err(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "code": code, "error": message}
 
 
+def _timeout_payload(exc: Timeout, stage: str) -> dict[str, Any]:
+    """Convert a ``Timeout`` raised by the combinator helpers into a
+    structured tool response so the agent can see which workers
+    replied, which didn't, and what made it back."""
+    payload: dict[str, Any] = {
+        "ok": False,
+        "code": "timeout",
+        "stage": stage,
+        "error": str(exc),
+    }
+    if exc.workers is not None:
+        payload["workers"] = list(exc.workers)
+    if exc.received is not None:
+        payload["received"] = exc.received
+    if exc.expected is not None:
+        payload["expected"] = exc.expected
+    if exc.partial is not None:
+        payload["partial"] = list(exc.partial)
+    return payload
+
+
 # ---------- Tool classes ----------
 
 class AgentMapTool(StatelessRuntimeTool):
@@ -116,7 +137,7 @@ class AgentMapTool(StatelessRuntimeTool):
                 timeout_s=float(self.timeout_s or 120.0),
             )
         except Timeout as e:
-            return _err("timeout", str(e))
+            return _timeout_payload(e, stage="gather")
         return {"ok": True, "result": result}
 
 
@@ -142,7 +163,7 @@ class AgentFoldTool(StatelessRuntimeTool):
                 timeout_s=float(self.timeout_s or 120.0),
             )
         except Timeout as e:
-            return _err("timeout", str(e))
+            return _timeout_payload(e, stage="gather")
         return {"ok": True, "result": result}
 
 
@@ -167,7 +188,7 @@ class AgentFilterTool(StatelessRuntimeTool):
                 timeout_s=float(self.timeout_s or 120.0),
             )
         except Timeout as e:
-            return _err("timeout", str(e))
+            return _timeout_payload(e, stage="gather")
         return {"ok": True, "result": result}
 
 

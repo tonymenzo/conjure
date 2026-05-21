@@ -106,12 +106,25 @@ def _make_bridge_class(
             if value is None:
                 continue
             runtime_args[field_name] = value
+        # Wait at least as long as the tool's own ``timeout_s`` (plus
+        # headroom) before declaring the RPC dead. Without this the
+        # ControlClient's default 10s cap fires while a combinator
+        # like ``AgentMap`` is still legitimately spawning workers
+        # and gathering replies — the daemon returns ok asynchronously
+        # but the bridge has already given up.
+        tool_timeout = runtime_args.get("timeout_s")
+        rpc_timeout = (
+            float(tool_timeout) + 30.0
+            if isinstance(tool_timeout, (int, float))
+            else 600.0
+        )
         client = ControlClient(Path(self.bridge_socket))
         return client.call(
             "tool_call",
             token=self.bridge_token,
             name=short_name,
             args=runtime_args,
+            timeout=rpc_timeout,
         )
 
     bridge = type(

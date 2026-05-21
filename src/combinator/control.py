@@ -563,17 +563,36 @@ class ControlServer:
 
 class ControlClient:
 
+    # Default read timeout for UI-style queries (snapshot, status,
+    # send). Tool-call dispatches (the MCP bridge → daemon path) need
+    # a much longer ceiling — set per-call via ``timeout=``.
+    DEFAULT_TIMEOUT_S: float = 10.0
+
     def __init__(self, socket_path: Path) -> None:
         self.socket_path = str(socket_path)
 
-    def call(self, method: str, **kwargs: Any) -> dict[str, Any]:
+    def call(
+        self,
+        method: str,
+        *,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         request = {"method": method, **kwargs}
+        wait = timeout if timeout is not None else self.DEFAULT_TIMEOUT_S
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.connect(self.socket_path)
             _write_line(s, request)
-            line = _read_line(s, timeout=10.0)
+            line = _read_line(s, timeout=wait)
         if line is None:
-            return {"ok": False, "error": "empty response"}
+            return {
+                "ok": False,
+                "code": "rpc_timeout",
+                "error": (
+                    f"daemon did not respond within {wait:.0f}s — "
+                    "the call may still be running in the background"
+                ),
+            }
         try:
             return json.loads(line)
         except Exception as exc:

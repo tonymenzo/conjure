@@ -190,6 +190,47 @@ def test_wait_for_thread(rt, root_token):
     assert len(out["envelopes"]) == 1
 
 
+def test_wait_for_max_n_waits_for_full_count(rt, root_token):
+    """``WaitFor(max_n=N, timeout_s=T)`` should accumulate up to N
+    matches across multiple inbox arrivals, not return at the first
+    one. Regression for the report's UX issue #2."""
+    import threading
+    import time
+
+    # Three sends staggered so the first arrives ~immediately and the
+    # other two trickle in. A single mailbox.read returns at the
+    # first match; the looped wait_for_impl must keep draining.
+    def stagger():
+        time.sleep(0.05)
+        rt.send_external(to=rt.root_addr, body="b")
+        time.sleep(0.05)
+        rt.send_external(to=rt.root_addr, body="c")
+
+    rt.send_external(to=rt.root_addr, body="a")
+    threading.Thread(target=stagger, daemon=True).start()
+
+    out = wait_for_impl(
+        token=root_token, predicate_kind="any",
+        max_n=3, timeout_s=2.0,
+    )
+    bodies = [e["body"] for e in out["envelopes"]]
+    assert out["ok"] is True
+    assert bodies == ["a", "b", "c"]
+
+
+def test_wait_for_returns_partial_on_timeout(rt, root_token):
+    """If only some matches arrive before the deadline, return what
+    we have rather than nothing."""
+    rt.send_external(to=rt.root_addr, body="a")
+    out = wait_for_impl(
+        token=root_token, predicate_kind="any",
+        max_n=5, timeout_s=0.2,
+    )
+    assert out["ok"] is True
+    assert [e["body"] for e in out["envelopes"]] == ["a"]
+    assert out["next_seq"] == 1
+
+
 # ----- terminate_impl -----
 
 def test_terminate_descendant(rt, root_token):

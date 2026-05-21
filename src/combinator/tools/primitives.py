@@ -265,19 +265,50 @@ def wait_for_impl(
     timeout_s: float = 30.0,
     max_n: int = 1024,
 ) -> dict[str, Any]:
-    if predicate_kind == "thread":
-        return recv_impl(
-            token=token, thread_id=value, since_seq=since_seq,
-            max_n=max_n, timeout_s=timeout_s,
+    """Block until ``max_n`` matching envelopes are in the inbox OR
+    the deadline elapses, then return whatever's been collected.
+
+    ``Mailbox.read`` returns as soon as ≥1 match exists, so a single
+    call doesn't actually fan-in N replies. We loop here: each pass
+    waits for more matches, advancing ``since_seq`` past the seq we
+    already saw, until ``max_n`` is reached or time runs out. Returns
+    a partial collection on timeout — callers can check the result
+    length against the cap to detect a short read."""
+    if max_n <= 0:
+        return {"ok": True, "envelopes": [], "next_seq": since_seq}
+
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    collected: list[Envelope] = []
+    cursor = since_seq
+
+    resolved = _resolve(token)
+    if isinstance(resolved, dict):
+        return resolved
+    runtime, caller_addr = resolved
+    record = runtime.record_for(caller_addr)
+
+    while len(collected) < max_n:
+        remaining = max(0.0, deadline - time.monotonic())
+        envelopes = record.inbox.read(
+            since_seq=cursor,
+            max_n=max_n - len(collected),
+            thread_id=value if predicate_kind == "thread" else "",
+            from_id=value if predicate_kind == "from" else "",
+            timeout_s=remaining,
         )
-    if predicate_kind == "from":
-        return recv_impl(
-            token=token, from_=value, since_seq=since_seq,
-            max_n=max_n, timeout_s=timeout_s,
-        )
-    return recv_impl(
-        token=token, since_seq=since_seq, max_n=max_n, timeout_s=timeout_s,
-    )
+        if not envelopes:
+            # Deadline elapsed without further matches.
+            break
+        collected.extend(envelopes)
+        cursor = envelopes[-1].seq
+        if remaining <= 0:
+            break
+
+    return {
+        "ok": True,
+        "envelopes": [e.model_dump(by_alias=True) for e in collected],
+        "next_seq": collected[-1].seq if collected else since_seq,
+    }
 
 
 def terminate_impl(
@@ -514,14 +545,18 @@ class RecvTool(StatelessRuntimeTool):
 
 
 class WaitForTool(StatelessRuntimeTool):
-    """Block until a matching envelope arrives in your inbox, or
-    timeout. Returns up to ``max_n`` matches once one is available."""
+    """Block until ``max_n`` matching envelopes have arrived in your
+    inbox, or the timeout fires — whichever comes first. Always
+    returns whatever was collected (may be fewer than ``max_n`` if
+    the deadline elapsed; the agent can detect a short read by
+    comparing ``len(envelopes)`` to ``max_n``). Use this for fan-in
+    when you're expecting N replies from N workers."""
 
     predicate_kind: str = RuntimeField(default="any", description="One of 'thread', 'from', 'any'.")
     value: str = RuntimeField(default="", description="Predicate value (thread_id or sender id).")
     since_seq: int = RuntimeField(default=0, description="Return envelopes with seq > since_seq.")
-    timeout_s: float = RuntimeField(default=30.0, description="Seconds to block before giving up.")
-    max_n: int = RuntimeField(default=1024, description="Maximum envelopes to return once unblocked.")
+    timeout_s: float = RuntimeField(default=30.0, description="Maximum seconds to block before returning what's accumulated.")
+    max_n: int = RuntimeField(default=1024, description="Target number of matches to collect before returning (deadline still wins).")
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:

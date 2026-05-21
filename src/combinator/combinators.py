@@ -65,8 +65,9 @@ def _collect(
     timeout_s: float,
 ) -> list[Any]:
     """Wait for one reply from each ``expected_senders``, return their
-    bodies in the same order. Raises ``Timeout`` if not all replies are
-    in by the deadline."""
+    bodies in the same order. Raises ``Timeout`` (with ``workers``,
+    ``received``, ``expected``, ``partial`` attached for the tool
+    wrapper to surface) if not all replies are in by the deadline."""
     record = runtime.record_for(collector)
     results: list[Any] = [None] * len(expected_senders)
     received: list[bool] = [False] * len(expected_senders)
@@ -75,10 +76,13 @@ def _collect(
     while not all(received):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            missing = sum(1 for r in received if not r)
+            got = sum(1 for r in received if r)
             raise Timeout(
-                f"only {len(received) - missing}/{len(received)} replies "
-                f"received before timeout"
+                f"only {got}/{len(received)} replies received before timeout",
+                workers=[s.id for s in expected_senders],
+                received=got,
+                expected=len(expected_senders),
+                partial=list(results),
             )
         envelopes = record.inbox.read(
             since_seq=cursor,
