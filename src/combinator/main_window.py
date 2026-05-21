@@ -287,6 +287,15 @@ class MainApp(App):
         # snapshot hasn't returned yet, the next tick is a no-op.
         # Keeps the UI thread responsive while the daemon is busy.
         self._snapshot_in_flight: bool = False
+        # Diff-check fingerprints so we only call Static.update()
+        # when the data actually changed. The chat input lives on
+        # the same event loop as the panes, so a redundant update
+        # every tick burns frame-budget that should be servicing
+        # keystrokes.
+        self._cost_signature: tuple | None = None
+        self._activity_signature: tuple | None = None
+        self._permissions_signature: tuple | None = None
+        self._context_signature: tuple | None = None
         # Currently-displayed permission request for the selected
         # agent (None when no pending request). F3/F4 resolve this.
         self._active_perm: dict[str, Any] | None = None
@@ -319,9 +328,10 @@ class MainApp(App):
         # the bold variant is too loud against the surface tone.
         tree.guide_depth = 2
         self.refresh_all()
-        # 500ms tick: light enough that interaction feels live, heavy
-        # enough that we're not spamming the control socket.
-        self.set_interval(0.5, self.refresh_all)
+        # 1Hz tick: snapshot RPC + UI applies happen on the same
+        # event loop as keystrokes, so we keep this conservative.
+        # The 250ms pulse timer (separate) keeps status icons live.
+        self.set_interval(1.0, self.refresh_all)
         # Smooth status-dot pulse for active agents.
         self.set_interval(_PULSE_INTERVAL, self._tick_pulse)
         # Pre-select iota in the tree (drives the chat pane) but land
@@ -571,13 +581,18 @@ class MainApp(App):
 
     def _refresh_context_bar(self) -> None:
         """Render the model + context-window meter for the selected
-        agent at the bottom of the chat pane."""
+        agent. Diff-checked: skips re-render when nothing changed."""
+        addr = self.selected_addr
+        model = self._addr_models.get(addr) if addr else None
+        ctx = self._addr_context.get(addr) if addr else None
+        sig = (addr, model, ctx)
+        if sig == self._context_signature:
+            return
+        self._context_signature = sig
         bar = self.query_one("#context-bar", Static)
-        if not self.selected_addr:
+        if not addr:
             bar.update("")
             return
-        model = self._addr_models.get(self.selected_addr)
-        ctx = self._addr_context.get(self.selected_addr)
         line = Text()
         if model:
             line.append(model, style="dim cyan")
@@ -590,19 +605,27 @@ class MainApp(App):
         self._update_subtitle()
 
     def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
-        """Show the first pending permission for the selected agent as
-        a banner above the input. ``F3`` / ``F4`` resolve it."""
-        banner = self.query_one("#perm-banner", Static)
+        """Show the first pending permission for the selected agent
+        as a banner above the input. Diff-checked."""
         if self.selected_addr is None:
             mine: list[dict[str, Any]] = []
         else:
             mine = [p for p in pending if p.get("addr") == self.selected_addr]
-        if not mine:
+        first = mine[0] if mine else None
+        sig = (
+            first.get("req_id") if first else None,
+            first.get("tool_name") if first else None,
+        )
+        if sig == self._permissions_signature:
+            self._active_perm = first
+            return
+        self._permissions_signature = sig
+        banner = self.query_one("#perm-banner", Static)
+        if first is None:
             self._active_perm = None
             banner.set_class(False, "active")
             banner.update("")
             return
-        first = mine[0]
         self._active_perm = first
         args_preview = _args_preview(first.get("args") or {})
         body = Text()
@@ -641,8 +664,15 @@ class MainApp(App):
         banner.update("")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
-        """Cross-agent activity feed: who sent what to whom across the
-        whole tree, oldest first so newest sits at the bottom."""
+        """Cross-agent activity feed. Diff-checked: skip the render
+        entirely if nothing changed since last tick (cheap path on
+        every tick when the agents are quiet)."""
+        sig = tuple(
+            (r.get("ts"), r.get("from"), r.get("to")) for r in rows
+        )
+        if sig == self._activity_signature:
+            return
+        self._activity_signature = sig
         pane = self.query_one("#activity-pane", Static)
         from rich.console import Group as _Group
 
@@ -667,13 +697,16 @@ class MainApp(App):
     def _apply_cost(self, cost: dict[str, Any]) -> None:
         """Minimal cost pane: just the running total. A trailing
         ``*`` marks the total when any agent runs on a subscription
-        (claude_agent engine) — those USD figures are API-equivalent
-        estimates, not literal billing."""
+        (claude_agent engine)."""
+        total = float(cost.get("total", 0.0) or 0.0)
+        has_sub = bool(cost.get("has_subscription_agent"))
+        sig = (round(total, 6), has_sub)
+        if sig == self._cost_signature:
+            return
+        self._cost_signature = sig
         cost_pane = self.query_one("#cost-pane", Static)
         from rich.console import Group as _Group
 
-        total = cost.get("total", 0.0)
-        has_sub = bool(cost.get("has_subscription_agent"))
         total_line = Text.from_markup(_format_usd(total))
         if has_sub:
             total_line.append(" *", style="bold magenta")
