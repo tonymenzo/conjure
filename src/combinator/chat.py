@@ -131,18 +131,38 @@ class ChatView(VerticalScroll):
     }
     """
 
+    # Typewriter pump: chunks accumulate in ``_stream_target`` as fast
+    # as the upstream LLM provides them; the pump reveals chars into
+    # ``_stream_shown`` at a steady cadence so visible streaming is
+    # smooth even when chunks arrive in bursts. When already caught
+    # up, the pump is effectively a no-op.
+    _TYPE_INTERVAL = 0.033          # 30 fps
+    _TYPE_BASE_CHARS = 4            # minimum chars revealed per tick
+    _TYPE_CATCHUP_DIVISOR = 6       # additional advance = remaining // N
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._streaming_block: Static | None = None
-        self._stream_buffer: str = ""
+        self._stream_label: str = ""
+        self._stream_target: str = ""
+        self._stream_shown: str = ""
+        self._stream_tool_calls: list[dict[str, Any]] = []
         self.can_focus = False
+
+    def on_mount(self) -> None:
+        # The typewriter pump runs forever; it's a no-op when there's
+        # nothing to reveal.
+        self.set_interval(self._TYPE_INTERVAL, self._tick_typewriter)
 
     def reset(self) -> None:
         """Drop every block and reset stream state. Use on agent swap."""
         for child in list(self.children):
             child.remove()
         self._streaming_block = None
-        self._stream_buffer = ""
+        self._stream_label = ""
+        self._stream_target = ""
+        self._stream_shown = ""
+        self._stream_tool_calls = []
 
     def apply_event(self, label: str, event: dict[str, Any]) -> None:
         """Route one live event (from the log tail) to the right path."""
@@ -151,12 +171,12 @@ class ChatView(VerticalScroll):
             self._stream_chunk(label, event.get("text", "") or "")
             return
         if kind == "stream_end":
-            self._end_stream(label, event.get("tool_calls", []) or [])
+            self._finalize_stream(label, event.get("tool_calls", []) or [])
             return
         # Any non-streaming event finalizes a hanging stream first so
         # the response block lands before the new block goes below it.
         if self._streaming_block is not None:
-            self._end_stream(label, [])
+            self._finalize_stream(label, [])
         self._append_event(label, event)
 
     def replay_events(self, label: str, events: list[dict[str, Any]]) -> None:
@@ -202,29 +222,61 @@ class ChatView(VerticalScroll):
             self._scroll_to_end()
 
     def _stream_chunk(self, label: str, text: str) -> None:
+        """Record a chunk into the typewriter target. The pump reveals
+        it gradually on the next tick(s)."""
         if not text:
             return
-        self._stream_buffer += text
-        renderable = _streaming_renderable(label, self._stream_buffer, [])
+        self._stream_label = label
+        self._stream_target += text
         if self._streaming_block is None:
-            self._streaming_block = Static(renderable)
+            # Mount an empty Static now so it sits in the right spot;
+            # the pump fills it in.
+            self._streaming_block = Static(Text(""))
             self.mount(self._streaming_block)
-        else:
-            self._streaming_block.update(renderable)
-        self._scroll_to_end()
 
-    def _end_stream(self, label: str, tool_calls: list[dict[str, Any]]) -> None:
-        has_content = bool(self._stream_buffer) or bool(tool_calls)
+    def _finalize_stream(self, label: str, tool_calls: list[dict[str, Any]]) -> None:
+        """Stream is done. Snap the streaming block to the full target
+        + tool calls and detach the tracking reference. Subsequent
+        events mount as new blocks below."""
+        has_content = bool(self._stream_target) or bool(tool_calls)
         if self._streaming_block is None and not has_content:
             return
-        renderable = _streaming_renderable(label, self._stream_buffer, tool_calls)
+        self._stream_label = label
+        self._stream_tool_calls = list(tool_calls)
+        renderable = _streaming_renderable(
+            label, self._stream_target, self._stream_tool_calls
+        )
         if self._streaming_block is None:
             self._streaming_block = Static(renderable)
             self.mount(self._streaming_block)
         else:
             self._streaming_block.update(renderable)
         self._streaming_block = None
-        self._stream_buffer = ""
+        self._stream_label = ""
+        self._stream_target = ""
+        self._stream_shown = ""
+        self._stream_tool_calls = []
+        self._scroll_to_end()
+
+    def _tick_typewriter(self) -> None:
+        """Pump: advance ``_stream_shown`` toward ``_stream_target`` a
+        few chars at a time. Catch-up rate scales with how far behind
+        we are so big bursts don't drag — but tiny chunks reveal at a
+        steady, smooth cadence."""
+        if self._streaming_block is None:
+            return
+        target_len = len(self._stream_target)
+        shown_len = len(self._stream_shown)
+        if shown_len >= target_len:
+            return  # already caught up; idle
+        remaining = target_len - shown_len
+        advance = max(
+            self._TYPE_BASE_CHARS, remaining // self._TYPE_CATCHUP_DIVISOR
+        )
+        new_len = min(shown_len + advance, target_len)
+        self._stream_shown = self._stream_target[:new_len]
+        renderable = _streaming_renderable(self._stream_label, self._stream_shown, [])
+        self._streaming_block.update(renderable)
         self._scroll_to_end()
 
     def _mount_response(
