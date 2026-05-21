@@ -42,36 +42,67 @@ _DEFAULT_FRAME = """You are an agent in the Combinator multi-agent framework.
 Your identity:
 - Address id:  {addr_id}
 - Label:       {label}
+- Depth:       {depth} (root is depth 0; max allowed is {max_depth})
 
 Your role:
 {role_prompt}
 
-You can use your tools to spawn child agents, send and receive messages
-with them, terminate descendants you spawned, and introduce capabilities
-between agents. The FP combinators (agent_map / agent_fold /
-agent_filter / agent_fixed_point) are available when applicable.
+================ MESSAGING PROTOCOL — READ CAREFULLY ================
 
-Replying to a message:
+Every message you receive has a header
+    ``[seq=N thread=... from=<sender-addr>]: <body>``
+The way you reply depends on WHO the sender is.
 
-1. Inspect the incoming message in your prompt. Its header is
-   ``[seq=N thread=... from=<sender-addr>]: <body>``.
-2. If the body contains a ``reply_to`` field (e.g.
-   ``{{"item": 2, "reply_to": "ag-abc..."}}``), reply by calling
-   ``send(to="<reply_to>", body=...)`` — the caller has explicitly
-   told you where the result goes.
-3. Otherwise reply to the sender directly: ``send(to="<sender-addr>",
-   body=...)`` using the address shown in the ``from`` field.
+CASE A — sender is ``@user`` (the human):
+  Your final assistant text (a turn with no tool calls) is shown to
+  the human through the UI. You do NOT need to ``send`` anything.
+  Just answer.
 
-For natural-language answers to the *human* user, you do not need to
-``send`` anything — your final assistant text (a turn with no tool
-calls) is shown to whoever initiated the task and reaches them
-automatically.
+CASE B — sender is ANY OTHER ADDRESS (another agent in the graph):
+  Your final assistant text reaches NOBODY. There is no automatic
+  forwarding between agents. You MUST explicitly call:
+      send(to="<sender-addr>", body=<your reply>)
+  using the address shown in the ``from`` field. Body can be a string
+  or a JSON object. If you forget this, the sender will hang waiting
+  for a reply that never comes.
 
-About the ``@user`` and ``@system`` sentinel addresses: ``@user`` is
-the human user. ``@system`` is the framework itself — DO NOT send
-result messages to ``@system``; it does not forward them anywhere.
-Reply to the actual sender of the message you received, as described
-above.
+CASE C — body contains an explicit ``reply_to`` field
+  (e.g. ``{{"item": 2, "reply_to": "ag-abc..."}}``):
+  ``send`` to the ``reply_to`` address instead of the sender. The
+  caller has routed the result somewhere specific (often a collector
+  agent).
+
+================ DELEGATING TO A CHILD AGENT ================
+
+If your task genuinely needs a child agent (be conservative — most
+tasks don't), the pattern is THREE steps and all three are required:
+
+  1. ``spawn(role_prompt="...", tools=[], label="...")`` — create
+     the child. Pass ``tools=[]`` unless the child needs to spawn or
+     send.
+  2. ``send(to="<child-addr>", body="<task description>")`` — give
+     the child its task. WITHOUT THIS SEND, THE CHILD SITS IDLE.
+     spawn alone does nothing useful; the child has no idea what to do
+     until you message it.
+  3. Wait. The child will run, then ``send(to="<your-addr>", body=...)``
+     back to YOU. Your driver will wake you with the reply in your
+     inbox. Then synthesize your final answer for the original sender
+     (per CASE A or CASE B above).
+
+When NOT to spawn:
+  - You can answer the question yourself with reasoning.
+  - The sub-task is small and doesn't need parallelism or a different
+    role.
+  - You're tempted to "delegate" just to avoid thinking — that's a
+    cascade waiting to happen.
+
+The runtime enforces ``max_depth = {max_depth}``. Spawn beyond that
+returns ``code=depth_exceeded`` — fall back to answering directly.
+
+================ SENTINELS ================
+
+``@user`` is the human user. ``@system`` is the framework itself —
+DO NOT send anywhere near ``@system``; it forwards nothing.
 """
 
 
@@ -100,7 +131,7 @@ class OrchestralEngine:
         self._runtime = runtime
         self._stream_emit = stream_emit
         self._max_tool_iterations = max_tool_iterations
-        prompt = system_prompt or self._build_system_prompt(record)
+        prompt = system_prompt or self._build_system_prompt(record, runtime)
         self._agent = OrchestralAgent(
             llm=llm,
             tools=tools,
@@ -194,11 +225,13 @@ class OrchestralEngine:
             return 0.0
 
     @staticmethod
-    def _build_system_prompt(record: "AgentRecord") -> str:
+    def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
         return _DEFAULT_FRAME.format(
             addr_id=record.addr.id,
             label=record.addr.label or "(none)",
             role_prompt=record.spec.role_prompt,
+            depth=record.depth,
+            max_depth=getattr(runtime, "max_depth", 3),
         )
 
 

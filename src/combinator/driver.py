@@ -105,10 +105,30 @@ class Driver:
                 f"  [seq={env.seq} thread={env.thread_id} from={env.from_.id}]: "
                 f"{env.body!r}"
             )
-        lines.append(
-            "\nProcess them as appropriate. Your final assistant text is shown "
-            "to whoever sent the message; you do not need to ``send`` a reply "
-            "for natural-language responses. Use ``send`` only to communicate "
-            "with other agents in the graph."
-        )
+        from_agents = [e for e in envelopes if not e.from_.id.startswith("@")]
+        from_user = [e for e in envelopes if e.from_.id == "@user"]
+        # Tailored reminder so the agent doesn't mis-route the reply.
+        # The system frame has the full protocol; this is the kick-in-
+        # the-moment reminder right before its tool decision.
+        if from_agents:
+            sender_ids = ", ".join(sorted({e.from_.id for e in from_agents}))
+            lines.append(
+                f"\nREPLY REMINDER — {len(from_agents)} of these message(s) "
+                f"are from other agents ({sender_ids}). Inter-agent replies "
+                f"are NOT delivered by your final assistant text. For each "
+                f"such message you MUST call "
+                f"``send(to=\"<sender-addr>\", body=...)`` using the "
+                f"address shown in the ``from`` field, otherwise the sender "
+                f"hangs forever. If you spawn a child to help, remember to "
+                f"``send`` the child its task too — spawn alone is a no-op."
+            )
+        elif from_user:
+            lines.append(
+                "\nReply with your final assistant text — the UI delivers it "
+                "to the human. If you ``spawn`` a child to help, you MUST "
+                "also ``send(to=\"<child-addr>\", body=...)`` so the child "
+                "knows what to do; spawn alone is a no-op."
+            )
+        else:
+            lines.append("\nProcess the message(s) as appropriate.")
         return "\n".join(lines)
