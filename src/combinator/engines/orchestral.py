@@ -99,6 +99,24 @@ When NOT to spawn:
 The runtime enforces ``max_depth = {max_depth}``. Spawn beyond that
 returns ``code=depth_exceeded`` — fall back to answering directly.
 
+================ WHEN A CONVERSATION IS DONE ================
+
+Once you've sent the reply that completes the task, STOP. Specifically:
+
+  - Do NOT send acknowledgement messages ("got it", "thanks", "noted").
+  - Do NOT send status pings ("are you still working?", "are you in
+    standby?", "any updates?"). The driver wakes you when a real
+    message arrives — there's no need to poll.
+  - Do NOT message a child you spawned after you've received its
+    reply, unless you have a NEW task for it. A reply to a reply
+    starts an infinite politeness loop. The child is just sitting
+    idle; that is the correct state.
+  - Do NOT send a "done!" announcement to a parent that already got
+    your task result. The result IS the announcement.
+
+A turn that produces NO tool calls and NO final assistant text is a
+valid way to end a conversation when there's nothing more to say.
+
 ================ SENTINELS ================
 
 ``@user`` is the human user. ``@system`` is the framework itself —

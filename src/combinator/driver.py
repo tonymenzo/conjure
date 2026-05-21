@@ -115,12 +115,16 @@ class Driver:
             lines.append(
                 f"\nREPLY REMINDER — {len(from_agents)} of these message(s) "
                 f"are from other agents ({sender_ids}). Inter-agent replies "
-                f"are NOT delivered by your final assistant text. For each "
-                f"such message you MUST call "
-                f"``send(to=\"<sender-addr>\", body=...)`` using the "
-                f"address shown in the ``from`` field, otherwise the sender "
-                f"hangs forever. If you spawn a child to help, remember to "
-                f"``send`` the child its task too — spawn alone is a no-op."
+                f"are NOT delivered by your final assistant text. If this "
+                f"message asks a question or hands you a task, ``send(to="
+                f"\"<sender-addr>\", body=...)`` with the answer. If this "
+                f"message is itself a REPLY to something you already asked "
+                f"for (a result, a status, an acknowledgement), DO NOT send "
+                f"another message back — that starts a politeness loop. "
+                f"Just produce your final assistant text (which only the "
+                f"@user sees) or end the turn with no tool calls at all. "
+                f"If you spawn a child to help, remember to ``send`` the "
+                f"child its task too — spawn alone is a no-op."
             )
         elif from_user:
             lines.append(
