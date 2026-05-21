@@ -136,6 +136,9 @@ class ChatView(VerticalScroll):
         margin-top: 0;
         margin-bottom: 1;
     }
+    ChatView > Static.user-block {
+        text-align: right;
+    }
     """
 
     # Typewriter pump: chunks accumulate in ``_stream_target`` as fast
@@ -212,7 +215,7 @@ class ChatView(VerticalScroll):
         """Mount a user block directly (used by the local-input echo)."""
         block = _user_block(text)
         if block is not None:
-            self._mount(block)
+            self._mount(block, classes=("user-block",))
             self._scroll_to_end()
 
     def write_error(self, text: str) -> None:
@@ -223,9 +226,9 @@ class ChatView(VerticalScroll):
     # ----- internals -----
 
     def _append_event(self, label: str, event: dict[str, Any]) -> None:
-        block, subordinate = _format_event(label, event)
+        block, css_classes = _format_event(label, event)
         if block is not None:
-            self._mount(block, subordinate=subordinate)
+            self._mount(block, classes=css_classes)
             self._scroll_to_end()
 
     def _stream_chunk(self, label: str, text: str) -> None:
@@ -293,10 +296,15 @@ class ChatView(VerticalScroll):
         if block is not None:
             self._mount(block)
 
-    def _mount(self, renderable: RenderableType, *, subordinate: bool = False) -> None:
+    def _mount(
+        self,
+        renderable: RenderableType,
+        *,
+        classes: tuple[str, ...] = (),
+    ) -> None:
         widget = Static(renderable)
-        if subordinate:
-            widget.add_class("subordinate")
+        for cls in classes:
+            widget.add_class(cls)
         self.mount(widget)
 
     def _scroll_to_end(self) -> None:
@@ -470,9 +478,23 @@ def _streaming_renderable(
 
 
 def _user_block(text: str) -> RenderableType | None:
+    """Right-aligned user message. The ChatView's ``.user-block`` CSS
+    applies ``text-align: right`` to the Static, so each line of the
+    body floats to the right edge with the ``user`` label tagged on
+    the end of the last line."""
     if not text:
         return None
-    return _speaker_block("you", _USER_STYLE, text, [])
+    rendered = Text()
+    lines = text.split("\n")
+    last_idx = len(lines) - 1
+    for i, line in enumerate(lines):
+        if i > 0:
+            rendered.append("\n")
+        rendered.append(line)
+        if i == last_idx:
+            rendered.append("  ")
+            rendered.append("user", style=_USER_STYLE)
+    return rendered
 
 
 def _response_block(
@@ -531,10 +553,11 @@ def _tool_result_block(summary: str, failed: bool) -> RenderableType:
 
 def _format_event(
     label: str, event: dict[str, Any]
-) -> tuple[RenderableType | None, bool]:
-    """Convert one event into a (Renderable, subordinate) pair. The
-    ``subordinate`` flag tells ``ChatView`` to use the tight margin
-    class so tool results group visually with the response above."""
+) -> tuple[RenderableType | None, tuple[str, ...]]:
+    """Convert one event into a (Renderable, css_classes) pair. The
+    classes are applied to the Static the ChatView mounts — currently
+    ``subordinate`` (tool results: tight margin to the response above)
+    and ``user-block`` (right-aligned user message)."""
     kind = event.get("kind")
 
     if kind == "response":
@@ -544,18 +567,18 @@ def _format_event(
                 event.get("text", "") or "",
                 event.get("tool_calls", []) or [],
             ),
-            False,
+            (),
         )
 
     if kind == "tool":
         failed = bool(event.get("failed"))
         summary = _summarize_tool_result(event.get("text", "") or "")
-        return (_tool_result_block(summary, failed), True)
+        return (_tool_result_block(summary, failed), ("subordinate",))
 
     if kind == "assistant":
         return (
             _response_block(label, event.get("text", "") or "", []),
-            False,
+            (),
         )
 
     if kind == "spawned":
@@ -566,21 +589,21 @@ def _format_event(
         row.append("+ spawned ", style="dim")
         row.append(spawned_label, style="bold")
         row.append(suffix, style="dim")
-        return (row, False)
+        return (row, ())
 
     if kind == "terminated":
         addr = event.get("addr", "?")
         row = Text()
         row.append("× terminated ", style="red dim")
         row.append(addr, style="red")
-        return (row, False)
+        return (row, ())
 
     if kind == "user_input":
-        return (_user_block(event.get("text", "") or ""), False)
+        return (_user_block(event.get("text", "") or ""), ("user-block",))
 
     # ``user`` is the noisy driver-wrapped prompt; skip silently.
     # ``unknown`` is anything we can't classify.
-    return (None, False)
+    return (None, ())
 
 
 # ---- small parsing helpers ----
