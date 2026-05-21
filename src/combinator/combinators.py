@@ -171,6 +171,7 @@ def agent_fold(
     init: Any,
     *,
     timeout_s: float = 120.0,
+    trace: bool = False,
 ) -> Any:
     """Sequential threading: spawn one worker per item in order; pass
     the accumulator along with the item; the worker returns the new
@@ -178,13 +179,20 @@ def agent_fold(
 
     Worker receives ``{"acc": acc, "item": item, "reply_to":
     <collector-id>}`` and replies with the new accumulator value.
+
+    When ``trace=True`` returns ``{"result": final_acc, "trace":
+    [init, acc_after_step_0, ..., final]}`` so callers can inspect
+    intermediate states — essential when the per-step output IS the
+    value (drift detection, narration of a chain, progress UIs).
+    Default ``trace=False`` preserves the original return shape.
     """
     items_list = list(items)
     if not items_list:
-        return init
+        return {"result": init, "trace": [init]} if trace else init
 
     collector = _spawn_collector(runtime, parent, label="fold-collector")
     acc = init
+    history: list[Any] = [init] if trace else []
     workers: list[Address] = []
     try:
         for item in items_list:
@@ -207,7 +215,9 @@ def agent_fold(
                 timeout_s=timeout_s,
             )
             acc = reply
-        return acc
+            if trace:
+                history.append(acc)
+        return {"result": acc, "trace": history} if trace else acc
     finally:
         for worker in workers:
             runtime.terminate(worker, cascade=True)

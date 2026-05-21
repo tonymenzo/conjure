@@ -505,12 +505,17 @@ class Runtime:
         # Supervision: tell the (live) parent its child just went away.
         # When termination cascades from an ancestor, the parent here
         # is already terminated and the call is a no-op — no spurious
-        # spam during teardown.
-        self._notify_parent_of_child_event(
-            record,
-            event="terminated",
-            reason=f"requested_by={requested_by}",
-        )
+        # spam during teardown. ``oneshot`` terminations are expected
+        # (the parent already collected the worker's reply right
+        # before the auto-terminate fired) — surfacing them as
+        # supervision envelopes floods the inbox at the tail of a
+        # fan-out without adding signal.
+        if requested_by != "oneshot":
+            self._notify_parent_of_child_event(
+                record,
+                event="terminated",
+                reason=f"requested_by={requested_by}",
+            )
         if cascade:
             for child in list(record.children):
                 self._terminate_locked(

@@ -53,6 +53,35 @@ routed the result somewhere specific (usually a collector agent).
 The shortcuts let you keep role-prompts templatable instead of
 copy-pasting opaque ids.
 
+> ⚠ **Don't put `"self"` into a `reply_to` body field.** Shortcuts
+> are resolved at *the tool call site*, not at the time the body
+> was constructed. If you `Send(to=child, body={"task": ...,
+> "reply_to": "self"})`, then the child later does
+> `Send(to=body["reply_to"], ...)`, the child resolves `"self"` to
+> *itself* and the reply vanishes. You'll hit a silent 30-second
+> `WaitFor` timeout. Pass an explicit address id (`reply_to: "<your-
+> own-addr>"`) when threading a reply-to through a body, or design
+> the worker so it replies via `Send(to="parent", ...)`.
+
+## Message-body shape
+
+`body` on `Send` (and the body field on any combinator dispatch) is
+JSON-serializable and **delivered as-is** — the runtime does not
+auto-stringify dicts or auto-parse strings. The receiver sees the
+exact shape the sender passed: a dict stays a dict, a string stays a
+string, nested structures stay nested. Pick one shape per worker
+spec and tell the worker's role prompt what to expect.
+
+Convention for combinator workers (what `AgentMap` / `AgentFold` /
+`AgentFilter` inject automatically):
+
+- `{"item": <item>, "reply_to": "<collector-addr>"}` for map / filter
+- `{"acc": <accumulator>, "item": <item>, "reply_to": "<collector-addr>"}` for fold
+- `{"value": <current>, "reply_to": "<collector-addr>"}` for fixed-point
+
+If you hand-roll workers, follow the same convention so the substrate
+feels uniform across patterns.
+
 ## Tools available to you
 
 You have two tool surfaces:

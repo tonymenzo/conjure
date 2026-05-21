@@ -142,12 +142,24 @@ class AgentMapTool(StatelessRuntimeTool):
 
 
 class AgentFoldTool(StatelessRuntimeTool):
-    """Fold a worker spec over a list of items sequentially."""
+    """Fold a worker spec over a list of items sequentially. Pass
+    ``trace=True`` to also receive the per-step accumulator history
+    — required when the chain of intermediate values is the value
+    (narration, drift detection, progress UIs). Without ``trace``
+    you only see the final accumulator."""
 
     spec: dict = RuntimeField(description="Spec template for each worker.")
     items: list = RuntimeField(description="List of items to fold.")
     init: Any = RuntimeField(description="Initial accumulator value.")
     timeout_s: float = RuntimeField(default=60.0, description="Maximum seconds.")
+    trace: bool = RuntimeField(
+        default=False,
+        description=(
+            "When true, return ``{result, trace}`` where ``trace`` is "
+            "``[init, acc_after_step_0, ..., final]``. Lets you see "
+            "every intermediate accumulator instead of just the last."
+        ),
+    )
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
@@ -161,9 +173,12 @@ class AgentFoldTool(StatelessRuntimeTool):
                 runtime, caller_addr, factory, list(self.items or []),
                 init=self.init,
                 timeout_s=float(self.timeout_s or 120.0),
+                trace=bool(self.trace),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
+        if isinstance(result, dict) and "trace" in result:
+            return {"ok": True, "result": result["result"], "trace": result["trace"]}
         return {"ok": True, "result": result}
 
 

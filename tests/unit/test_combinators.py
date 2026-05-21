@@ -181,6 +181,49 @@ def test_agent_fold_empty_returns_init():
     rt.shutdown()
 
 
+def test_agent_fold_trace_returns_full_history():
+    """``trace=True`` returns ``{"result": final, "trace": [init, ...,
+    final]}`` so callers can see every intermediate accumulator. The
+    chain is what makes telephone-game / drift-detection / progress-UI
+    use cases work."""
+
+    def adder(engine, prompt, envelopes):
+        for env in envelopes:
+            body = env.body
+            send_impl(
+                token=engine.token,
+                to=body["reply_to"],
+                body=body["acc"] + body["item"],
+            )
+        return "ok"
+
+    rt = _make_runtime({"adder": adder})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out = agent_fold(
+        rt, root,
+        lambda i: AgentSpec(role_prompt="adder"),
+        [1, 2, 3],
+        init=0,
+        timeout_s=5.0,
+        trace=True,
+    )
+    assert isinstance(out, dict)
+    assert out["result"] == 6
+    assert out["trace"] == [0, 1, 3, 6]
+    rt.shutdown()
+
+
+def test_agent_fold_trace_empty_items_returns_singleton_trace():
+    rt = _make_runtime({})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out = agent_fold(
+        rt, root, lambda i: AgentSpec(role_prompt="x"), [],
+        init=99, trace=True,
+    )
+    assert out == {"result": 99, "trace": [99]}
+    rt.shutdown()
+
+
 # ----- agent_filter -----
 
 def test_agent_filter_keeps_truthy():
