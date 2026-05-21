@@ -502,6 +502,15 @@ class Runtime:
         unregister_token(record.token)
         if record.wakeup is not None:
             record.wakeup.set()
+        # Supervision: tell the (live) parent its child just went away.
+        # When termination cascades from an ancestor, the parent here
+        # is already terminated and the call is a no-op — no spurious
+        # spam during teardown.
+        self._notify_parent_of_child_event(
+            record,
+            event="terminated",
+            reason=f"requested_by={requested_by}",
+        )
         if cascade:
             for child in list(record.children):
                 self._terminate_locked(
@@ -518,6 +527,72 @@ class Runtime:
                 "cascade": cascade,
             },
         )
+
+    # ----- Supervision (parent gets notified of child lifecycle events) -----
+
+    def notify_child_errored(
+        self,
+        addr: Address,
+        reason: str,
+    ) -> None:
+        """Public entrypoint for the driver to report a child engine
+        failure to the parent. Lock-safe (RLock); no-op if the parent
+        is gone or the runtime is shutting down."""
+        with self._lock:
+            record = self._records.get(addr)
+            if record is None:
+                return
+            self._notify_parent_of_child_event(
+                record, event="errored", reason=reason
+            )
+
+    def _notify_parent_of_child_event(
+        self,
+        child_record: AgentRecord,
+        *,
+        event: str,
+        reason: str | None = None,
+    ) -> None:
+        """Inject a ``@system → parent`` envelope describing a child's
+        lifecycle transition (``terminated`` or ``errored``). The
+        envelope body is structured so the LLM can dispatch on it:
+
+        ``{"kind": "child_event", "event": ..., "child_addr": ...,
+        "child_label": ..., "reason": ...}``
+
+        Skipped when the parent doesn't exist (root), is itself
+        terminated (cascade), or the runtime is shutting down."""
+        parent_addr = child_record.parent
+        if parent_addr is None:
+            return
+        if self._shutdown:
+            return
+        parent_record = self._records.get(parent_addr)
+        if parent_record is None or parent_record.status == "terminated":
+            return
+        body: dict[str, Any] = {
+            "kind": "child_event",
+            "event": event,
+            "child_addr": child_record.addr.id,
+            "child_label": child_record.addr.label or None,
+        }
+        if reason is not None:
+            body["reason"] = str(reason)
+        msg_id = new_message_id()
+        env = Envelope(
+            seq=0,
+            msg_id=msg_id,
+            from_=SYSTEM,
+            to=parent_addr,
+            thread_id=msg_id,
+            body=body,
+            ts=time.time(),
+        )
+        stored = parent_record.inbox.put(env)
+        self._journal_send(stored)
+        wakeup = parent_record.wakeup
+        if wakeup is not None:
+            wakeup.set()
 
     def _require_alive(self, addr: Address) -> None:
         if addr not in self._records:

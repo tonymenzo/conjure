@@ -106,6 +106,79 @@ def test_terminate_without_cascade_leaves_descendants_alive():
     assert rt.record_for(grand).status == "lazy"
 
 
+def test_terminating_a_child_notifies_the_live_parent():
+    """Supervision: when a child terminates, the runtime injects a
+    ``@system → parent`` envelope describing the event so the parent
+    doesn't have to poll."""
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(
+        parent=root, spec=AgentSpec(role_prompt="child", label="worker-1"),
+    )
+    rt.terminate(child, cascade=False)
+
+    inbox = rt.record_for(root).inbox
+    envs = inbox.read(since_seq=0, max_n=10)
+    events = [
+        e for e in envs
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert len(events) == 1
+    body = events[0].body
+    assert body["event"] == "terminated"
+    assert body["child_addr"] == child.id
+    assert body["child_label"] == "worker-1"
+    assert events[0].from_.id == "@system"
+
+
+def test_cascade_termination_does_not_spam_dead_parents():
+    """When termination cascades from an ancestor, the live agents
+    above the cascade root *do* get notified (the cascade root's
+    parent), but agents *inside* the dying subtree shouldn't —
+    their parent is already gone."""
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))
+    grand = rt._spawn(parent=child, spec=AgentSpec(role_prompt="grand"))
+
+    # Drain anything that arrived from earlier supervision events
+    # before this test exercises termination.
+    root_inbox = rt.record_for(root).inbox
+    base_seq = root_inbox.latest_seq()
+
+    rt.terminate(child, cascade=True)
+
+    # root gets exactly one child_event (about ``child``); grand's
+    # parent (child) was already terminated, so no second event.
+    new = root_inbox.read(since_seq=base_seq, max_n=10)
+    events = [
+        e for e in new
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert len(events) == 1
+    assert events[0].body["child_addr"] == child.id
+
+
+def test_runtime_shutdown_does_not_emit_supervision_events():
+    """During ``shutdown()`` everything terminates at once. No need
+    to flood the runtime with envelopes about the teardown."""
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))
+
+    root_inbox = rt.record_for(root).inbox
+    base_seq = root_inbox.latest_seq()
+
+    rt.shutdown()
+
+    new = root_inbox.read(since_seq=base_seq, max_n=10)
+    events = [
+        e for e in new
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert events == []
+
+
 def test_double_terminate_is_noop():
     rt = Runtime()
     addr = rt.root(AgentSpec(role_prompt="root"))

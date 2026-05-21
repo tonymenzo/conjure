@@ -178,11 +178,44 @@ Once you've sent the reply that completes the task, **stop**.
 - A turn that produces no tool calls and no final assistant text is a
   valid way to end the conversation.
 
+## Child lifecycle events (supervision)
+
+When a child you spawned terminates or its engine errors, the runtime
+**automatically** sends you a `@system` envelope so you don't have to
+poll:
+
+```json
+{
+  "kind": "child_event",
+  "event": "terminated" | "errored",
+  "child_addr": "ag-...",
+  "child_label": "...",
+  "reason": "..."
+}
+```
+
+`terminated` fires whether you killed the child explicitly (via
+`Terminate`) or the runtime ended it for another reason — including
+oneshot exit. `errored` fires when the child's engine raises (e.g.
+the underlying CLI fails) and the child is now stuck in `error`
+status until its next message.
+
+Treat these as notifications, not requests. Don't reply to
+`@system`. Common reactions:
+
+- **`event: errored`** — decide whether to retry, route the work to
+  a fresh child, or escalate the failure.
+- **`event: terminated`** while you're still waiting on a reply from
+  that child — give up on the reply and proceed.
+- **`event: terminated`** for a child you already finished using —
+  ignore; the cleanup just happened.
+
 ## Sentinels
 
 - `@user` — the human. Your final assistant text reaches them.
-- `@system` — the framework itself. Never send anywhere near it; it
-  forwards nothing.
+- `@system` — the framework itself. Sends you `child_event` messages
+  for supervision. Never `Send` anywhere near it; it forwards
+  nothing.
 
 ## Style
 

@@ -113,6 +113,43 @@ def test_driver_handles_engine_exception_and_continues():
     rt.shutdown()
 
 
+def test_engine_exception_notifies_parent_via_child_event():
+    """Supervision: a child whose engine raises shows up in the
+    parent's inbox as a ``@system → parent`` ``child_event`` with
+    ``event: "errored"``. Lets the parent react without polling."""
+    engines: list[MockEngine] = []
+
+    def factory(record: AgentRecord, runtime: Runtime) -> MockEngine:
+        # Only the *child* should raise; the root is a quiet observer.
+        raise_first = bool(engines)  # second-built engine is the child
+        e = MockEngine(raise_once=raise_first)
+        engines.append(e)
+        return e
+
+    rt = Runtime(engine_factory=factory)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child", label="c"))
+    root_inbox = rt.record_for(root).inbox
+    base_seq = root_inbox.latest_seq()
+
+    rt.send_external(to=child, body="will-raise")
+    _wait_for_call(engines[1])
+    # Wait for status flip + notification to settle.
+    time.sleep(0.1)
+
+    new = root_inbox.read(since_seq=base_seq, max_n=10)
+    events = [
+        e for e in new
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert events, f"no child_event delivered; saw: {[e.body for e in new]}"
+    assert events[0].body["event"] == "errored"
+    assert events[0].body["child_addr"] == child.id
+    assert "RuntimeError" in events[0].body.get("reason", "")
+    assert events[0].from_.id == "@system"
+    rt.shutdown()
+
+
 def test_driver_emits_engine_error_to_event_log():
     """Engine exceptions surface as ``{"kind": "error", "text": ...}``
     events on the agent's event log so the chat pane can render them.

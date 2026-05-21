@@ -89,6 +89,7 @@ class Driver:
             record.status = "running"
             prompt = self._build_prompt(envelopes)
             errored = False
+            engine_exc: Exception | None = None
             try:
                 self.agent.step(prompt)
             except Exception as exc:
@@ -96,6 +97,7 @@ class Driver:
                 # shows the failure. Without this the user just sees
                 # the agent stop replying.
                 errored = True
+                engine_exc = exc
                 self._emit_engine_error(exc)
                 logger.exception(
                     "engine raised in driver for %s", record.addr
@@ -106,6 +108,18 @@ class Driver:
                     # dot persists until the agent successfully
                     # processes its next message.
                     record.status = "error" if errored else "idle"
+            # Supervision: notify the parent (if any) that we errored
+            # so it can react without polling. Outside the ``finally``
+            # because we want it ordered after the status flip — the
+            # parent's handler may inspect the child's status.
+            if engine_exc is not None:
+                try:
+                    self.runtime.notify_child_errored(
+                        record.addr,
+                        f"{type(engine_exc).__name__}: {engine_exc}",
+                    )
+                except Exception:
+                    pass
 
     def _emit_engine_error(self, exc: Exception) -> None:
         event_log = getattr(self.agent.record, "event_log", None)
