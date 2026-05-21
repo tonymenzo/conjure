@@ -117,6 +117,8 @@ class ControlServer:
             return self._snapshot(request.get("addr"))
         if method == "activity":
             return self._activity(int(request.get("limit", 12) or 12))
+        if method == "inboxes":
+            return self._inboxes(int(request.get("limit", 20) or 20))
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -149,6 +151,37 @@ class ControlServer:
             else:
                 result["inbox_error"] = inbox_reply.get("error")
         return result
+
+    def _inboxes(self, limit: int) -> dict[str, Any]:
+        """Every agent's recent inbox envelopes. Powers the inbox
+        popup (one round-trip instead of one per agent)."""
+        out: list[dict[str, Any]] = []
+        with self.runtime._lock:  # noqa: SLF001
+            records = list(self.runtime._records.values())  # noqa: SLF001
+        for rec in records:
+            if rec.addr.id in ("@user", "@system"):
+                continue
+            envs = rec.inbox.read(since_seq=0, max_n=limit)
+            out.append(
+                {
+                    "addr": rec.addr.id,
+                    "label": rec.addr.label or rec.addr.id,
+                    "status": rec.status,
+                    "depth": rec.depth,
+                    "envelopes": [
+                        {
+                            "seq": e.seq,
+                            "from": e.from_.id,
+                            "from_label": e.from_.label,
+                            "body": e.body,
+                            "ts": e.ts,
+                        }
+                        for e in envs[-limit:]
+                    ],
+                }
+            )
+        out.sort(key=lambda r: (r["depth"], r["label"]))
+        return {"ok": True, "agents": out}
 
     def _activity(self, limit: int) -> dict[str, Any]:
         """Most-recent ``limit`` envelopes across all agent inboxes,

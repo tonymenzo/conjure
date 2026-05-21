@@ -292,6 +292,7 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     # multiple, which is fine — the popup auto-discovers the live
     # socket if asked.
     _bind_meta_popup(session_name)
+    _bind_inbox_popup(session_name)
 
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
@@ -398,6 +399,34 @@ def _wait_for_tmux_session(session_name: str, *, timeout_s: float) -> bool:
             pass
         time.sleep(0.05)
     return False
+
+
+def _bind_inbox_popup(session_name: str) -> None:
+    """Bind ``prefix + I`` to a popup running the inbox-view for
+    this daemon. Same pattern as ``_bind_meta_popup``."""
+    import shutil
+    import subprocess
+
+    inbox_path = shutil.which("combinator-inbox") or "combinator-inbox"
+    popup_cmd = f"{inbox_path} --session {session_name}"
+    try:
+        subprocess.run(
+            [
+                "tmux",
+                "bind-key",
+                "I",
+                "display-popup",
+                "-E",
+                "-w", "75%",
+                "-h", "75%",
+                "-T", f" inboxes › {session_name} ",
+                popup_cmd,
+            ],
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _bind_meta_popup(session_name: str) -> None:
