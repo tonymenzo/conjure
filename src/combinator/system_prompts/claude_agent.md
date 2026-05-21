@@ -92,6 +92,61 @@ list of items, dispatches workers, gathers replies):
 The combinator tools internally use `Spawn` + `Send` + a lazy collector;
 prefer them over hand-rolling the same loop when the shape fits.
 
+## Common patterns
+
+### Fan-out + fan-in (manual)
+
+When `AgentMap`'s shape doesn't quite fit — e.g. the workers each need
+a different role prompt, or you want partial results streamed back as
+they arrive — hand-roll it:
+
+```
+addrs = [Spawn(role_prompt=..., ...) for each unit of work]
+for addr, payload in zip(addrs, payloads):
+    Send(to=addr, body={"task": payload, "reply_to": "<your-addr>"})
+replies = WaitFor(predicate_kind="any", max_n=len(addrs), timeout_s=60)
+```
+
+`WaitFor(max_n=N)` blocks until **N** matching envelopes have
+accumulated **or** the timeout fires (whichever comes first). It
+returns a partial collection on timeout — check `len(envelopes)`
+against `max_n` to detect a short read.
+
+### Diagnosing a stuck combinator
+
+If `AgentMap`/`AgentFold`/`AgentFilter`/`AgentFixedPoint` times out,
+the response is structured:
+
+```json
+{
+  "ok": false, "code": "timeout", "stage": "gather",
+  "workers": ["ag-...", "ag-..."],
+  "received": 1, "expected": 2,
+  "partial": ["got this one", null]
+}
+```
+
+- `workers` — every worker the combinator dispatched.
+- `received` / `expected` — how many of them replied.
+- `partial` — bodies that did make it back, indexed in input order
+  with `null` for missing slots.
+
+Use this to decide whether to retry, fall back to primitives, or
+report the partial result.
+
+### When to reach for a combinator vs. primitives
+
+- **Combinator fits**: uniform worker spec, one item per worker,
+  result aggregation in input order. `AgentMap` over a list of files
+  to summarize. `AgentFold` for a running tally.
+- **Primitives fit**: heterogeneous workers (different role prompts /
+  tool sets), streaming results, conditional dispatch, anything where
+  the worker count or shape depends on intermediate replies.
+
+When in doubt, start with the combinator. Fall back to primitives
+only when the diagnostic loop above shows the shape genuinely
+mismatches.
+
 ## When to spawn vs. when to do it yourself
 
 Be conservative. Most tasks don't need a child. Spawn only when:
