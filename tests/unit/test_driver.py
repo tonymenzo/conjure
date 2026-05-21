@@ -99,13 +99,16 @@ def test_driver_handles_engine_exception_and_continues():
 
     rt.send_external(to=addr, body="will-raise")
     _wait_for_call(engine)
-    # First step raised; record should be back to idle, not stuck running.
-    # Give the driver a moment to set status.
+    # First step raised; status is sticky ``error`` so the tree's red
+    # dot persists until the agent successfully processes more work.
     time.sleep(0.05)
-    assert rt.record_for(addr).status == "idle"
+    assert rt.record_for(addr).status == "error"
 
     rt.send_external(to=addr, body="will-succeed")
     _wait_for_call(engine)
+    # Successful step clears the error.
+    time.sleep(0.05)
+    assert rt.record_for(addr).status == "idle"
     assert len(engine.prompts) == 2
     rt.shutdown()
 

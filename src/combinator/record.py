@@ -29,6 +29,7 @@ AgentStatus = Literal[
     "running",
     "awaiting_permission",
     "idle",
+    "error",
     "terminated",
 ]
 

@@ -39,6 +39,7 @@ import ast
 import json as _json
 
 from rich.console import RenderableType
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from textual import on
@@ -546,6 +547,20 @@ def _speaker_block(
     return table
 
 
+def _error_block(text: str) -> RenderableType:
+    """Errors live inside their own framed panel — bordered red, with
+    a ``● error`` title — so they're impossible to miss against the
+    normal flow of response / tool blocks."""
+    return Panel(
+        Text(text or "(no detail)", style="red"),
+        title="[bold red]● error[/]",
+        title_align="left",
+        border_style="red",
+        padding=(0, 1),
+        expand=True,
+    )
+
+
 def _tool_result_block(summary: str, failed: bool) -> RenderableType:
     """Tool result lines align to the body column of the preceding
     response so the result reads as a continuation of it."""
@@ -610,11 +625,7 @@ def _format_event(
         return (_user_block(event.get("text", "") or ""), ("user-block",))
 
     if kind == "error":
-        text = event.get("text", "") or ""
-        row = Text()
-        row.append("● error  ", style="bold red")
-        row.append(text, style="red")
-        return (row, ())
+        return (_error_block(event.get("text", "") or ""), ())
 
     # ``user`` is the noisy driver-wrapped prompt; skip silently.
     # ``unknown`` is anything we can't classify.

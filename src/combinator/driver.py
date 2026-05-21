@@ -88,19 +88,24 @@ class Driver:
             self._cursor = envelopes[-1].seq
             record.status = "running"
             prompt = self._build_prompt(envelopes)
+            errored = False
             try:
                 self.agent.step(prompt)
             except Exception as exc:
                 # Surface to the agent's event log so the chat pane
                 # shows the failure. Without this the user just sees
                 # the agent stop replying.
+                errored = True
                 self._emit_engine_error(exc)
                 logger.exception(
                     "engine raised in driver for %s", record.addr
                 )
             finally:
                 if record.status != "terminated":
-                    record.status = "idle"
+                    # Sticky ``error`` between turns so the tree's red
+                    # dot persists until the agent successfully
+                    # processes its next message.
+                    record.status = "error" if errored else "idle"
 
     def _emit_engine_error(self, exc: Exception) -> None:
         event_log = getattr(self.agent.record, "event_log", None)
