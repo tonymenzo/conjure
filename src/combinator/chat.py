@@ -387,6 +387,16 @@ class ChatApp(App):
     # ---- status indicator ----
 
     def _refresh_status(self) -> None:
+        # Fire-and-forget on a background thread so a slow daemon
+        # (e.g. mid-spawn waiting on a child engine's connect) can't
+        # freeze the chat's event loop.
+        threading.Thread(
+            target=self._fetch_status,
+            daemon=True,
+            name="chat-status",
+        ).start()
+
+    def _fetch_status(self) -> None:
         try:
             reply = self.client.call("status")
         except Exception:
@@ -400,10 +410,15 @@ class ChatApp(App):
                 break
         if my_status is None:
             return
+        try:
+            self.call_from_thread(self._apply_status, my_status)
+        except Exception:
+            pass
+
+    def _apply_status(self, my_status: str) -> None:
         # Same legend as the main tree: filled circle, colored by
         # lifecycle. The Header subtitle renders rich markup, so the
-        # style tags here take effect. Static colors here (no pulse —
-        # the subtitle line isn't a great place for animation).
+        # style tags here take effect.
         circle = {
             "lazy": "[bold green]●[/]",
             "running": "[bold yellow]●[/]",
@@ -441,15 +456,33 @@ class ChatApp(App):
         view = self.query_one(ChatView)
         view.echo_user(text)
         self._pending_user_echoes += 1
+        # ``send`` goes to a background thread so the daemon being mid-
+        # MCP-tool-call doesn't freeze the input loop.
+        threading.Thread(
+            target=self._dispatch_send,
+            args=(text,),
+            daemon=True,
+            name="chat-send",
+        ).start()
+
+    def _dispatch_send(self, text: str) -> None:
         try:
             reply = self.client.call("send", addr=self.addr, body=text)
         except Exception as exc:
-            self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            view.write_error(f"send failed: {exc}")
+            self._on_send_failed(f"send failed: {exc}")
             return
         if not reply.get("ok"):
-            self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
-            view.write_error(f"send rejected: {reply.get('error', '?')}")
+            self._on_send_failed(f"send rejected: {reply.get('error', '?')}")
+
+    def _on_send_failed(self, message: str) -> None:
+        try:
+            self.call_from_thread(self._render_send_failure, message)
+        except Exception:
+            pass
+
+    def _render_send_failure(self, message: str) -> None:
+        self._pending_user_echoes = max(0, self._pending_user_echoes - 1)
+        self.query_one(ChatView).write_error(message)
 
     # ---- log tailing ----
 

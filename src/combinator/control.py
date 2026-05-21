@@ -71,6 +71,10 @@ class ControlServer:
             pass
 
     def _loop(self) -> None:
+        # Each accepted connection runs in its own daemon thread so
+        # one slow request (e.g. MCP ``Spawn`` waiting on a child
+        # engine's ``await connect()``) can't block status / send /
+        # snapshot from the UI. Threads exit when the conn closes.
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()  # type: ignore[union-attr]
@@ -78,15 +82,23 @@ class ControlServer:
                 continue
             except OSError:
                 return
+            threading.Thread(
+                target=self._serve_connection,
+                args=(conn,),
+                daemon=True,
+                name="control-conn",
+            ).start()
+
+    def _serve_connection(self, conn: socket.socket) -> None:
+        try:
+            self._handle(conn)
+        except Exception:
+            pass
+        finally:
             try:
-                self._handle(conn)
+                conn.close()
             except Exception:
                 pass
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
 
     def _handle(self, conn: socket.socket) -> None:
         request = _read_line(conn)
