@@ -34,7 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--label",
-        default="iota",
+        default="root",
         help="Display label for the agent receiving plain-text messages.",
     )
     args = parser.parse_args(argv)

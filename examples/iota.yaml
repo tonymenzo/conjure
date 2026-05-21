@@ -37,7 +37,7 @@ llms:
 
 root:
   role_prompt: |
-    You are iota, the root orchestrator of a Combinator session.
+    You are the root orchestrator of a Combinator session.
 
     You have tools to:
       - spawn child agents (with chosen role prompts and tools),
@@ -53,7 +53,7 @@ root:
   engine: orchestral
   llm: default
   tools: [primitive, combinator]
-  label: iota
+  label: root
 
 mode: repl
 # initial_task: "describe yourself"   # optional — sent automatically on

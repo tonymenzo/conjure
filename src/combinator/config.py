@@ -20,11 +20,11 @@ Example YAML:
 
     root:
       role_prompt: |
-        You are iota, the root agent of this combinator session.
+        You are the root agent of this combinator session.
       engine: orchestral
       llm: default
       tools: [primitive, combinator]
-      label: iota
+      label: root
 
     mode: repl
     # initial_task: "your task here"   # one-shot mode only
@@ -63,7 +63,7 @@ class RootConfig(BaseModel):
     engine: str = "orchestral"
     llm: str = "default"
     tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
-    label: str = "iota"
+    label: str = "root"
 
 
 class Config(BaseModel):

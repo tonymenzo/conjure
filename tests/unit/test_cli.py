@@ -155,4 +155,4 @@ def test_config_loader_path_round_trip(tmp_path: Path):
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump(config_data), encoding="utf-8")
     cfg = load_config_from_mapping(config_data)
-    assert cfg.root.label == "iota"
+    assert cfg.root.label == "root"

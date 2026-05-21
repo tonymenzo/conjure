@@ -20,7 +20,7 @@ llms:
 
 root:
   role_prompt: |
-    You are iota, the root agent of a Combinator session.
+    You are the root agent of a Combinator session.
 
     You have tools to spawn child agents, send and receive messages with
     them, and invoke FP-style combinators (agent_map, agent_fold,
@@ -32,6 +32,6 @@ root:
   engine: orchestral
   llm: default
   tools: [primitive, combinator]
-  label: iota
+  label: root
 
 mode: repl
