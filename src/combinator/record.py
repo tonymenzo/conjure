@@ -47,6 +47,16 @@ class AgentSpec(BaseModel):
     initial_message: str | None = None
     lazy: bool = False
     cost_ceiling: int | None = None
+    # On-disk sandbox for filesystem tools. ``None`` falls back to
+    # ``{runtime.store_dir}/sandboxes/{agent_id}/`` at first FS-tool
+    # use. Filesystem tools refuse to read or write outside the
+    # resolved sandbox.
+    sandbox_dir: str | None = None
+    # Per-tool permission decisions, e.g. ``{"Write": "deny",
+    # "Bash": "ask"}``. Tools default to ``"allow"`` when absent.
+    # The orchestral engine routes ``"ask"`` decisions through its
+    # ``permission_hook`` (typically the UI); ``"deny"`` is hard.
+    permissions: dict[str, str] = Field(default_factory=dict)
 
 
 @dataclass

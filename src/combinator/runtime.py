@@ -72,12 +72,18 @@ class Runtime:
         self._tokens: dict[str, Address] = {}
         self._root_addr: Address | None = None
         self._journal = Journal(store_dir)
+        self._store_dir = store_dir
         self._shutdown = False
         self._max_workers = max_workers
         self._max_depth = max_depth
         self._engine_factory = engine_factory
         self._spawn_listener = spawn_listener
         self._install_sentinels()
+
+    @property
+    def store_dir(self) -> Path | None:
+        """Root of on-disk runtime state (journal, sandboxes, ...)."""
+        return self._store_dir
 
     @property
     def max_depth(self) -> int:

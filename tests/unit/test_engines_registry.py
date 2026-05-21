@@ -25,8 +25,15 @@ def test_combinator_group_resolves_to_combinator_tool_set():
 
 
 def test_all_group_combines_both():
+    """``all`` is the union of primitive + combinator + filesystem."""
+    from combinator.tools.filesystem import FILESYSTEM_TOOL_CLASSES
     tools = build_tools("token-abc", ["all"])
-    assert len(tools) == len(PRIMITIVE_TOOL_CLASSES) + len(COMBINATOR_TOOL_CLASSES)
+    expected = (
+        len(PRIMITIVE_TOOL_CLASSES)
+        + len(COMBINATOR_TOOL_CLASSES)
+        + len(FILESYSTEM_TOOL_CLASSES)
+    )
+    assert len(tools) == expected
 
 
 def test_request_both_groups_dedups():

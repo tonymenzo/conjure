@@ -21,6 +21,7 @@ from typing import Mapping
 
 from combinator.tools._base import StatelessRuntimeTool
 from combinator.tools.combinators import COMBINATOR_TOOL_CLASSES
+from combinator.tools.filesystem import FILESYSTEM_TOOL_CLASSES
 from combinator.tools.primitives import PRIMITIVE_TOOL_CLASSES
 
 
@@ -30,7 +31,12 @@ ToolGroupRegistry = Mapping[str, tuple[type[StatelessRuntimeTool], ...]]
 DEFAULT_TOOL_GROUPS: ToolGroupRegistry = {
     "primitive": PRIMITIVE_TOOL_CLASSES,
     "combinator": COMBINATOR_TOOL_CLASSES,
-    "all": PRIMITIVE_TOOL_CLASSES + COMBINATOR_TOOL_CLASSES,
+    "filesystem": tuple(FILESYSTEM_TOOL_CLASSES),
+    "all": (
+        PRIMITIVE_TOOL_CLASSES
+        + COMBINATOR_TOOL_CLASSES
+        + tuple(FILESYSTEM_TOOL_CLASSES)
+    ),
 }
 
 
