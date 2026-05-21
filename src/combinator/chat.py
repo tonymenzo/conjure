@@ -166,9 +166,36 @@ class ChatApp(App):
     def on_mount(self) -> None:
         self.query_one(Input).focus()
         self._start_tail()
+        self._refresh_status()
+        self.set_interval(2.0, self._refresh_status)
 
     def on_unmount(self) -> None:
         self._tail_stop.set()
+
+    # ---- status indicator ----
+
+    def _refresh_status(self) -> None:
+        """Poll the daemon for this agent's status and update the
+        window's subtitle so the user can see at a glance whether the
+        agent is alive."""
+        try:
+            reply = self.client.call("status")
+        except Exception:
+            return
+        if not reply.get("ok"):
+            return
+        my_status: str | None = None
+        for agent in reply.get("agents", []):
+            if agent.get("addr") == self.addr:
+                my_status = agent.get("status")
+                break
+        if my_status is None:
+            return
+        # Use a status icon similar to the meta-view for consistency.
+        icon = {"lazy": "…", "running": "▶", "idle": "✓", "terminated": "✗"}.get(
+            my_status, "?"
+        )
+        self.sub_title = f"({self.addr})  {icon} {my_status}"
 
     # ---- key actions ----
 
