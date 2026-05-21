@@ -106,9 +106,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 # Vertical-bar chat layout: a thin ``▎`` glyph in the left column
 # (color-coded by speaker) ties a block's lines together visually.
 # Colors match the activity pane (main_window._activity_label_style):
-# bold magenta = agent, bold cyan = user. Each block ends with a
-# trailing bar-only row so the bar runs continuously down the pane
-# across stacked blocks instead of showing CSS-margin gaps.
+# bold magenta = agent, bold cyan = user. Bars appear only on rows
+# with actual content; blocks abut directly (no CSS margin) so the
+# color change at a speaker transition is itself the separator.
 _AGENT_BAR = "▎"
 _USER_BAR = "▎"
 _AGENT_BAR_STYLE = "bold magenta"
@@ -500,16 +500,15 @@ def _bar_grid() -> "Table":
 
 
 def _user_block(text: str) -> RenderableType | None:
-    """Left-aligned user message under a cyan speaker bar. The bar
-    extends one row past the last line of text so adjacent blocks
-    chain together without a visual gap."""
+    """Left-aligned user message under a cyan speaker bar. Bars on
+    content rows only — adjacent blocks separate via color change,
+    not via a trailing empty bar."""
     if not text:
         return None
     table = _bar_grid()
     bar = Text(_USER_BAR, style=_USER_BAR_STYLE)
     for line in text.split("\n"):
         table.add_row(bar, Text(line))
-    table.add_row(bar, Text(""))
     return table
 
 
@@ -517,10 +516,9 @@ def _response_block(
     text: str, tool_calls: list[dict[str, Any]]
 ) -> RenderableType | None:
     """Agent response: magenta bar on the left, text under it, tool
-    calls indented one space below, then one trailing bar-only row so
-    the bar flows into the next block without a CSS-margin gap. When
-    the turn carried only tool calls (no text), the empty leading
-    line is skipped so the bar doesn't open with a blank row."""
+    calls indented one space below. When the turn carried only tool
+    calls (no text), the empty leading line is skipped so the bar
+    doesn't open with a blank row."""
     if not text and not tool_calls:
         return None
     table = _bar_grid()
@@ -530,7 +528,6 @@ def _response_block(
             table.add_row(bar, Text(line))
     for tc in tool_calls:
         table.add_row(bar, _tool_call_text(tc))
-    table.add_row(bar, Text(""))
     return table
 
 
@@ -564,15 +561,13 @@ def _error_block(text: str) -> RenderableType:
 def _tool_result_block(summary: str, failed: bool) -> RenderableType:
     """Tool result aligns under the preceding response's bar (same
     magenta column) so it reads as a continuation. The bar is dimmed
-    to subordinate it visually. Includes a trailing bar-only row to
-    keep the bar continuous through to the next block."""
+    to subordinate it visually."""
     table = _bar_grid()
     bar = Text(_AGENT_BAR, style="dim magenta")
     body = Text()
     body.append(_TOOL_RESULT_PREFIX, style="dim")
     body.append(summary, style="red" if failed else "dim")
     table.add_row(bar, body)
-    table.add_row(bar, Text(""))
     return table
 
 
