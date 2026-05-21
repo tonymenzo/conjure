@@ -612,7 +612,7 @@ def _format_event(
     if kind == "error":
         text = event.get("text", "") or ""
         row = Text()
-        row.append("⚠ error  ", style="bold red")
+        row.append("● error  ", style="bold red")
         row.append(text, style="red")
         return (row, ())
 

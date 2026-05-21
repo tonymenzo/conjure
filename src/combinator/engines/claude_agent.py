@@ -196,14 +196,7 @@ class ClaudeAgentEngine:
         future = asyncio.run_coroutine_threadsafe(
             self._step_async(prompt), self._loop
         )
-        try:
-            return future.result(timeout=600)
-        except Exception as exc:
-            # Surface engine errors to the agent's chat pane so the
-            # user can see WHY the agent didn't reply. Without this
-            # they hit the silent-swallow path in the driver.
-            self._emit_error(f"engine error: {exc}")
-            raise
+        return future.result(timeout=600)
 
     def cost(self) -> float:
         # Subscription sessions are flat-rate — don't bill them.
@@ -308,24 +301,12 @@ class ClaudeAgentEngine:
                             self._cost_used += float(cost)
                         except (TypeError, ValueError):
                             pass
-        except Exception as exc:
-            # Visible-in-chat error so the user sees what went wrong
-            # (often: claude CLI not authenticated, or the SDK can't
-            # reach the API). Without this the driver silently logs
-            # and the agent appears to "not reply".
-            self._emit_error(f"claude_agent step failed: {exc}")
-            raise
         finally:
+            # Emit stream_end so the chat pane finalizes the streaming
+            # bubble even when the SDK raises mid-turn. The driver
+            # picks up the exception and emits the error event.
             self._emit_stream_end()
         return accumulated
-
-    def _emit_error(self, text: str) -> None:
-        if self._stream_emit is None:
-            return
-        try:
-            self._stream_emit({"kind": "error", "text": text})
-        except Exception:
-            pass
 
     def _emit_chunk(self, text: str) -> None:
         if self._stream_emit is None or not text:

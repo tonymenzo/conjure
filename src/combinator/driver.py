@@ -90,13 +90,28 @@ class Driver:
             prompt = self._build_prompt(envelopes)
             try:
                 self.agent.step(prompt)
-            except Exception:
+            except Exception as exc:
+                # Surface to the agent's event log so the chat pane
+                # shows the failure. Without this the user just sees
+                # the agent stop replying.
+                self._emit_engine_error(exc)
                 logger.exception(
                     "engine raised in driver for %s", record.addr
                 )
             finally:
                 if record.status != "terminated":
                     record.status = "idle"
+
+    def _emit_engine_error(self, exc: Exception) -> None:
+        event_log = getattr(self.agent.record, "event_log", None)
+        if event_log is None:
+            return
+        try:
+            event_log.emit(
+                {"kind": "error", "text": f"{type(exc).__name__}: {exc}"}
+            )
+        except Exception:
+            pass
 
     def _build_prompt(self, envelopes: list[Envelope]) -> str:
         lines = [f"You have {len(envelopes)} new message(s):"]

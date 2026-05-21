@@ -110,6 +110,39 @@ def test_driver_handles_engine_exception_and_continues():
     rt.shutdown()
 
 
+def test_driver_emits_engine_error_to_event_log():
+    """Engine exceptions surface as ``{"kind": "error", "text": ...}``
+    events on the agent's event log so the chat pane can render them.
+    Without this the user just sees the agent stop replying."""
+    emitted: list[dict] = []
+
+    class _CaptureLog:
+        def emit(self, event: dict) -> None:
+            emitted.append(event)
+
+    engines: list[MockEngine] = []
+
+    def factory(record: AgentRecord, runtime: Runtime) -> MockEngine:
+        record.event_log = _CaptureLog()
+        e = MockEngine(raise_once=True)
+        engines.append(e)
+        return e
+
+    rt = Runtime(engine_factory=factory)
+    addr = rt.root(AgentSpec(role_prompt="root"))
+    engine = engines[0]
+
+    rt.send_external(to=addr, body="boom")
+    _wait_for_call(engine)
+    time.sleep(0.05)
+
+    error_events = [e for e in emitted if e.get("kind") == "error"]
+    assert error_events, f"no error event emitted; saw: {emitted}"
+    assert "RuntimeError" in error_events[0]["text"]
+    assert "boom" in error_events[0]["text"]
+    rt.shutdown()
+
+
 def test_driver_stops_cleanly_on_terminate():
     engines: list[MockEngine] = []
     rt = Runtime(engine_factory=_factory(capture=engines))
