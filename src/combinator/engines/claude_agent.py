@@ -138,6 +138,8 @@ class ClaudeAgentEngine:
         )
         self._options = opts
         self._client = ClaudeSDKClient(opts)
+        self._last_context: tuple[int, int] | None = None
+        self._context_fetch_in_flight: bool = False
         asyncio.run_coroutine_threadsafe(
             self._client.connect(), self._loop
         ).result(timeout=30)
@@ -148,7 +150,14 @@ class ClaudeAgentEngine:
         future = asyncio.run_coroutine_threadsafe(
             self._step_async(prompt), self._loop
         )
-        return future.result(timeout=600)
+        try:
+            return future.result(timeout=600)
+        except Exception as exc:
+            # Surface engine errors to the agent's chat pane so the
+            # user can see WHY the agent didn't reply. Without this
+            # they hit the silent-swallow path in the driver.
+            self._emit_error(f"engine error: {exc}")
+            raise
 
     def cost(self) -> float:
         return self._cost_used
@@ -159,21 +168,31 @@ class ClaudeAgentEngine:
         return getattr(self._options, "model", None) if hasattr(self, "_options") else None
 
     def context_usage(self) -> tuple[int, int] | None:
-        """Pull the SDK's context-usage counter. Bounded by a short
-        timeout — the UI calls this on a 500ms tick and we must NOT
-        stall it. If the SDK is busy mid-turn, we just return None
-        and the bar shows whatever it had last tick.
+        """Non-blocking context fetch. Returns the cached value
+        immediately and schedules a background refresh on the engine's
+        own event loop. The UI's 500ms tick is never blocked waiting
+        for the SDK to respond, even when the SDK is mid-turn or
+        rate-limited.
 
-        Cache the last good reading so we can still render between
-        ticks where the SDK is busy."""
-        cached = getattr(self, "_last_context", None)
+        First-ever call returns ``None`` until the background fetch
+        completes; subsequent calls return progressively-fresh
+        readings."""
+        if not self._context_fetch_in_flight:
+            self._context_fetch_in_flight = True
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._refresh_context_async(), self._loop
+                )
+            except Exception:
+                self._context_fetch_in_flight = False
+        return self._last_context
+
+    async def _refresh_context_async(self) -> None:
         try:
-            fut = asyncio.run_coroutine_threadsafe(
-                self._client.get_context_usage(), self._loop
-            )
-            usage = fut.result(timeout=0.2)
+            usage = await self._client.get_context_usage()
         except Exception:
-            return cached
+            self._context_fetch_in_flight = False
+            return
         used = (
             getattr(usage, "tokens_used", None)
             or getattr(usage, "input_tokens", None)
@@ -185,14 +204,13 @@ class ClaudeAgentEngine:
             or getattr(usage, "max_tokens", None)
             or 200_000
         )
-        if used is None:
-            return cached
         try:
-            result = (int(used), int(total))
+            if used is not None:
+                self._last_context = (int(used), int(total))
         except (TypeError, ValueError):
-            return cached
-        self._last_context = result
-        return result
+            pass
+        finally:
+            self._context_fetch_in_flight = False
 
     def uses_subscription(self) -> bool:
         """True — the SDK always delegates to the local ``claude`` CLI,
@@ -221,9 +239,9 @@ class ClaudeAgentEngine:
     async def _step_async(self, prompt: str) -> str:
         from claude_agent_sdk.types import AssistantMessage, ResultMessage
 
-        await self._client.query(prompt)
         accumulated = ""
         try:
+            await self._client.query(prompt)
             async for msg in self._client.receive_response():
                 text = _extract_text(msg)
                 if text:
@@ -237,9 +255,24 @@ class ClaudeAgentEngine:
                             self._cost_used += float(cost)
                         except (TypeError, ValueError):
                             pass
+        except Exception as exc:
+            # Visible-in-chat error so the user sees what went wrong
+            # (often: claude CLI not authenticated, or the SDK can't
+            # reach the API). Without this the driver silently logs
+            # and the agent appears to "not reply".
+            self._emit_error(f"claude_agent step failed: {exc}")
+            raise
         finally:
             self._emit_stream_end()
         return accumulated
+
+    def _emit_error(self, text: str) -> None:
+        if self._stream_emit is None:
+            return
+        try:
+            self._stream_emit({"kind": "error", "text": text})
+        except Exception:
+            pass
 
     def _emit_chunk(self, text: str) -> None:
         if self._stream_emit is None or not text:

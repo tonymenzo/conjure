@@ -609,6 +609,13 @@ def _format_event(
     if kind == "user_input":
         return (_user_block(event.get("text", "") or ""), ("user-block",))
 
+    if kind == "error":
+        text = event.get("text", "") or ""
+        row = Text()
+        row.append("⚠ error  ", style="bold red")
+        row.append(text, style="red")
+        return (row, ())
+
     # ``user`` is the noisy driver-wrapped prompt; skip silently.
     # ``unknown`` is anything we can't classify.
     return (None, ())

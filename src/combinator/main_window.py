@@ -283,6 +283,10 @@ class MainApp(App):
         # Cache the most recent tree node dict so the pulse tick can
         # refresh labels without re-fetching from the daemon.
         self._last_tree: dict[str, Any] | None = None
+        # Guards re-entrancy on ``refresh_all`` — if the previous
+        # snapshot hasn't returned yet, the next tick is a no-op.
+        # Keeps the UI thread responsive while the daemon is busy.
+        self._snapshot_in_flight: bool = False
         # Currently-displayed permission request for the selected
         # agent (None when no pending request). F3/F4 resolve this.
         self._active_perm: dict[str, Any] | None = None
@@ -400,20 +404,45 @@ class MainApp(App):
     # ----- refresh -----
 
     def refresh_all(self) -> None:
-        """One socket call per tick — fetch tree + cost + activity +
-        pending permissions for the selected agent."""
+        """Kick off a snapshot fetch in the background. Returns
+        immediately — the textual event loop must NOT block on the
+        socket round-trip or keystrokes feel laggy. When the reply
+        lands, ``_apply_snapshot`` runs on the UI thread to update
+        the panes."""
+        if self._snapshot_in_flight:
+            return
+        self._snapshot_in_flight = True
+        addr = self.selected_addr
+        threading.Thread(
+            target=self._fetch_snapshot,
+            args=(addr,),
+            daemon=True,
+            name="snapshot-fetch",
+        ).start()
+
+    def _fetch_snapshot(self, addr: str | None) -> None:
         try:
-            reply = self.client.call("snapshot", addr=self.selected_addr)
+            reply = self.client.call("snapshot", addr=addr)
         except Exception:
+            self._snapshot_in_flight = False
             return
-        if not reply.get("ok"):
-            return
-        self._apply_tree(reply.get("tree"))
-        self._apply_cost(reply.get("cost") or {})
-        self._apply_activity(reply.get("activity") or [])
-        self._apply_permissions(reply.get("pending_permissions") or [])
-        self._apply_context(reply.get("context"))
-        self._refresh_context_bar()
+        try:
+            self.call_from_thread(self._apply_snapshot, reply)
+        except Exception:
+            self._snapshot_in_flight = False
+
+    def _apply_snapshot(self, reply: dict[str, Any]) -> None:
+        try:
+            if not reply.get("ok"):
+                return
+            self._apply_tree(reply.get("tree"))
+            self._apply_cost(reply.get("cost") or {})
+            self._apply_activity(reply.get("activity") or [])
+            self._apply_permissions(reply.get("pending_permissions") or [])
+            self._apply_context(reply.get("context"))
+            self._refresh_context_bar()
+        finally:
+            self._snapshot_in_flight = False
 
     def _apply_context(self, ctx: dict[str, Any] | None) -> None:
         if not self.selected_addr:
