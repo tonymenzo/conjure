@@ -64,6 +64,13 @@ class RootConfig(BaseModel):
     llm: str = "default"
     tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
     label: str = "root"
+    # Filesystem sandbox path (used by the filesystem tool group and
+    # by ``engine: claude_agent``). ``None`` auto-allocates under
+    # ``{runtime.store_dir}/sandboxes/{agent_id}/``.
+    sandbox_dir: str | None = None
+    # Per-tool permission decisions, e.g. ``{Bash: ask, Write: allow}``.
+    # ``ask`` blocks the tool until the UI banner resolves it.
+    permissions: dict[str, str] = Field(default_factory=dict)
 
 
 class Config(BaseModel):

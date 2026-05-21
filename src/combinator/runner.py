@@ -91,6 +91,8 @@ def build_runtime(
         llm=config.root.llm,
         tools=config.root.tools,
         label=config.root.label,
+        sandbox_dir=config.root.sandbox_dir,
+        permissions=config.root.permissions,
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
