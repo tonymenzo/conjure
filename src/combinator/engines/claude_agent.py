@@ -29,7 +29,11 @@ is underneath.
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import os
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
@@ -167,6 +171,15 @@ class ClaudeAgentEngine:
             ):
                 bridged_tools.append(f"mcp__combinator__{short}")
 
+        # When the user is on a subscription, shadow ANTHROPIC_API_KEY
+        # in the subprocess env so the CLI doesn't flip to per-token
+        # API billing. Without this the env var (often loaded from
+        # ~/.config/combinator/.env for the orchestral engine) leaks
+        # through and the CLI prefers it over the OAuth subscription.
+        sdk_env: dict[str, str] = {}
+        if self._uses_subscription and os.environ.get("ANTHROPIC_API_KEY"):
+            sdk_env["ANTHROPIC_API_KEY"] = ""
+
         opts = ClaudeAgentOptions(
             system_prompt=system_prompt or self._build_system_prompt(record, runtime),
             cwd=str(sandbox_dir) if sandbox_dir is not None else None,
@@ -175,6 +188,7 @@ class ClaudeAgentEngine:
             # ``default`` consults can_use_tool for every tool call.
             permission_mode="default",
             mcp_servers=mcp_servers if mcp_servers else {},
+            env=sdk_env,
         )
         self._options = opts
         self._client = ClaudeSDKClient(opts)
@@ -256,12 +270,10 @@ class ClaudeAgentEngine:
 
     def uses_subscription(self) -> bool:
         """Whether the underlying ``claude`` CLI is logged into a
-        Max/Pro subscription (vs an API key). The SDK delegates to
-        whatever auth the CLI is configured with, but it can't tell us
-        which; we infer from the absence of ``ANTHROPIC_API_KEY`` in
-        the environment (API-key auth typically requires it). Honest
-        but not authoritative — for billing-critical paths, run
-        ``claude /status`` and check the user's plan."""
+        Max/Pro subscription. Resolved at engine construction time via
+        ``claude auth status``; falls back to the env-var heuristic
+        (no ``ANTHROPIC_API_KEY`` ⇒ probably subscription) only when
+        the CLI is unreachable."""
         return self._uses_subscription
 
     def shutdown(self) -> None:
@@ -335,12 +347,46 @@ class ClaudeAgentEngine:
         )
 
 
+@functools.cache
 def _detect_subscription() -> bool:
-    # A ``claude`` CLI without an Anthropic API key in env is almost
-    # certainly running on a Max/Pro subscription. With the key set,
-    # the CLI may be using API-key auth — err on the side of "not
-    # subscription" so ``cost()`` surfaces the real number.
+    # Authoritative probe: ``claude auth status`` reports the actual
+    # auth mode the CLI is using (which is what the SDK delegates to),
+    # not whatever ``ANTHROPIC_API_KEY`` happens to be in env. Cached
+    # for the process lifetime because auth doesn't shift mid-run.
+    info = _claude_auth_status()
+    if info is not None:
+        sub = info.get("subscriptionType")
+        if isinstance(sub, str) and sub and sub.lower() != "none":
+            return True
+        if info.get("authMethod") == "claude.ai":
+            return True
+        return False
+    # CLI couldn't tell us — fall back to the env-var heuristic.
     return not api_key_present("anthropic")
+
+
+def _claude_auth_status() -> dict[str, Any] | None:
+    """Return parsed JSON from ``claude auth status``, or ``None`` if
+    the CLI is missing, hangs, or emits non-JSON."""
+    claude_bin = shutil.which("claude")
+    if claude_bin is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [claude_bin, "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        info = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    return info if isinstance(info, dict) else None
 
 
 def _extract_text(msg: Any) -> str:
