@@ -393,10 +393,17 @@ class ChatApp(App):
                 break
         if my_status is None:
             return
-        icon = {"lazy": "…", "running": "▶", "idle": "✓", "terminated": "✗"}.get(
-            my_status, "?"
-        )
-        self.sub_title = f"({self.addr})  {icon} {my_status}"
+        # Same legend as the main tree: filled circle, colored + blink
+        # encodes lifecycle. The Header renders rich markup, so the
+        # style tags here actually take effect.
+        circle = {
+            "lazy": "[blink green]●[/]",
+            "running": "[blink yellow]●[/]",
+            "idle": "[green]●[/]",
+            "terminated": "[dim]●[/]",
+            "error": "[blink red]●[/]",
+        }.get(my_status, "[dim]●[/]")
+        self.sub_title = f"({self.addr})  {circle} {my_status}"
 
     # ---- key actions ----
 

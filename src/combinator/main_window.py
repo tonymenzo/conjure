@@ -50,17 +50,26 @@ from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 
 
+# Status icon = filled circle in every state; only the color (and
+# blink) communicates the agent's life-cycle. ``lazy`` (waiting for
+# its first message) and ``running`` (currently generating /
+# streaming) both blink so the user's eye is drawn to active agents
+# in the tree. Red is reserved for an explicit ``error`` state if
+# we add one later — ``terminated`` is dim grey since it isn't a
+# fault, just a finished agent.
 _STATUS_ICON = {
-    "lazy": "…",
-    "running": "▶",
-    "idle": "✓",
-    "terminated": "✗",
+    "lazy": "●",
+    "running": "●",
+    "idle": "●",
+    "terminated": "●",
+    "error": "●",
 }
 _STATUS_STYLE = {
-    "lazy": "yellow",
-    "running": "green",
-    "idle": "white",
-    "terminated": "red dim",
+    "lazy": "blink green",
+    "running": "blink yellow",
+    "idle": "green",
+    "terminated": "dim",
+    "error": "blink red",
 }
 
 # Initial backlog of events to load when the chat pane swaps to a new

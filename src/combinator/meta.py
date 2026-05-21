@@ -120,17 +120,25 @@ def _current_tmux_session() -> str | None:
     return out.stdout.strip() or None
 
 
+# Status icon legend (mirrors combinator-main):
+#   ● blink green  → lazy / waiting for a message
+#   ● blink yellow → running / generating
+#   ● solid green  → idle / done with current work
+#   ● dim grey     → terminated
+#   ● blink red    → error (reserved)
 _STATUS_ICON = {
-    "lazy": "…",
-    "running": "▶",
-    "idle": "✓",
-    "terminated": "✗",
+    "lazy": "●",
+    "running": "●",
+    "idle": "●",
+    "terminated": "●",
+    "error": "●",
 }
 _STATUS_STYLE = {
-    "lazy": "yellow",
-    "running": "green",
-    "idle": "white",
-    "terminated": "red dim",
+    "lazy": "blink green",
+    "running": "blink yellow",
+    "idle": "green",
+    "terminated": "dim",
+    "error": "blink red",
 }
 
 
