@@ -157,40 +157,25 @@ class Driver:
             pass
 
     def _build_prompt(self, envelopes: list[Envelope]) -> str:
+        # Keep this prompt small: the full reply protocol lives in the
+        # system frame (where it stays in Anthropic's prompt cache
+        # across every turn). The per-turn text is just the envelopes
+        # plus a one-line tag flagging which senders need an explicit
+        # ``send`` reply — re-emitting the full protocol prose every
+        # turn was paying for tokens the model already had memorized.
         lines = [f"You have {len(envelopes)} new message(s):"]
         for env in envelopes:
             lines.append(
                 f"  [seq={env.seq} thread={env.thread_id} from={env.from_.id}]: "
                 f"{env.body!r}"
             )
-        from_agents = [e for e in envelopes if not e.from_.id.startswith("@")]
-        from_user = [e for e in envelopes if e.from_.id == "@user"]
-        # Tailored reminder so the agent doesn't mis-route the reply.
-        # The system frame has the full protocol; this is the kick-in-
-        # the-moment reminder right before its tool decision.
-        if from_agents:
-            sender_ids = ", ".join(sorted({e.from_.id for e in from_agents}))
+        agent_senders = sorted(
+            {e.from_.id for e in envelopes if not e.from_.id.startswith("@")}
+        )
+        if agent_senders:
             lines.append(
-                f"\nREPLY REMINDER — {len(from_agents)} of these message(s) "
-                f"are from other agents ({sender_ids}). Inter-agent replies "
-                f"are NOT delivered by your final assistant text. If this "
-                f"message asks a question or hands you a task, ``send(to="
-                f"\"<sender-addr>\", body=...)`` with the answer. If this "
-                f"message is itself a REPLY to something you already asked "
-                f"for (a result, a status, an acknowledgement), DO NOT send "
-                f"another message back — that starts a politeness loop. "
-                f"Just produce your final assistant text (which only the "
-                f"@user sees) or end the turn with no tool calls at all. "
-                f"If you spawn a child to help, remember to ``send`` the "
-                f"child its task too — spawn alone is a no-op."
+                f"\n↳ inter-agent senders: {', '.join(agent_senders)} — "
+                f"apply the reply protocol (Send to the sender address; "
+                f"no auto-forward via final assistant text)."
             )
-        elif from_user:
-            lines.append(
-                "\nReply with your final assistant text — the UI delivers it "
-                "to the human. If you ``spawn`` a child to help, you MUST "
-                "also ``send(to=\"<child-addr>\", body=...)`` so the child "
-                "knows what to do; spawn alone is a no-op."
-            )
-        else:
-            lines.append("\nProcess the message(s) as appropriate.")
         return "\n".join(lines)

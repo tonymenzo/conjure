@@ -80,6 +80,11 @@ class AgentSpec(BaseModel):
     # The orchestral engine routes ``"ask"`` decisions through its
     # ``permission_hook`` (typically the UI); ``"deny"`` is hard.
     permissions: dict[str, str] = Field(default_factory=dict)
+    # Substrate-spawned plumbing agent that the user never directly
+    # asked for — collectors, hedge/race losers cleaned up later, etc.
+    # UI surfaces (tree pane, transcripts) hide these by default; they
+    # remain inspectable via ``Peek`` and addressable like any agent.
+    internal: bool = False
 
 
 @dataclass

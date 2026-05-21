@@ -16,6 +16,10 @@ dependencies = [
     "rich>=13.0",
     "libtmux>=0.39",
     "textual>=0.40",
+    # uvloop powers the runtime's shared sync-from-async bridge — 2-4×
+    # faster than stock asyncio for the SDK's IO-heavy workload. POSIX
+    # only; combinator already won't run on Windows (daemonize forks).
+    "uvloop>=0.19; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]

@@ -52,6 +52,8 @@ from combinator.daemon import (
     stop_daemon,
 )
 from combinator.event_log import EventLog
+from combinator.events import make_system_prompt_event
+from combinator.profiling import profile_session
 from combinator.record import AgentRecord
 from combinator.runner import build_runtime
 from combinator.runtime import Runtime
@@ -207,7 +209,16 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     are created on-demand by the main window (``o`` keypress) rather
     than auto-created on spawn — that keeps the window list focused
     on agents the user has actually drilled into.
+
+    When ``COMBINATOR_PROFILE`` is set the whole session is wrapped in
+    cProfile and the stats are written out on shutdown — see
+    ``combinator.profiling`` for the env var contract.
     """
+    with profile_session(f"daemon-{session_name}"):
+        return _run_daemon_inner(cfg=cfg, session_name=session_name, pid_path=pid_path)
+
+
+def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     shutdown_event = threading.Event()
 
     def _signal_handler(_signum, _frame):
@@ -237,9 +248,20 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
         window can tail it. We deliberately do NOT create a tmux
         window per agent — the main window's sidebar + swappable
         chat pane is the primary interface; the ``o`` keypress in
-        the main window creates a dedicated window on-demand."""
+        the main window creates a dedicated window on-demand.
+
+        The first event written to every agent's log is its
+        ``system_prompt`` — the role prompt it was spawned with —
+        so the chat pane opens with that initialization context as
+        the first visible block."""
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         record.event_log = EventLog(log_path)
+        record.event_log.emit(
+            make_system_prompt_event(
+                text=record.spec.role_prompt or "",
+                label=record.spec.label or record.addr.label,
+            )
+        )
 
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log

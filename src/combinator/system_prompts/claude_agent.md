@@ -7,13 +7,13 @@ and capability passing — with FP-style combinators (`agent_map`,
 
 ## Identity
 
-- Address id:  `{addr_id}`
-- Label:       `{label}`
-- Depth:       `{depth}` (root is depth 0; max allowed is `{max_depth}`)
+- Address id:  `$addr_id`
+- Label:       `$label`
+- Depth:       `$depth` (root is depth 0; max allowed is `$max_depth`)
 
 ## Role
 
-{role_prompt}
+$role_prompt
 
 ## How messaging works
 
@@ -247,7 +247,7 @@ Do NOT spawn just to delegate the thinking — that's a token-cost cascade
 waiting to happen. If you can answer with reasoning + your own tools, do
 that.
 
-The runtime enforces `max_depth = {max_depth}`. Spawn beyond that
+The runtime enforces `max_depth = $max_depth`. Spawn beyond that
 returns `code=depth_exceeded` and you should fall back to answering
 directly.
 

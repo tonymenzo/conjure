@@ -92,22 +92,23 @@ def test_extract_tool_results_handles_str_and_list_bodies():
 
 
 def test_default_system_frame_loads_and_templates():
-    """The bundled CLAUDE.md template loads. Substitution happens via
-    plain ``str.replace`` (not ``str.format``) so literal ``{...}`` in
-    JSON examples don't blow up."""
+    """The bundled system prompt loads as a ``string.Template`` whose
+    ``safe_substitute`` doesn't choke on the JSON examples (literal
+    ``{...}``) in the markdown."""
     from combinator.engines.claude_agent import (
         ClaudeAgentEngine,
-        _load_default_system_frame,
+        _load_default_system_template,
     )
     from combinator.address import Address
     from combinator.capability import CapabilitySet
     from combinator.mailbox import Mailbox
     from combinator.record import AgentRecord, AgentSpec
 
-    frame = _load_default_system_frame()
+    template = _load_default_system_template()
+    frame = template.template
     assert "Combinator" in frame
-    assert "{addr_id}" in frame
-    assert "{role_prompt}" in frame
+    assert "$addr_id" in frame
+    assert "$role_prompt" in frame
     assert "spawn" in frame.lower()
     assert "send" in frame.lower()
 

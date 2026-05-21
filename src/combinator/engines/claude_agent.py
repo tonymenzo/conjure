@@ -33,6 +33,7 @@ import functools
 import json
 import os
 import shutil
+import string
 import subprocess
 import threading
 from pathlib import Path
@@ -52,21 +53,26 @@ _SYSTEM_PROMPT_PATH = (
 
 
 @functools.cache
-def _load_default_system_frame() -> str:
-    """Read the templated system prompt from ``system_prompts/claude_agent.md``.
+def _load_default_system_template() -> string.Template:
+    """Compile the templated system prompt from
+    ``system_prompts/claude_agent.md`` into a ``string.Template``.
 
-    Cached so we don't re-read the file per spawn. Falls back to a
-    minimal inline frame if the file is missing (shouldn't happen in a
-    proper install, but keeps the engine robust to packaging
-    accidents)."""
+    Cached so we don't re-read the file or recompile the template on
+    every spawn — once at process start, all subsequent calls are an
+    O(1) dict lookup. The template uses ``$name`` / ``${name}`` syntax
+    (which doesn't collide with the curly braces in the prompt's JSON
+    examples the way ``str.format`` would). Falls back to a minimal
+    inline frame if the file is missing (shouldn't happen in a proper
+    install, but keeps the engine robust to packaging accidents)."""
     try:
-        return _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        text = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     except OSError:
-        return (
+        text = (
             "You are an agent in the Combinator multi-agent framework.\n\n"
-            "Identity: address {addr_id}, label {label}, depth {depth} "
-            "(max {max_depth}).\n\nRole: {role_prompt}"
+            "Identity: address $addr_id, label $label, depth $depth "
+            "(max $max_depth).\n\nRole: $role_prompt"
         )
+    return string.Template(text)
 
 
 class ClaudeAgentEngine:
@@ -99,15 +105,11 @@ class ClaudeAgentEngine:
         self._cost_used: float = 0.0
         self._uses_subscription: bool = _detect_subscription()
 
-        # Dedicated event loop on a daemon thread so ``step`` (sync)
-        # can submit coroutines via ``run_coroutine_threadsafe``.
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(
-            target=self._loop.run_forever,
-            daemon=True,
-            name=f"claude-agent-loop-{record.addr.id}",
-        )
-        self._loop_thread.start()
+        # Shared sync-from-async bridge: every claude_agent engine in
+        # the runtime posts onto the same event loop. Cuts N children's
+        # OS-thread + event-loop overhead down to one of each; uvloop
+        # picks itself up via the runtime's loop factory when present.
+        self._loop = runtime.get_shared_async_loop()
 
         async def can_use_tool(tool_name, args, ctx):  # type: ignore[no-untyped-def]
             decision = (record.spec.permissions or {}).get(tool_name, "allow")
@@ -147,14 +149,34 @@ class ClaudeAgentEngine:
             return PermissionResultAllow()
 
         # MCP bridge: expose combinator's orchestration surface
-        # (spawn, send, recv, agent_map, ...) to claude_agent. We
-        # launch ``combinator-mcp`` as a stdio MCP subprocess; it
-        # forwards calls back to the daemon's control socket. The
-        # caller passes the daemon's socket path; if absent, the
-        # SDK still works but only sees Claude Code's built-in tools.
+        # (spawn, send, recv, agent_map, ...) to claude_agent.
+        #
+        # Preferred path is the in-process SDK MCP server — tools run
+        # as direct Python calls inside this engine's own process,
+        # which eliminates the per-child ``combinator-mcp`` subprocess
+        # startup (200–500ms cold) and the daemon socket round-trip.
+        # For an N-way fan-out that's the difference between several
+        # seconds of warmup and milliseconds.
+        #
+        # Stdio subprocess remains the fallback for when the installed
+        # SDK predates ``create_sdk_mcp_server`` or when no in-process
+        # server can be constructed for any other reason — pinning the
+        # MCP bridge to the daemon socket still works.
         mcp_servers: dict[str, Any] = {}
         bridged_tools: list[str] = []
-        if mcp_socket is not None:
+        in_process_server = None
+        if os.environ.get("COMBINATOR_MCP_INPROC", "1") != "0":
+            try:
+                from combinator.mcp_in_process import (
+                    build_in_process_mcp_server,
+                )
+
+                in_process_server = build_in_process_mcp_server(record.token)
+            except Exception:
+                in_process_server = None
+        if in_process_server is not None:
+            mcp_servers["combinator"] = in_process_server
+        elif mcp_socket is not None:
             import shutil
 
             from claude_agent_sdk.types import McpStdioServerConfig
@@ -169,13 +191,15 @@ class ClaudeAgentEngine:
                     "PATH": os.environ.get("PATH", ""),
                 },
             )
+        if mcp_servers:
             # Whitelist every bridged tool with the SDK-mandated
             # mcp__<server>__<name> prefix. Names are PascalCase
-            # because the MCP bridge uses ``use_display_names=True``;
-            # matches Claude Code's built-in tool naming convention.
+            # because both bridges expose them in PascalCase to match
+            # Claude Code's built-in tool naming convention.
             for short in (
                 "Spawn", "Send", "Recv", "WaitFor",
                 "Terminate", "Introduce", "ListInbox",
+                "Peek", "Call",
                 "AgentMap", "AgentFold", "AgentFilter",
                 "AgentFixedPoint",
             ):
@@ -292,22 +316,20 @@ class ClaudeAgentEngine:
         return self._uses_subscription
 
     def shutdown(self) -> None:
-        """Disconnect the client (if it was ever connected) and stop
-        the event loop. Safe to call multiple times — combinator's
-        terminate path may call this more than once."""
-        if self._connected:
-            try:
-                fut = asyncio.run_coroutine_threadsafe(
-                    self._client.disconnect(), self._loop
-                )
-                fut.result(timeout=5)
-            except Exception:
-                pass
-            self._connected = False
+        """Disconnect the SDK client (if it was ever connected). The
+        event loop itself is owned by the runtime; we never stop it
+        here. Safe to call multiple times — combinator's terminate
+        path may call this more than once."""
+        if not self._connected:
+            return
         try:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            fut = asyncio.run_coroutine_threadsafe(
+                self._client.disconnect(), self._loop
+            )
+            fut.result(timeout=5)
         except Exception:
             pass
+        self._connected = False
 
     # ----- internals -----
 
@@ -394,20 +416,14 @@ class ClaudeAgentEngine:
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
-        # ``str.format`` collides with curly braces in JSON examples
-        # inside the markdown, so we use explicit replacements on a
-        # closed set of placeholders.
-        frame = _load_default_system_frame()
-        substitutions = {
-            "{addr_id}": record.addr.id,
-            "{label}": record.addr.label or "(none)",
-            "{role_prompt}": record.spec.role_prompt,
-            "{depth}": str(record.depth),
-            "{max_depth}": str(getattr(runtime, "max_depth", 3)),
-        }
-        for key, value in substitutions.items():
-            frame = frame.replace(key, value)
-        return frame
+        template = _load_default_system_template()
+        return template.safe_substitute(
+            addr_id=record.addr.id,
+            label=record.addr.label or "(none)",
+            role_prompt=record.spec.role_prompt,
+            depth=str(record.depth),
+            max_depth=str(getattr(runtime, "max_depth", 3)),
+        )
 
 
 @functools.cache

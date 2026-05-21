@@ -108,6 +108,7 @@ def _spawn_collector(runtime: Runtime, parent: Address, label: str) -> Address:
             role_prompt="(collector)",
             label=label,
             lazy=True,
+            internal=True,
         ),
     )
 
@@ -137,19 +138,25 @@ def agent_map(
     collector = _spawn_collector(runtime, parent, label="map-collector")
     workers: list[Address] = []
     try:
+        # Build every spec, then spawn the whole batch in one lock
+        # acquisition. Previously this loop took the runtime lock N
+        # times in series — the dominant latency for fan-out before
+        # the first worker even saw work.
+        specs: list[AgentSpec] = []
         for item in items_list:
-            spec = spec_factory(item)
-            spec_with_cap = spec.model_copy(
-                update={"capabilities": list(spec.capabilities) + [collector]}
+            base = spec_factory(item)
+            specs.append(
+                base.model_copy(
+                    update={"capabilities": list(base.capabilities) + [collector]}
+                )
             )
-            worker = runtime._spawn(parent=parent, spec=spec_with_cap)
-            workers.append(worker)
-            _dispatch(
-                runtime=runtime,
-                sender=parent,
-                recipient=worker,
-                body={"item": item, "reply_to": collector.id},
-            )
+        workers = runtime._spawn_batch(parent=parent, specs=specs)
+        runtime.dispatch_batch(
+            [
+                (parent, worker, {"item": item, "reply_to": collector.id})
+                for worker, item in zip(workers, items_list)
+            ]
+        )
         results = _collect(
             runtime=runtime,
             collector=collector,
@@ -158,9 +165,15 @@ def agent_map(
         )
         return results
     finally:
-        for worker in workers:
-            runtime.terminate(worker, cascade=True)
-        runtime.terminate(collector)
+        # One coalesced supervision envelope to the parent rather than
+        # N per-child events at the tail of the fan-out. Collector goes
+        # away separately so the parent doesn't see its plumbing in the
+        # event payload.
+        if workers:
+            runtime.terminate_batch(
+                workers, requested_by="map-cleanup", cascade=True
+            )
+        runtime.terminate(collector, requested_by="oneshot")
 
 
 def agent_fold(
@@ -219,9 +232,11 @@ def agent_fold(
                 history.append(acc)
         return {"result": acc, "trace": history} if trace else acc
     finally:
-        for worker in workers:
-            runtime.terminate(worker, cascade=True)
-        runtime.terminate(collector)
+        if workers:
+            runtime.terminate_batch(
+                workers, requested_by="fold-cleanup", cascade=True
+            )
+        runtime.terminate(collector, requested_by="oneshot")
 
 
 def agent_filter(
@@ -289,4 +304,4 @@ def agent_fixed_point(
             current = reply
         return current, converged
     finally:
-        runtime.terminate(collector)
+        runtime.terminate(collector, requested_by="oneshot")

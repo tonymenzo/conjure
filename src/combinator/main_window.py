@@ -159,6 +159,13 @@ class MainApp(App):
     CSS = """
     Screen {
         background: $surface;
+        scrollbar-size: 1 1;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+        scrollbar-color: $primary-darken-2;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $accent;
     }
     #sidebar {
         width: 32%;
@@ -230,6 +237,7 @@ class MainApp(App):
         Binding("f3", "permission_allow", "Allow", show=False),
         Binding("f4", "permission_deny", "Deny", show=False),
         Binding("f5", "toggle_select_mode", "Select"),
+        Binding("f6", "toggle_internal", "Show internal", show=False),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
@@ -282,6 +290,9 @@ class MainApp(App):
         # pulse timer increments this every ``_PULSE_INTERVAL`` and
         # triggers a label refresh for tree rows whose status pulses.
         self._pulse_phase: int = 0
+        # Hide substrate-spawned plumbing agents (collectors, etc.)
+        # from the tree by default. F6 toggles them on for debugging.
+        self._show_internal: bool = False
         # Cache the most recent tree node dict so the pulse tick can
         # refresh labels without re-fetching from the daemon.
         self._last_tree: dict[str, Any] | None = None
@@ -357,6 +368,10 @@ class MainApp(App):
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar")
         sidebar.set_class(not sidebar.has_class("hidden"), "hidden")
+
+    def action_toggle_internal(self) -> None:
+        self._show_internal = not self._show_internal
+        self._rebuild_tree(self._last_tree)
 
     def action_focus_tree(self) -> None:
         self.query_one("#tree-pane", StatusTree).focus()
@@ -516,6 +531,8 @@ class MainApp(App):
         self._populate(tree.root, node)
 
     def _populate(self, parent: TreeNode, node: dict[str, Any]) -> None:
+        if node.get("internal") and not self._show_internal:
+            return
         addr_id = node.get("addr")
         log_path = node.get("log_path")
         label = node.get("label")

@@ -446,6 +446,7 @@ class ControlServer:
                 "engine": rec.spec.engine,
                 "model": _engine_model_name(engine),
                 "log_path": log_path,
+                "internal": rec.spec.internal,
                 "children": [
                     walk(c) for c in sorted(rec.children, key=lambda a: a.id)
                 ],

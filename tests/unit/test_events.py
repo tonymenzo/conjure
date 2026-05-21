@@ -8,6 +8,7 @@ from orchestral.llm.base.tool_call import ToolCall
 
 from combinator.events import (
     make_spawned_event,
+    make_system_prompt_event,
     make_terminated_event,
     serialize_message,
 )
@@ -68,3 +69,17 @@ def test_make_spawned_event():
 def test_make_terminated_event():
     event = make_terminated_event(addr="ag-1")
     assert event == {"kind": "terminated", "addr": "ag-1"}
+
+
+def test_make_system_prompt_event():
+    event = make_system_prompt_event(text="you are a worker", label="alpha")
+    assert event == {
+        "kind": "system_prompt",
+        "text": "you are a worker",
+        "label": "alpha",
+    }
+
+
+def test_make_system_prompt_event_defaults():
+    event = make_system_prompt_event(text="")
+    assert event == {"kind": "system_prompt", "text": "", "label": ""}

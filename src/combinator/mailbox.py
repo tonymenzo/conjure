@@ -19,6 +19,7 @@ sender's address id string); both default to empty (no filter).
 
 from __future__ import annotations
 
+import bisect
 import threading
 import time
 
@@ -31,6 +32,10 @@ class Mailbox:
     def __init__(self) -> None:
         self._cond = threading.Condition()
         self._items: list[Envelope] = []
+        # Parallel list of envelope seqs, used by ``_scan_locked`` for
+        # an O(log N) bisect to the first unread envelope. Stays in
+        # lockstep with ``_items``; never touched outside the lock.
+        self._seqs: list[int] = []
         self._next_seq = 1
 
     def put(self, env: Envelope) -> Envelope:
@@ -44,6 +49,7 @@ class Mailbox:
             self._next_seq += 1
             stored = env.model_copy(update={"seq": seq})
             self._items.append(stored)
+            self._seqs.append(seq)
             self._cond.notify_all()
             return stored
 
@@ -53,6 +59,7 @@ class Mailbox:
         ``env.seq`` so future puts remain monotonic."""
         with self._cond:
             self._items.append(env)
+            self._seqs.append(env.seq)
             if env.seq + 1 > self._next_seq:
                 self._next_seq = env.seq + 1
             self._cond.notify_all()
@@ -109,10 +116,16 @@ class Mailbox:
         thread_id: str,
         from_id: str,
     ) -> list[Envelope]:
+        # ``_items`` is invariably sorted by seq (``put`` assigns under
+        # the lock; ``replay_put`` reads the journal in append order),
+        # so the first envelope with ``seq > since_seq`` can be found
+        # in O(log N). Without the bisect, every read of a long-lived
+        # inbox would re-scan the entire history — a quiet O(N) tax
+        # that becomes the dominant cost under high-fan-out HOFs.
+        items = self._items
+        start = bisect.bisect_right(self._seqs, since_seq) if since_seq > 0 else 0
         out: list[Envelope] = []
-        for env in self._items:
-            if env.seq <= since_seq:
-                continue
+        for env in items[start:]:
             if thread_id and env.thread_id != thread_id:
                 continue
             if from_id and _sender_id(env.from_) != from_id:

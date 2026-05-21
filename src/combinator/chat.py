@@ -132,9 +132,15 @@ class ChatView(VerticalScroll):
     DEFAULT_CSS = """
     ChatView {
         background: $surface;
-        padding: 0 1;
+        padding: 1 2;
         scrollbar-size: 1 1;
         scrollbar-gutter: stable;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+        scrollbar-color: $primary-darken-2;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $accent;
     }
     ChatView > Static {
         height: auto;
@@ -142,6 +148,9 @@ class ChatView(VerticalScroll):
     }
     ChatView > Static.user-block {
         margin: 1 0;
+    }
+    ChatView > Static.system-block {
+        margin: 0 0 1 0;
     }
     """
 
@@ -327,6 +336,12 @@ class ChatApp(App):
     CSS = """
     Screen {
         background: $surface;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+        scrollbar-color: $primary-darken-2;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $accent;
     }
     Input {
         dock: bottom;
@@ -576,7 +591,14 @@ def _response_block(
     """Agent response: magenta bar on the left, text under it, tool
     calls indented one space below. When the turn carried only tool
     calls (no text), the empty leading line is skipped so the bar
-    doesn't open with a blank row."""
+    doesn't open with a blank row.
+
+    ``Send`` tool calls are rendered specially — the body is the
+    user-meaningful payload, so it's shown as multi-line text under
+    the same magenta bar (like assistant text would be) prefixed
+    with a ``● Send → <to>`` header so it remains identifiable as a
+    tool invocation rather than spoken text. Other tool calls keep
+    the compact ``● name(args)`` form."""
     if not text and not tool_calls:
         return None
     table = _bar_grid()
@@ -585,8 +607,60 @@ def _response_block(
         for line in text.split("\n"):
             table.add_row(bar, Text(line))
     for tc in tool_calls:
-        table.add_row(bar, _tool_call_text(tc))
+        name = (tc.get("name") or tc.get("tool_name") or "").strip()
+        if name.lower() == "send":
+            _add_send_rows(table, bar, tc)
+        else:
+            table.add_row(bar, _tool_call_text(tc))
     return table
+
+
+def _add_send_rows(table: "Table", bar: Text, tc: dict[str, Any]) -> None:
+    """Append ``Send``-as-response rows to ``table``: a header row
+    ``● Send → <to>`` followed by one row per body line. Body is
+    rendered verbatim if it's already a string, else pretty-printed
+    JSON."""
+    args = tc.get("args") or tc.get("arguments") or {}
+    to = args.get("to") if isinstance(args, dict) else None
+    body = args.get("body") if isinstance(args, dict) else None
+    header = Text()
+    header.append(_TOOL_CALL_PREFIX, style=f"bold {_TOOL_CALL_STYLE}")
+    header.append("Send", style=f"bold {_TOOL_CALL_STYLE}")
+    header.append(" → ", style=f"dim {_TOOL_CALL_STYLE}")
+    header.append(str(to or "?"), style=f"bold {_TOOL_CALL_STYLE}")
+    table.add_row(bar, header)
+    for line in _body_to_text(body).split("\n"):
+        table.add_row(bar, Text(line))
+
+
+def _body_to_text(body: Any) -> str:
+    if body is None:
+        return "(empty body)"
+    if isinstance(body, str):
+        return body
+    try:
+        return _json.dumps(body, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(body)
+
+
+def _system_prompt_block(text: str, label: str) -> RenderableType:
+    """Initialization context for a spawned agent — the role/system
+    prompt it was given. Rendered as a dim, bordered panel at the
+    very top of the chat so the user can see the contract the agent
+    is operating under without leaving the pane."""
+    title = "[dim italic]system / role"
+    if label:
+        title = f"[dim italic]system › {label}"
+    body = Text(text or "(no role prompt)", style="italic dim")
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        border_style="dim",
+        padding=(0, 1),
+        expand=True,
+    )
 
 
 def _tool_call_text(tc: dict[str, Any]) -> Text:
@@ -686,6 +760,15 @@ def _format_event(
 
     if kind == "user_input":
         return (_user_block(event.get("text", "") or ""), ("user-block",))
+
+    if kind == "system_prompt":
+        return (
+            _system_prompt_block(
+                event.get("text", "") or "",
+                event.get("label", "") or "",
+            ),
+            ("system-block",),
+        )
 
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())

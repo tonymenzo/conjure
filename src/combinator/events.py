@@ -21,6 +21,10 @@ Event kinds (and how the renderer interprets each):
 - ``spawned``     — a meta event written by the orchestrator when this
                     agent is created (and once per direct child it
                     spawns)
+- ``system_prompt`` — the role/system prompt this agent was spawned
+                    with. Emitted once, immediately after the agent's
+                    event log is opened, so the chat pane can show
+                    initialization context as the first message.
 - ``terminated``  — meta event written when this agent goes away
 
 The orchestral-message serializer (``serialize_message``) is a 1:1
@@ -83,3 +87,7 @@ def make_spawned_event(*, addr: str, label: str, parent: str | None) -> dict[str
 
 def make_terminated_event(*, addr: str) -> dict[str, Any]:
     return {"kind": "terminated", "addr": addr}
+
+
+def make_system_prompt_event(*, text: str, label: str = "") -> dict[str, Any]:
+    return {"kind": "system_prompt", "text": text or "", "label": label or ""}

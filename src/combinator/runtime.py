@@ -18,6 +18,8 @@ caller's capabilities.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import threading
 import time
 from pathlib import Path
@@ -99,6 +101,27 @@ def _engine_cost(engine: Any) -> float:
         return 0.0
 
 
+def _new_async_loop() -> asyncio.AbstractEventLoop:
+    """Construct the runtime's shared event loop.
+
+    Uses ``uvloop`` (a hard dependency on POSIX) for 2-4× the throughput
+    of stock asyncio on the SDK's IO-heavy workload. The
+    ``COMBINATOR_UVLOOP=0`` escape hatch is preserved for diagnostics —
+    pinning to stock asyncio is occasionally useful when bisecting
+    suspected uvloop-specific behavior — but production runs always use
+    uvloop. If the import unexpectedly fails (e.g. running under a
+    broken wheel) we fall through to stock asyncio rather than crash
+    the runtime."""
+    if os.environ.get("COMBINATOR_UVLOOP", "1") != "0":
+        try:
+            import uvloop  # type: ignore[import-not-found]
+
+            return uvloop.new_event_loop()
+        except ImportError:
+            pass
+    return asyncio.new_event_loop()
+
+
 class Runtime:
 
     def __init__(
@@ -113,6 +136,13 @@ class Runtime:
         self._lock = threading.RLock()
         self._records: dict[Address, AgentRecord] = {}
         self._tokens: dict[str, Address] = {}
+        # Reverse index: address id string → Address. ``address_by_id``
+        # is called on every ``_resolve_addr`` (every Send, every Spawn
+        # capability check, every Terminate, every Introduce). Without
+        # this index it's an O(N) scan of ``_records``, which becomes
+        # O(N²) work as a fan-out HOF unwinds. Updated wherever
+        # ``_records`` is written so the two never drift.
+        self._addr_index: dict[str, Address] = {}
         self._root_addr: Address | None = None
         self._journal = Journal(store_dir)
         self._store_dir = store_dir
@@ -126,6 +156,14 @@ class Runtime:
         # ``resolve_permission`` to satisfy them.
         self._permission_requests: dict[str, PermissionRequest] = {}
         self._permission_lock = threading.Lock()
+        # Shared asyncio loop + thread for engines that need a sync-
+        # from-async bridge (currently ``ClaudeAgentEngine``). Started
+        # lazily on first access; the runtime owns its lifetime so we
+        # don't pay for N loops + N threads under fan-out. See
+        # ``get_shared_async_loop``.
+        self._async_loop: asyncio.AbstractEventLoop | None = None
+        self._async_thread: threading.Thread | None = None
+        self._async_lock = threading.Lock()
         self._install_sentinels()
 
     @property
@@ -179,6 +217,64 @@ class Runtime:
         with self._permission_lock:
             self._permission_requests.pop(req_id, None)
 
+    # ----- Shared asyncio loop -----
+
+    def get_shared_async_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the runtime-owned asyncio loop, starting it lazily.
+
+        Engines that need a sync-from-async bridge (e.g.
+        ``ClaudeAgentEngine``) should submit coroutines here via
+        ``asyncio.run_coroutine_threadsafe``. One loop on one thread
+        serves every engine in the runtime — under fan-out, this is the
+        difference between N event loops on N OS threads (one per child)
+        and a single loop juggling N concurrent SDK clients.
+
+        Uses ``uvloop`` when available unless ``COMBINATOR_UVLOOP=0``
+        in the environment. uvloop's selector and timer paths are 2–4×
+        faster than stock asyncio for the SDK's IO-heavy workload.
+        """
+        with self._async_lock:
+            if self._async_loop is not None:
+                return self._async_loop
+            loop = _new_async_loop()
+            self._async_loop = loop
+            thread = threading.Thread(
+                target=self._run_async_loop,
+                name="combinator-async-loop",
+                daemon=True,
+            )
+            self._async_thread = thread
+            thread.start()
+            return loop
+
+    def _run_async_loop(self) -> None:
+        loop = self._async_loop
+        if loop is None:
+            return
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_forever()
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    def _stop_shared_async_loop(self, *, join_timeout: float = 1.0) -> None:
+        with self._async_lock:
+            loop = self._async_loop
+            thread = self._async_thread
+            self._async_loop = None
+            self._async_thread = None
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                # Loop was already closed; nothing to do.
+                pass
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=join_timeout)
+
     @property
     def max_depth(self) -> int:
         """Configured ceiling on the spawn-tree depth (root = 0)."""
@@ -204,6 +300,7 @@ class Runtime:
                 parent=None,
                 status="idle",
             )
+            self._addr_index[sentinel.id] = sentinel
 
     # ----- Public API -----
 
@@ -220,6 +317,7 @@ class Runtime:
             addr = self._mint_address(spec.label)
             record = self._build_record(addr=addr, parent=None, spec=spec)
             self._records[addr] = record
+            self._addr_index[addr.id] = addr
             self._tokens[record.token] = addr
             self._root_addr = addr
             register_token(record.token, self, addr)
@@ -297,6 +395,7 @@ class Runtime:
             if self._shutdown:
                 return
             drivers_to_stop: list[Any] = []
+            engines_to_shutdown: list[Any] = []
             for record in self._records.values():
                 if record.status != "terminated":
                     record.status = "terminated"
@@ -304,11 +403,25 @@ class Runtime:
                     record.wakeup.set()
                 if record.driver is not None:
                     drivers_to_stop.append(record.driver)
+                engine = self._engine_for(record)
+                if engine is not None:
+                    engines_to_shutdown.append(engine)
                 unregister_token(record.token)
             self._journal.close()
             self._shutdown = True
         for d in drivers_to_stop:
             d.stop(timeout=driver_join_timeout)
+        # Engines share the runtime-owned async loop; let each one
+        # disconnect cleanly before we stop the loop out from under
+        # them. Best-effort — a hung engine shouldn't block shutdown.
+        for engine in engines_to_shutdown:
+            fn = getattr(engine, "shutdown", None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+        self._stop_shared_async_loop()
 
     @property
     def root_addr(self) -> Address | None:
@@ -331,12 +444,14 @@ class Runtime:
 
     def address_by_id(self, id_str: str) -> Address | None:
         """Look up a known Address by its opaque id string. Used by
-        tools to resolve LLM-supplied address strings."""
-        with self._lock:
-            for known in self._records:
-                if known.id == id_str:
-                    return known
-            return None
+        tools to resolve LLM-supplied address strings.
+
+        O(1) via the maintained ``_addr_index``. Note that terminated
+        agents stay in the index — capability checks and tool error
+        codes still need to resolve their ids so an attempted ``Send``
+        to a dead address returns ``code=terminated`` rather than
+        ``code=no_such_address``."""
+        return self._addr_index.get(id_str)
 
     def total_cost(self) -> float:
         """Sum of every agent's engine cost (USD). Engines that don't
@@ -403,29 +518,110 @@ class Runtime:
         Raises ``MaxDepthExceeded`` if the resulting child would sit
         deeper than the runtime's ``max_depth``.
         """
+        return self._spawn_batch(parent=parent, specs=[spec])[0]
+
+    def _spawn_batch(
+        self, *, parent: Address, specs: list[AgentSpec]
+    ) -> list[Address]:
+        """Spawn N children under ``parent`` in one critical section.
+
+        Registry mutations (record allocation, token registration,
+        parent-side child / capability updates, journal writes) happen
+        under a single lock acquisition; the spawn listener and driver
+        startup run outside the lock so engine construction for one
+        child can't block the registry for the others.
+
+        Order is preserved: the returned address list lines up with
+        ``specs``. Either all specs spawn or none do — depth-exceeded
+        on any spec raises before registry mutation begins.
+        """
+        if not specs:
+            return []
+        records: list[AgentRecord] = []
+        addrs: list[Address] = []
         with self._lock:
             self._require_not_shutdown()
             self._require_alive(parent)
-            parent_depth = self._records[parent].depth
-            child_depth = parent_depth + 1
+            parent_record = self._records[parent]
+            child_depth = parent_record.depth + 1
             if child_depth > self._max_depth:
                 raise MaxDepthExceeded(
                     f"spawn would create depth {child_depth} but "
                     f"max_depth is {self._max_depth}"
                 )
-            addr = self._mint_address(spec.label)
-            record = self._build_record(addr=addr, parent=parent, spec=spec)
-            record.depth = child_depth
-            self._records[addr] = record
-            self._tokens[record.token] = addr
-            self._records[parent].children.add(addr)
-            self._records[parent].capabilities.extend(addr)
-            register_token(record.token, self, addr)
-            self._journal_spawn(record)
-        if self._spawn_listener is not None:
-            self._spawn_listener(record)
-        self._maybe_start_driver(record)
-        return addr
+            for spec in specs:
+                addr = self._mint_address(spec.label)
+                record = self._build_record(addr=addr, parent=parent, spec=spec)
+                record.depth = child_depth
+                self._records[addr] = record
+                self._addr_index[addr.id] = addr
+                self._tokens[record.token] = addr
+                parent_record.children.add(addr)
+                parent_record.capabilities.extend(addr)
+                register_token(record.token, self, addr)
+                self._journal_spawn(record)
+                records.append(record)
+                addrs.append(addr)
+        # Engine construction and listener notification happen outside
+        # the lock — one slow child's SDK setup must not block the
+        # others' registry visibility (or any other lock contender).
+        listener = self._spawn_listener
+        for record in records:
+            if listener is not None:
+                listener(record)
+            self._maybe_start_driver(record)
+        return addrs
+
+    def dispatch_batch(
+        self,
+        deliveries: list[tuple[Address, Address, Any]],
+    ) -> list[Envelope]:
+        """Deliver N messages in one critical section.
+
+        ``deliveries`` is a list of ``(sender, recipient, body)``
+        tuples. The runtime lock is held just long enough to resolve
+        every recipient's record; the actual mailbox puts and wakeups
+        happen unlocked so per-mailbox condition locks don't contend
+        with the registry. Returns the stored envelopes in the input
+        order.
+
+        Privileged: callers bypass the per-tool capability check (this
+        is the framework path used by combinators / HOFs).
+        """
+        if not deliveries:
+            return []
+        # Resolve all recipient records up front under a single lock
+        # acquisition. Looking them up one at a time per dispatch was
+        # N runtime-lock grabs even though each lookup is an O(1) dict
+        # read — under fan-out, the contention cost dominated the
+        # actual work.
+        plans: list[tuple[Any, Address, Address, Any]] = []
+        with self._lock:
+            self._require_not_shutdown()
+            for sender, recipient, body in deliveries:
+                record = self._records.get(recipient)
+                if record is None:
+                    continue
+                plans.append((record, sender, recipient, body))
+        stored: list[Envelope] = []
+        for record, sender, recipient, body in plans:
+            msg_id = new_message_id()
+            env = Envelope(
+                seq=0,
+                msg_id=msg_id,
+                from_=sender,
+                to=recipient,
+                thread_id=msg_id,
+                body=body,
+                ts=time.time(),
+            )
+            placed = record.inbox.put(env)
+            self._journal_send(placed)
+            wakeup = record.wakeup
+            if wakeup is not None:
+                wakeup.set()
+            stored.append(placed)
+        return stored
 
     # ----- Replay -----
 
@@ -491,6 +687,7 @@ class Runtime:
         requested_by: str,
         cascade: bool,
         terminated: list[Address],
+        emit_events: bool = True,
     ) -> None:
         if addr not in self._records:
             raise NoSuchAddress(str(addr))
@@ -509,8 +706,10 @@ class Runtime:
         # (the parent already collected the worker's reply right
         # before the auto-terminate fired) — surfacing them as
         # supervision envelopes floods the inbox at the tail of a
-        # fan-out without adding signal.
-        if requested_by != "oneshot":
+        # fan-out without adding signal. ``emit_events=False`` is the
+        # batch path's escape hatch — it coalesces N per-child events
+        # into one ``batch_terminated`` envelope per affected parent.
+        if emit_events and requested_by != "oneshot":
             self._notify_parent_of_child_event(
                 record,
                 event="terminated",
@@ -523,6 +722,7 @@ class Runtime:
                     requested_by=requested_by,
                     cascade=True,
                     terminated=terminated,
+                    emit_events=emit_events,
                 )
         self._journal.write(
             "terminate",
@@ -532,6 +732,100 @@ class Runtime:
                 "cascade": cascade,
             },
         )
+
+    # ----- Batch terminate (coalesced supervision events) -----
+
+    def terminate_batch(
+        self,
+        addrs: list[Address],
+        *,
+        requested_by: str = "user",
+        cascade: bool = True,
+    ) -> list[Address]:
+        """Terminate N addresses in one critical section, emitting at
+        most one ``batch_terminated`` supervision envelope per affected
+        parent rather than N per-child events.
+
+        Use this for HOF cleanup paths (``AgentMap`` finally, race
+        losers, expired hedges) where a parent collects results from
+        many workers and would otherwise see its inbox flooded by N
+        ``child_event terminated`` envelopes at the tail of the
+        fan-out. The single coalesced envelope carries every
+        affected child id, so a supervisor can still react to the
+        mass cleanup if it wants to.
+
+        Returns the flat list of every address actually terminated by
+        this call (cascade-aware, in DFS order).
+        """
+        if not addrs:
+            return []
+        with self._lock:
+            self._require_not_shutdown()
+            terminated: list[Address] = []
+            for addr in addrs:
+                if addr not in self._records:
+                    continue
+                self._terminate_locked(
+                    addr,
+                    requested_by=requested_by,
+                    cascade=cascade,
+                    terminated=terminated,
+                    emit_events=False,
+                )
+            # Group the terminated set by their (still-live) parent and
+            # emit one consolidated envelope per parent. Each batch
+            # envelope carries the full child list so a watching parent
+            # has the same information as N separate events.
+            if requested_by != "oneshot":
+                self._emit_batch_terminated(
+                    terminated, requested_by=requested_by
+                )
+            return terminated
+
+    def _emit_batch_terminated(
+        self,
+        terminated: list[Address],
+        *,
+        requested_by: str,
+    ) -> None:
+        if not terminated:
+            return
+        by_parent: dict[Address, list[Address]] = {}
+        for addr in terminated:
+            record = self._records.get(addr)
+            if record is None or record.parent is None:
+                continue
+            by_parent.setdefault(record.parent, []).append(addr)
+        for parent_addr, children_addrs in by_parent.items():
+            parent_record = self._records.get(parent_addr)
+            if parent_record is None or parent_record.status == "terminated":
+                continue
+            children_payload = [
+                {"addr": ca.id, "label": ca.label or None}
+                for ca in children_addrs
+            ]
+            body: dict[str, Any] = {
+                "kind": "child_event",
+                "event": "batch_terminated",
+                "children": children_payload,
+                "count": len(children_payload),
+                "reason": f"requested_by={requested_by}",
+            }
+            msg_id = new_message_id()
+            env = Envelope(
+                seq=0,
+                msg_id=msg_id,
+                from_=SYSTEM,
+                to=parent_addr,
+                thread_id=msg_id,
+                body=body,
+                ts=time.time(),
+            )
+            stored = parent_record.inbox.put(env)
+            self._journal_send(stored)
+            wakeup = parent_record.wakeup
+            if wakeup is not None:
+                wakeup.set()
 
     # ----- Supervision (parent gets notified of child lifecycle events) -----
 
@@ -658,6 +952,7 @@ class Runtime:
             parent=parent,
         )
         self._records[addr] = record
+        self._addr_index[addr.id] = addr
         self._tokens[record.token] = addr
         if parent is not None and parent in self._records:
             self._records[parent].children.add(addr)
