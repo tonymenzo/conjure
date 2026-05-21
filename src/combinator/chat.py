@@ -33,11 +33,12 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from rich.console import Console
+from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Footer, Header, Input, RichLog
+from textual.widgets import Header, Input, RichLog
 
 from combinator._ui import render_event
 from combinator.control import ControlClient
@@ -161,7 +162,6 @@ class ChatApp(App):
                 auto_scroll=True,
             )
         yield Input(placeholder="type a message — Enter to send", id="input")
-        yield Footer()
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -236,14 +236,18 @@ class ChatApp(App):
         # ``user`` event into the log; the renderer skips that to avoid
         # a duplicate.
         log = self.query_one("#history", RichLog)
-        log.write(f"[bold cyan]you[/] [dim]›[/] {text}")
+        echo = Text()
+        echo.append("you ", style="bold cyan")
+        echo.append("› ", style="dim")
+        echo.append(text)
+        log.write(echo)
         try:
             reply = self.client.call("send", addr=self.addr, body=text)
         except Exception as exc:
-            log.write(f"[red]send failed:[/] {exc}")
+            log.write(Text(f"send failed: {exc}", style="red"))
             return
         if not reply.get("ok"):
-            log.write(f"[red]send rejected:[/] {reply.get('error', '?')}")
+            log.write(Text(f"send rejected: {reply.get('error', '?')}", style="red"))
 
     # ---- log tailing ----
 
@@ -275,8 +279,10 @@ class ChatApp(App):
 
     def _render_event_into_log(self, event: dict[str, Any]) -> None:
         log = self.query_one("#history", RichLog)
-        # Render through a transient Console targeting an in-memory
-        # file, then write its output into the RichLog.
+        # render_event writes ANSI-escaped rich output to a Console. To
+        # display it in RichLog we capture the ANSI string and parse it
+        # back into a Text() — RichLog treats raw strings as plain
+        # text and would otherwise show the escape codes verbatim.
         from io import StringIO
         from rich.console import Console
 
@@ -291,11 +297,11 @@ class ChatApp(App):
         try:
             render_event(console, self.agent_label, event)
         except Exception as exc:
-            log.write(f"[red]render error:[/] {exc}")
+            log.write(Text(f"render error: {exc}", style="red"))
             return
-        text = buf.getvalue().rstrip("\n")
-        if text:
-            log.write(text)
+        raw = buf.getvalue().rstrip("\n")
+        if raw:
+            log.write(Text.from_ansi(raw))
 
 
 if __name__ == "__main__":

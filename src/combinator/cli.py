@@ -227,11 +227,17 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     tmux_holder: dict[str, TmuxSession | None] = {"session": None}
     pending_windows: list[tuple[str, str]] = []  # (label, command)
 
+    # Resolve absolute path to combinator-chat so tmux's display-popup /
+    # new-window shell finds it even when the user's login shell PATH
+    # doesn't include the conda env where combinator is installed.
+    import shutil as _shutil
+    chat_bin = _shutil.which("combinator-chat") or "combinator-chat"
+
     def _chat_command(record: AgentRecord) -> str:
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         label = record.addr.label or record.addr.id
         return (
-            f"combinator-chat "
+            f"{chat_bin} "
             f"--log {log_path} "
             f"--addr {record.addr.id} "
             f"--label {label} "
@@ -420,11 +426,23 @@ def _wait_for_tmux_session(session_name: str, *, timeout_s: float) -> bool:
 def _bind_meta_popup(session_name: str) -> None:
     """Bind ``prefix + M`` to a popup running the meta-view for this
     daemon. ``-E`` makes the popup close when the meta app exits.
+
+    Resolves the absolute path to ``combinator-meta`` so the popup
+    works regardless of the user's login shell PATH — tmux's
+    ``display-popup`` shells out via the user's default shell, which
+    rarely has a conda env on PATH.
+
     Failure is swallowed — the binding is a convenience, not load-bearing.
     """
+    import shutil
     import subprocess
 
-    popup_cmd = f"combinator-meta --session {session_name}"
+    meta_path = shutil.which("combinator-meta")
+    if meta_path is None:
+        # Fall back to the bare name; will rely on PATH at popup time
+        # and surface a useful error in the popup if it fails.
+        meta_path = "combinator-meta"
+    popup_cmd = f"{meta_path} --session {session_name}"
     try:
         subprocess.run(
             [
