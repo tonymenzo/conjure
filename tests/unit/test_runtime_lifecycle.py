@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from combinator.address import USER
-from combinator.errors import CombinatorError, NoSuchAddress, Terminated
+from combinator.errors import (
+    CombinatorError,
+    MaxDepthExceeded,
+    NoSuchAddress,
+    Terminated,
+)
 from combinator.record import AgentSpec
 from combinator.runtime import Runtime
 
@@ -138,3 +143,35 @@ def test_operations_after_shutdown_raise():
     rt.shutdown()
     with pytest.raises(CombinatorError):
         rt.root(AgentSpec(role_prompt="another"))
+
+
+def test_root_is_depth_zero():
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    assert rt.record_for(root).depth == 0
+
+
+def test_spawn_increments_depth():
+    rt = Runtime(max_depth=4)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    c1 = rt._spawn(parent=root, spec=AgentSpec(role_prompt="c1"))
+    c2 = rt._spawn(parent=c1, spec=AgentSpec(role_prompt="c2"))
+    assert rt.record_for(c1).depth == 1
+    assert rt.record_for(c2).depth == 2
+
+
+def test_spawn_beyond_max_depth_raises():
+    rt = Runtime(max_depth=2)
+    root = rt.root(AgentSpec(role_prompt="root"))         # depth 0
+    a = rt._spawn(parent=root, spec=AgentSpec(role_prompt="a"))   # depth 1
+    b = rt._spawn(parent=a, spec=AgentSpec(role_prompt="b"))      # depth 2
+    with pytest.raises(MaxDepthExceeded):
+        rt._spawn(parent=b, spec=AgentSpec(role_prompt="c"))      # would be 3
+
+
+def test_spawn_at_exact_max_depth_succeeds():
+    rt = Runtime(max_depth=2)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    a = rt._spawn(parent=root, spec=AgentSpec(role_prompt="a"))
+    b = rt._spawn(parent=a, spec=AgentSpec(role_prompt="b"))
+    assert rt.record_for(b).depth == 2  # at the limit, not over

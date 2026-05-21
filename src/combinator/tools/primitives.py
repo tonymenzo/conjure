@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from combinator.address import Address
 from combinator.envelope import Envelope
-from combinator.errors import NoSuchAddress, Terminated
+from combinator.errors import MaxDepthExceeded, NoSuchAddress, Terminated
 from combinator.ids import new_message_id
 from combinator.record import AgentSpec
 from combinator.tools._base import (
@@ -109,6 +109,8 @@ def spawn_impl(
         return _err("terminated", str(e))
     except NoSuchAddress as e:
         return _err("no_such_address", str(e))
+    except MaxDepthExceeded as e:
+        return _err("depth_exceeded", str(e))
 
     # Optionally send the initial message right away.
     if initial_message:

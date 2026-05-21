@@ -30,3 +30,7 @@ class Terminated(CombinatorError):
 
 class Timeout(CombinatorError):
     """A ``recv`` or ``wait_for`` with a timeout elapsed without a match."""
+
+
+class MaxDepthExceeded(CombinatorError):
+    """Spawn would exceed the configured ``max_depth`` on the runtime."""

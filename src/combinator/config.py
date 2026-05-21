@@ -42,6 +42,12 @@ class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     store_dir: str | None = None
     max_workers: int = 32
+    # Hard cap on the spawn-tree depth. The root agent is depth 0;
+    # children are depth 1, etc. ``max_depth = 3`` allows iota + two
+    # generations of descendants and rejects further spawns with a
+    # ``depth_exceeded`` error so the agent's LLM can fall back to
+    # answering directly. Tune up for genuinely deep workflows.
+    max_depth: int = 3
 
 
 class LLMConfig(BaseModel):

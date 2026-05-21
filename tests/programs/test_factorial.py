@@ -57,7 +57,8 @@ def _make_runtime() -> Runtime:
     reg = BehaviorRegistry()
     reg.register("idle", lambda *_args, **_kw: "idle")
     reg.register("fact", fact_behavior)
-    return Runtime(engine_factory=reg.factory())
+    # Factorial recursion needs more depth than the default cap.
+    return Runtime(engine_factory=reg.factory(), max_depth=64)
 
 
 def test_factorial_of_five(wait_for_result):

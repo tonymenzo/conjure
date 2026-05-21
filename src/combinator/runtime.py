@@ -26,7 +26,12 @@ from typing import Any, Callable, TYPE_CHECKING
 from combinator.address import SYSTEM, USER, Address
 from combinator.capability import CapabilitySet
 from combinator.envelope import Envelope
-from combinator.errors import CombinatorError, NoSuchAddress, Terminated
+from combinator.errors import (
+    CombinatorError,
+    MaxDepthExceeded,
+    NoSuchAddress,
+    Terminated,
+)
 from combinator.ids import new_agent_id, new_message_id, new_runtime_token
 from combinator.mailbox import Mailbox
 from combinator.persistence import Journal
@@ -59,6 +64,7 @@ class Runtime:
         store_dir: Path | None = None,
         engine_factory: EngineFactory | None = None,
         max_workers: int = 32,
+        max_depth: int = 3,
         spawn_listener: Callable[[AgentRecord], None] | None = None,
     ) -> None:
         self._lock = threading.RLock()
@@ -68,9 +74,15 @@ class Runtime:
         self._journal = Journal(store_dir)
         self._shutdown = False
         self._max_workers = max_workers
+        self._max_depth = max_depth
         self._engine_factory = engine_factory
         self._spawn_listener = spawn_listener
         self._install_sentinels()
+
+    @property
+    def max_depth(self) -> int:
+        """Configured ceiling on the spawn-tree depth (root = 0)."""
+        return self._max_depth
 
     def _install_sentinels(self) -> None:
         """Register passive ``@user`` / ``@system`` records so agents can
@@ -287,12 +299,23 @@ class Runtime:
         The parent automatically gains capability for the new child, so
         ``spawn`` followed by ``send(child, ...)`` works without an
         explicit ``introduce`` step.
+
+        Raises ``MaxDepthExceeded`` if the resulting child would sit
+        deeper than the runtime's ``max_depth``.
         """
         with self._lock:
             self._require_not_shutdown()
             self._require_alive(parent)
+            parent_depth = self._records[parent].depth
+            child_depth = parent_depth + 1
+            if child_depth > self._max_depth:
+                raise MaxDepthExceeded(
+                    f"spawn would create depth {child_depth} but "
+                    f"max_depth is {self._max_depth}"
+                )
             addr = self._mint_address(spec.label)
             record = self._build_record(addr=addr, parent=parent, spec=spec)
+            record.depth = child_depth
             self._records[addr] = record
             self._tokens[record.token] = addr
             self._records[parent].children.add(addr)

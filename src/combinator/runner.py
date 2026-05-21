@@ -68,6 +68,7 @@ def build_runtime(
         store_dir=store_dir,
         engine_factory=engine_factory,
         max_workers=config.runtime.max_workers,
+        max_depth=config.runtime.max_depth,
         spawn_listener=spawn_listener,
     )
 

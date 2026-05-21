@@ -130,7 +130,8 @@ def _make_runtime() -> Runtime:
     reg.register("idle", lambda *_args, **_kw: "idle")
     reg.register("cache", cache_behavior)
     reg.register("fib", fib_behavior)
-    return Runtime(engine_factory=reg.factory())
+    # Recursive memoization exceeds the default depth cap.
+    return Runtime(engine_factory=reg.factory(), max_depth=64)
 
 
 def test_fib_small(wait_for_result):

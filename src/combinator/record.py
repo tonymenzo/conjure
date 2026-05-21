@@ -63,6 +63,9 @@ class AgentRecord:
     status: AgentStatus = "lazy"
     cost_used: int = 0
     spawned_at: float = field(default_factory=time.time)
+    # Tree depth: 0 for the root agent, parent.depth + 1 for any spawn.
+    # Used by the runtime to enforce the configured ``max_depth`` ceiling.
+    depth: int = 0
 
     # Driver-side state — populated when a driver thread is attached.
     # The wakeup event is created up front so messages arriving for a
