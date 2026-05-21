@@ -45,7 +45,11 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Input, RichLog, Static, Tree
 from textual.widgets.tree import TreeNode
 
-from combinator.chat import _format_event  # shared event-row renderer
+from combinator.chat import (  # shared event-row renderers
+    _format_event,
+    _format_response_rows,
+    _render_streaming_block,
+)
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 from combinator.event_log import tail
@@ -170,6 +174,16 @@ class MainApp(App):
         padding: 0 1;
         scrollbar-size: 1 1;
     }
+    #chat-stream {
+        background: $surface;
+        padding: 0 1;
+        height: auto;
+        max-height: 30%;
+        display: none;
+    }
+    #chat-stream.active {
+        display: block;
+    }
     #chat-input {
         dock: bottom;
         border: round $accent;
@@ -218,6 +232,10 @@ class MainApp(App):
         # Track the last seq we rendered so resumed tails don't replay
         # the backlog.
         self._chat_last_seen_path: Path | None = None
+        # Streaming state for the chat pane — chunks accumulate until
+        # the engine emits ``stream_end``.
+        self._stream_buffer: str = ""
+        self._streaming: bool = False
 
     # ----- compose -----
 
@@ -236,6 +254,7 @@ class MainApp(App):
                     highlight=False,
                     auto_scroll=True,
                 )
+                yield Static(id="chat-stream")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
@@ -474,6 +493,15 @@ class MainApp(App):
 
         history = self.query_one("#chat-history", RichLog)
         history.clear()
+        # Drop any in-flight streaming state from the previous agent so
+        # incoming chunks for that agent (which we'll ignore via the
+        # ``label`` check in ``_render_into_chat``) don't leak into the
+        # new agent's view.
+        self._stream_buffer = ""
+        self._streaming = False
+        pane = self.query_one("#chat-stream", Static)
+        pane.update("")
+        pane.set_class(False, "active")
 
         log_path_str = self._log_paths.get(addr)
         if not log_path_str:
@@ -545,11 +573,40 @@ class MainApp(App):
         if label != self.selected_label:
             return
         history = self.query_one("#chat-history", RichLog)
+        kind = event.get("kind")
+        if kind == "chunk":
+            self._on_chunk(label, event.get("text", "") or "")
+            return
+        if kind == "stream_end":
+            self._on_stream_end(label, event.get("tool_calls", []) or [])
+            return
         try:
             for row in _format_event(label, event):
                 history.write(row)
         except Exception as exc:
             history.write(Text(f"render error: {exc}", style="red"))
+
+    def _on_chunk(self, label: str, text: str) -> None:
+        if not text:
+            return
+        pane = self.query_one("#chat-stream", Static)
+        if not self._streaming:
+            self._streaming = True
+            self._stream_buffer = ""
+            pane.set_class(True, "active")
+        self._stream_buffer += text
+        pane.update(_render_streaming_block(label, self._stream_buffer))
+
+    def _on_stream_end(self, label: str, tool_calls: list[dict[str, Any]]) -> None:
+        history = self.query_one("#chat-history", RichLog)
+        pane = self.query_one("#chat-stream", Static)
+        if self._stream_buffer or tool_calls:
+            for row in _format_response_rows(label, self._stream_buffer, tool_calls):
+                history.write(row)
+        self._stream_buffer = ""
+        self._streaming = False
+        pane.update("")
+        pane.set_class(False, "active")
 
     def _stop_chat_tail(self) -> None:
         if self._tail_stop is not None:

@@ -283,6 +283,7 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
             cfg,
             event_log_router=event_log_router,
             spawn_listener=spawn_listener,
+            stream=True,  # tmux mode: agent text streams into chat panes
         )
     except Exception as exc:
         print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)

@@ -7,6 +7,12 @@ these and produces the same rich output the REPL produces today.
 Event kinds (and how the renderer interprets each):
 
 - ``response``    — assistant text plus tool calls in one block
+                    (emitted only in *non-streaming* mode)
+- ``chunk``       — partial assistant text from a streaming response
+                    (emitted only in *streaming* mode, one per text
+                    delta from the LLM)
+- ``stream_end``  — marks the end of a streaming response and carries
+                    any tool calls the model emitted along with it
 - ``tool``        — a tool result (success or failure)
 - ``user``        — user/peer message arrived in this agent's inbox
                     (skipped in agent-pane render; the user already sees
@@ -17,8 +23,10 @@ Event kinds (and how the renderer interprets each):
                     spawns)
 - ``terminated``  — meta event written when this agent goes away
 
-The orchestral-message serializer is a 1:1 dispatch; lifecycle events
-are emitted by the runtime / CLI orchestrator directly.
+The orchestral-message serializer (``serialize_message``) is a 1:1
+dispatch on context entries. Streaming chunks bypass the serializer —
+the engine writes them to the log directly as it receives them.
+Lifecycle events are emitted by the runtime / CLI orchestrator.
 """
 
 from __future__ import annotations

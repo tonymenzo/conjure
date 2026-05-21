@@ -40,7 +40,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Header, Input, RichLog
+from textual.widgets import Header, Input, RichLog, Static
 
 from combinator.control import ControlClient
 from combinator.daemon import socket_path_for
@@ -111,6 +111,16 @@ class ChatApp(App):
         scrollbar-size: 1 1;
         scrollbar-gutter: stable;
     }
+    #stream-pane {
+        background: $surface;
+        padding: 0 1;
+        height: auto;
+        max-height: 30%;
+        display: none;
+    }
+    #stream-pane.active {
+        display: block;
+    }
     Input {
         dock: bottom;
         border: round $accent;
@@ -149,6 +159,9 @@ class ChatApp(App):
         self.sub_title = f"({addr})"
         self._tail_stop = threading.Event()
         self._tail_thread: threading.Thread | None = None
+        # Streaming state — accumulating chunks live until stream_end.
+        self._stream_buffer: str = ""
+        self._streaming: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -160,6 +173,7 @@ class ChatApp(App):
                 highlight=False,
                 auto_scroll=True,
             )
+            yield Static(id="stream-pane")
         yield Input(placeholder="type a message — Enter to send", id="input")
 
     def on_mount(self) -> None:
@@ -266,12 +280,16 @@ class ChatApp(App):
         self._tail_thread.start()
 
     def _render_event_into_log(self, event: dict[str, Any]) -> None:
-        """Format one event as one or more ``Text`` rows and write them
-        to the RichLog. We deliberately do NOT render rich ``Panel``s
-        here: a Panel needs a known content width to draw its right
-        border, and RichLog's width is awkward to read from. A vertical
-        bar prefix gives the same visual grouping and is width-safe.
-        """
+        """Format one event and route it to either the streaming pane
+        (chunks accumulating live) or the main history (everything
+        else)."""
+        kind = event.get("kind")
+        if kind == "chunk":
+            self._on_chunk(event.get("text", "") or "")
+            return
+        if kind == "stream_end":
+            self._on_stream_end(event.get("tool_calls", []) or [])
+            return
         log = self.query_one("#history", RichLog)
         try:
             rows = list(_format_event(self.agent_label, event))
@@ -280,6 +298,87 @@ class ChatApp(App):
             return
         for row in rows:
             log.write(row)
+
+    def _on_chunk(self, text: str) -> None:
+        if not text:
+            return
+        pane = self.query_one("#stream-pane", Static)
+        if not self._streaming:
+            self._streaming = True
+            self._stream_buffer = ""
+            pane.set_class(True, "active")
+        self._stream_buffer += text
+        pane.update(_render_streaming_block(self.agent_label, self._stream_buffer))
+
+    def _on_stream_end(self, tool_calls: list[dict[str, Any]]) -> None:
+        log = self.query_one("#history", RichLog)
+        pane = self.query_one("#stream-pane", Static)
+        if self._stream_buffer or tool_calls:
+            for row in _format_response_rows(
+                self.agent_label, self._stream_buffer, tool_calls
+            ):
+                log.write(row)
+        self._stream_buffer = ""
+        self._streaming = False
+        pane.update("")
+        pane.set_class(False, "active")
+
+
+def _render_streaming_block(label: str, accumulated: str) -> Any:
+    """Build the renderable for the active streaming pane: the agent's
+    label followed by the in-progress text, with the same bar-prefix
+    style ``_format_response_rows`` uses so the live block visually
+    matches the committed history."""
+    from rich.console import Group as _Group
+
+    rows: list[Text] = [_label_row(label)]
+    for line in accumulated.split("\n"):
+        row = Text()
+        row.append("│ ", style="bold magenta")
+        row.append(line)
+        rows.append(row)
+    return _Group(*rows)
+
+
+def _format_response_rows(
+    label: str,
+    text: str,
+    tool_calls: list[dict[str, Any]],
+) -> list[Text]:
+    """Build the rows that a completed response writes to the chat
+    history. Same shape ``_format_event`` produces for a
+    ``response`` event, but driven by separate ``text`` and
+    ``tool_calls`` arguments so the streaming path can call it after a
+    ``stream_end``.
+    """
+    rows: list[Text] = []
+    if not text and not tool_calls:
+        return rows
+    rows.append(_label_row(label))
+    if text:
+        for line in text.split("\n"):
+            row = Text()
+            row.append("│ ", style="bold magenta")
+            row.append(line)
+            rows.append(row)
+    for tc in tool_calls:
+        name = tc.get("name") or tc.get("tool_name") or "?"
+        args = _args_preview(tc.get("args") or tc.get("arguments") or {})
+        row = Text()
+        row.append("│   ", style="bold magenta")
+        row.append("← ", style="cyan")
+        row.append(name, style="bold cyan")
+        row.append(f"({args})", style="cyan")
+        rows.append(row)
+    rows.append(Text(""))
+    return rows
+
+
+def _label_row(label: str) -> Text:
+    row = Text()
+    row.append("│ ", style="bold magenta")
+    row.append(label, style="bold magenta")
+    return row
 
 
 def _format_event(label: str, event: dict[str, Any]) -> list[Text]:

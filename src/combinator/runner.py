@@ -24,6 +24,7 @@ def build_runtime(
     display_hook_builder: Callable[[AgentRecord], Callable[[Any], None]] | None = None,
     event_log_router: Callable[[AgentRecord], Any] | None = None,
     spawn_listener: Callable[[AgentRecord], None] | None = None,
+    stream: bool = False,
 ) -> tuple[Runtime, Address]:
     """Build a ``Runtime`` and spawn the root agent per ``config``.
 
@@ -59,6 +60,7 @@ def build_runtime(
         llm_factories=llm_factories,
         display_hook_builder=display_hook_builder,
         event_log_router=event_log_router,
+        stream=stream,
     )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None

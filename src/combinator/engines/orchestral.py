@@ -87,9 +87,19 @@ class OrchestralEngine:
         system_prompt: str | None = None,
         max_tool_iterations: int = 8,
         display_hook: DisplayHook | None = None,
+        stream_emit: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
+        """``stream_emit`` (optional) — when provided, ``step`` streams
+        text chunks to it as ``{"kind": "chunk", "text": ...}`` events
+        and emits a ``{"kind": "stream_end", "tool_calls": [...]}``
+        event when the LLM finishes a response. The display hook is
+        expected to filter out ``response`` events in this mode (the
+        engine has already emitted the text as chunks).
+        """
         self._record = record
         self._runtime = runtime
+        self._stream_emit = stream_emit
+        self._max_tool_iterations = max_tool_iterations
         prompt = system_prompt or self._build_system_prompt(record)
         self._agent = OrchestralAgent(
             llm=llm,
@@ -102,8 +112,79 @@ class OrchestralEngine:
         )
 
     def step(self, prompt: str) -> str:
-        response = self._agent.run(prompt)
-        return response.text if response.text is not None else ""
+        if self._stream_emit is None:
+            response = self._agent.run(prompt)
+            return response.text if response.text is not None else ""
+        return self._step_streaming(prompt)
+
+    def _step_streaming(self, prompt: str) -> str:
+        """Drive orchestral's tool-call loop ourselves so we can stream
+        each LLM response chunk as it arrives.
+
+        Pattern:
+        1. ``stream_text_message`` adds the user message and yields
+           text chunks from the first LLM response. We emit each as a
+           ``chunk`` event.
+        2. When the stream ends, orchestral has added the full
+           ``Response`` to context. We emit ``stream_end`` with the
+           model's tool calls (if any).
+        3. If there are tool calls, run them (the display hook emits
+           ``tool`` events for the results), then stream the next LLM
+           response. Repeat.
+        4. Stop when an iteration produces no tool calls.
+        """
+        accumulated = ""
+        # First iteration: includes adding the user message to context.
+        for chunk in self._agent.stream_text_message(prompt):
+            self._emit_chunk(chunk)
+            accumulated += chunk
+        self._emit_stream_end()
+
+        for _ in range(self._max_tool_iterations):
+            last = self._agent.context.messages[-1]
+            tool_calls = self._extract_tool_calls(last)
+            if not tool_calls:
+                break
+            self._agent._handle_tool_calls()  # noqa: SLF001
+            # Stream the next response.
+            for chunk in self._agent._stream_response():  # noqa: SLF001
+                self._emit_chunk(chunk)
+                accumulated += chunk
+            self._emit_stream_end()
+
+        return accumulated
+
+    @staticmethod
+    def _extract_tool_calls(msg: Any) -> list[Any]:
+        inner = getattr(msg, "message", None)
+        if inner is not None:
+            return list(getattr(inner, "tool_calls", None) or [])
+        return list(getattr(msg, "tool_calls", None) or [])
+
+    def _emit_chunk(self, text: str) -> None:
+        if self._stream_emit is None or not text:
+            return
+        try:
+            self._stream_emit({"kind": "chunk", "text": text})
+        except Exception:
+            pass
+
+    def _emit_stream_end(self) -> None:
+        if self._stream_emit is None:
+            return
+        try:
+            last = self._agent.context.messages[-1]
+            tool_calls = self._extract_tool_calls(last)
+            serialized = [
+                {
+                    "name": getattr(tc, "tool_name", None) or getattr(tc, "name", "?"),
+                    "args": getattr(tc, "arguments", None) or {},
+                }
+                for tc in tool_calls
+            ]
+            self._stream_emit({"kind": "stream_end", "tool_calls": serialized})
+        except Exception:
+            pass
 
     def cost(self) -> float:
         """Return the cumulative LLM cost (USD) seen by this engine."""
@@ -129,6 +210,7 @@ def make_orchestral_engine_factory(
     max_tool_iterations: int = 8,
     display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None = None,
     event_log_router: Callable[["AgentRecord"], Any] | None = None,
+    stream: bool = False,
 ) -> EngineFactory:
     """Build an ``engine_factory`` suitable for ``Runtime(engine_factory=...)``.
 
@@ -171,10 +253,21 @@ def make_orchestral_engine_factory(
             llm = llms[llm_name]
         tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
         tools = build_tools(record.token, tool_names, registry)
+
+        # When streaming, the engine emits chunks directly into the
+        # agent's event log and the display hook MUST filter out
+        # ``response`` events (the engine already streamed them).
+        stream_emit: Callable[[dict[str, Any]], None] | None = None
+        if stream and event_log_router is not None:
+            event_log = event_log_router(record)
+            if event_log is not None:
+                stream_emit = event_log.emit
+
         hook = _build_hook(
             record=record,
             display_hook_builder=display_hook_builder,
             event_log_router=event_log_router,
+            streaming=stream and stream_emit is not None,
         )
         return OrchestralEngine(
             record=record,
@@ -183,6 +276,7 @@ def make_orchestral_engine_factory(
             tools=tools,
             max_tool_iterations=max_tool_iterations,
             display_hook=hook,
+            stream_emit=stream_emit,
         )
 
     return factory
@@ -193,6 +287,7 @@ def _build_hook(
     record: "AgentRecord",
     display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None,
     event_log_router: Callable[["AgentRecord"], Any] | None,
+    streaming: bool = False,
 ) -> DisplayHook | None:
     """Pick the right display-hook flavor for this agent.
 
@@ -200,6 +295,11 @@ def _build_hook(
     1. event_log_router → returns an EventLog → use event-log hook
     2. display_hook_builder → returns a DisplayHook → use that
     3. neither → no hook (silent engine)
+
+    When ``streaming`` is True, the event-log hook filters out
+    ``response`` and ``assistant`` events — the engine has streamed
+    that text as ``chunk`` events already. Tool results still flow
+    through the hook normally.
     """
     if event_log_router is not None:
         event_log = event_log_router(record)
@@ -211,7 +311,11 @@ def _build_hook(
             def hook(context: Any) -> None:
                 messages = getattr(context, "messages", None) or []
                 for msg in messages[seen["n"]:]:
-                    event_log.emit(serialize_message(msg))
+                    event = serialize_message(msg)
+                    if streaming and event.get("kind") in ("response", "assistant"):
+                        # Engine streamed this; skip the duplicate.
+                        continue
+                    event_log.emit(event)
                 seen["n"] = len(messages)
 
             return hook
