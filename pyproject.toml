@@ -34,6 +34,7 @@ combinator-main = "combinator.main_window:main"
 combinator-chat = "combinator.chat:main"
 combinator-meta = "combinator.meta:main"
 combinator-inbox = "combinator.inbox_view:main"
+combinator-files = "combinator.files_view:main"
 combinator-render = "combinator.render:main"
 combinator-input = "combinator.cli_input:main"
 

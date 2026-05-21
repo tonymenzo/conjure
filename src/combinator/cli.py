@@ -293,6 +293,7 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     # socket if asked.
     _bind_meta_popup(session_name)
     _bind_inbox_popup(session_name)
+    _bind_files_popup(session_name)
 
     if cfg.mode == "one-shot" and cfg.initial_task:
         runtime.send_external(to=root, body=cfg.initial_task)
@@ -399,6 +400,34 @@ def _wait_for_tmux_session(session_name: str, *, timeout_s: float) -> bool:
             pass
         time.sleep(0.05)
     return False
+
+
+def _bind_files_popup(session_name: str) -> None:
+    """Bind ``prefix + F`` to a popup running the file browser
+    against this daemon's sandboxes."""
+    import shutil
+    import subprocess
+
+    files_path = shutil.which("combinator-files") or "combinator-files"
+    popup_cmd = f"{files_path} --session {session_name}"
+    try:
+        subprocess.run(
+            [
+                "tmux",
+                "bind-key",
+                "F",
+                "display-popup",
+                "-E",
+                "-w", "85%",
+                "-h", "85%",
+                "-T", f" files › {session_name} ",
+                popup_cmd,
+            ],
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _bind_inbox_popup(session_name: str) -> None:

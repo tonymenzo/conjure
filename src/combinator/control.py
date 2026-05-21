@@ -119,6 +119,8 @@ class ControlServer:
             return self._activity(int(request.get("limit", 12) or 12))
         if method == "inboxes":
             return self._inboxes(int(request.get("limit", 20) or 20))
+        if method == "sandbox":
+            return self._sandbox(request.get("addr"), request.get("path"))
         if method == "send":
             return self._send(request.get("addr"), request.get("body"))
         if method == "terminate":
@@ -151,6 +153,73 @@ class ControlServer:
             else:
                 result["inbox_error"] = inbox_reply.get("error")
         return result
+
+    def _sandbox(self, addr_id: str | None, path: str | None) -> dict[str, Any]:
+        """List sandbox contents (when ``path`` is None or a directory)
+        or return file contents (when ``path`` is a file).
+
+        Powers the file-browser popup. Always resolves through the
+        per-agent sandbox; refuses any path that escapes it."""
+        from pathlib import Path
+
+        from combinator.tools.filesystem import _sandbox_for, _within
+
+        if not addr_id:
+            return {"ok": False, "error": "missing addr"}
+        addr = self.runtime.address_by_id(addr_id)
+        if addr is None:
+            return {"ok": False, "error": f"unknown addr: {addr_id}"}
+        record = self.runtime.record_for(addr)
+        sandbox = _sandbox_for(record, self.runtime)
+        if sandbox is None:
+            return {
+                "ok": False,
+                "error": "agent has no sandbox dir configured",
+            }
+        rel = path or ""
+        target = (sandbox / rel).resolve() if rel else sandbox
+        if not _within(target, sandbox):
+            return {"ok": False, "error": "path escapes sandbox"}
+        if not target.exists():
+            return {"ok": False, "error": "not found"}
+        if target.is_dir():
+            entries = []
+            for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name)):
+                if child.name.startswith("."):
+                    continue
+                entries.append(
+                    {
+                        "name": child.name,
+                        "path": str(child.relative_to(sandbox)),
+                        "is_dir": child.is_dir(),
+                        "size": child.stat().st_size if child.is_file() else 0,
+                    }
+                )
+            return {
+                "ok": True,
+                "kind": "dir",
+                "path": str(target.relative_to(sandbox)) if target != sandbox else "",
+                "entries": entries,
+            }
+        # File path — read up to 200 KB as text.
+        try:
+            size = target.stat().st_size
+            if size > 200_000:
+                content = target.read_text(encoding="utf-8", errors="replace")[:200_000]
+                truncated = True
+            else:
+                content = target.read_text(encoding="utf-8", errors="replace")
+                truncated = False
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "kind": "file",
+            "path": str(target.relative_to(sandbox)),
+            "size": size,
+            "content": content,
+            "truncated": truncated,
+        }
 
     def _inboxes(self, limit: int) -> dict[str, Any]:
         """Every agent's recent inbox envelopes + conversation peers.
