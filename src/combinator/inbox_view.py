@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -172,6 +173,7 @@ def _render_agent(agent: dict[str, Any]) -> RenderableType:
     status = agent.get("status", "")
     dot = _STATUS_DOT.get(status, "[dim]●[/]")
     envs = agent.get("envelopes", []) or []
+    peers = agent.get("peers", []) or []
     header = Text.from_markup(dot)
     header.append(" ")
     header.append(label, style="bold magenta")
@@ -189,7 +191,34 @@ def _render_agent(agent: dict[str, Any]) -> RenderableType:
             line.append(f"from={sender}  ", style="magenta")
             line.append(_truncate(str(body_repr), 100))
             rows.append(line)
+    if peers:
+        now = time.time()
+        rows.append(Text(""))
+        rows.append(Text("    conversations", style="dim"))
+        for p in peers[:5]:
+            rows.append(_render_peer(p, now))
     return Group(*rows)
+
+
+def _render_peer(peer: dict[str, Any], now: float) -> RenderableType:
+    """One conversation row: arrow (last direction), peer name, age,
+    and an awaiting-reply badge if the local agent is waiting on the
+    peer."""
+    last_in = peer.get("last_in_ts", 0) or 0
+    last_out = peer.get("last_out_ts", 0) or 0
+    last_ts = peer.get("last_ts", 0) or 0
+    direction_in = last_in >= last_out
+    arrow = "←" if direction_in else "→"
+    arrow_style = "cyan" if direction_in else "magenta"
+    age_s = max(0, int(now - last_ts))
+    line = Text()
+    line.append("      ")
+    line.append(f"{arrow}  ", style=arrow_style)
+    line.append(peer.get("peer_label") or peer.get("peer") or "?", style="bold")
+    line.append(f"   {age_s}s ago", style="dim")
+    if peer.get("awaiting_reply"):
+        line.append("   awaiting reply", style="yellow")
+    return line
 
 
 def _truncate(s: str, n: int) -> str:

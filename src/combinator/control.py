@@ -153,15 +153,36 @@ class ControlServer:
         return result
 
     def _inboxes(self, limit: int) -> dict[str, Any]:
-        """Every agent's recent inbox envelopes. Powers the inbox
-        popup (one round-trip instead of one per agent)."""
-        out: list[dict[str, Any]] = []
+        """Every agent's recent inbox envelopes + conversation peers.
+        Powers the inbox popup in a single round-trip."""
         with self.runtime._lock:  # noqa: SLF001
             records = list(self.runtime._records.values())  # noqa: SLF001
+        # Build a label lookup so we can resolve sentinels (@user,
+        # @system) and unknown addrs to nice display names.
+        label_of: dict[str, str] = {
+            r.addr.id: (r.addr.label or r.addr.id) for r in records
+        }
+        # Walk every envelope across every inbox to derive per-agent
+        # peer summaries (who they've recently exchanged with, in which
+        # direction). Keys: addr_id -> {peer_id -> {"in": ts, "out": ts}}.
+        peers: dict[str, dict[str, dict[str, float]]] = {}
+        out: list[dict[str, Any]] = []
         for rec in records:
             if rec.addr.id in ("@user", "@system"):
                 continue
-            envs = rec.inbox.read(since_seq=0, max_n=limit)
+            envs = rec.inbox.read(since_seq=0, max_n=max(limit, 50))
+            for e in envs:
+                me, peer = rec.addr.id, e.from_.id
+                # Incoming from `peer` to `me`.
+                peers.setdefault(me, {}).setdefault(peer, {})
+                if e.ts > peers[me][peer].get("in", 0):
+                    peers[me][peer]["in"] = e.ts
+                # Same edge as outgoing from `peer` to `me` — useful
+                # for the peer agent's own view (skip sentinels).
+                if peer not in ("@user", "@system"):
+                    peers.setdefault(peer, {}).setdefault(me, {})
+                    if e.ts > peers[peer][me].get("out", 0):
+                        peers[peer][me]["out"] = e.ts
             out.append(
                 {
                     "addr": rec.addr.id,
@@ -180,6 +201,31 @@ class ControlServer:
                     ],
                 }
             )
+        # Attach peer summary to each row, sorted by recency.
+        for row in out:
+            peer_map = peers.get(row["addr"], {})
+            peer_rows: list[dict[str, Any]] = []
+            for peer_id, ts in peer_map.items():
+                last_in = ts.get("in", 0)
+                last_out = ts.get("out", 0)
+                last_ts = max(last_in, last_out)
+                if last_ts <= 0:
+                    continue
+                peer_rows.append(
+                    {
+                        "peer": peer_id,
+                        "peer_label": label_of.get(peer_id, peer_id),
+                        "last_ts": last_ts,
+                        "last_in_ts": last_in,
+                        "last_out_ts": last_out,
+                        # Awaiting reply = we (row) sent something
+                        # to peer more recently than we received from
+                        # them. The peer "owes" us a response.
+                        "awaiting_reply": last_out > last_in,
+                    }
+                )
+            peer_rows.sort(key=lambda r: -r["last_ts"])
+            row["peers"] = peer_rows
         out.sort(key=lambda r: (r["depth"], r["label"]))
         return {"ok": True, "agents": out}
 
