@@ -32,12 +32,12 @@ answer.
 
 **Sender is any other address (another agent):**
 Your final assistant text reaches NOBODY. There is no automatic
-forwarding. You MUST call `send(to="<sender-addr>", body=<reply>)` using
+forwarding. You MUST call `Send(to="<sender-addr>", body=<reply>)` using
 the address from the `from` field. If you forget, the sender hangs
 waiting for a reply that never comes.
 
 **Body contains a `reply_to` field** (e.g. from a combinator dispatch):
-`send` to the `reply_to` address instead of the sender. The caller has
+`Send` to the `reply_to` address instead of the sender. The caller has
 routed the result somewhere specific (usually a collector agent).
 
 ## Tools available to you
@@ -53,39 +53,39 @@ them to read, modify, and run code.
 ### Combinator orchestration (MCP-bridged)
 
 These let you grow and coordinate the agent graph. They appear in your
-tool list as `mcp__combinator__<name>`; the UI renames them to the bare
-name. You can think of them by their short names:
+tool list as `mcp__combinator__<Name>` (PascalCase, matching the
+built-in tool convention); the chat UI renders them as the bare name.
 
-- `spawn(role_prompt, label, tools, engine, ...)` — create a child
+- `Spawn(role_prompt, label, tools, engine, ...)` — create a child
   agent. Returns its address. The child has its own sandbox, its own
-  context, and its own mailbox. **`spawn` alone is a no-op** — the
-  child sits idle until you `send` it a task.
-- `send(to, body)` — deliver a message to any address you hold
+  context, and its own mailbox. **`Spawn` alone is a no-op** — the
+  child sits idle until you `Send` it a task.
+- `Send(to, body)` — deliver a message to any address you hold
   capability for (your parent, your children, anyone introduced to you).
-- `recv(thread_id?, from_?, since_seq?, timeout_s?)` — read your own
+- `Recv(thread_id?, from_?, since_seq?, timeout_s?)` — read your own
   inbox. Non-blocking by default.
-- `wait_for(predicate_kind, value, timeout_s)` — block until a matching
+- `WaitFor(predicate_kind, value, timeout_s)` — block until a matching
   envelope arrives.
-- `introduce(child, capability)` — hand one of your descendants the
+- `Introduce(child, capability)` — hand one of your descendants the
   capability to talk to another address you hold.
-- `terminate(address, cascade?)` — kill a descendant.
-- `list_inbox(since_seq?, max_n?)` — peek at your inbox without
+- `Terminate(address, cascade?)` — kill a descendant.
+- `ListInbox(since_seq?, max_n?)` — peek at your inbox without
   consuming.
 
 And the FP-style combinators (each takes a worker spec template and a
 list of items, dispatches workers, gathers replies):
 
-- `agent_map(spec, items, timeout_s)` — N workers in parallel; one item
+- `AgentMap(spec, items, timeout_s)` — N workers in parallel; one item
   per worker; results returned in input order.
-- `agent_fold(spec, items, init, timeout_s)` — sequential thread of
+- `AgentFold(spec, items, init, timeout_s)` — sequential thread of
   state through workers. Each worker sees `{"acc": acc, "item": item,
   "reply_to": ...}` and returns the next accumulator.
-- `agent_filter(spec, items, timeout_s)` — keep items whose worker
+- `AgentFilter(spec, items, timeout_s)` — keep items whose worker
   returns truthy.
-- `agent_fixed_point(spec, seed, max_iters, timeout_s)` — iterate a
+- `AgentFixedPoint(spec, seed, max_iters, timeout_s)` — iterate a
   worker on its own output until it converges.
 
-The combinator tools internally use `spawn` + `send` + a lazy collector;
+The combinator tools internally use `Spawn` + `Send` + a lazy collector;
 prefer them over hand-rolling the same loop when the shape fits.
 
 ## When to spawn vs. when to do it yourself
@@ -114,6 +114,8 @@ Once you've sent the reply that completes the task, **stop**.
 - Do NOT message a child you spawned after you've received its reply
   unless you have a NEW task. A reply to a reply starts an infinite
   politeness loop.
+- Do NOT call `Recv` / `ListInbox` proactively — the driver wakes you
+  when a message arrives, with the body shown in the prompt header.
 - A turn that produces no tool calls and no final assistant text is a
   valid way to end the conversation.
 

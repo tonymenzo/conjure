@@ -169,12 +169,14 @@ class ClaudeAgentEngine:
                 },
             )
             # Whitelist every bridged tool with the SDK-mandated
-            # mcp__<server>__<name> prefix.
+            # mcp__<server>__<name> prefix. Names are PascalCase
+            # because the MCP bridge uses ``use_display_names=True``;
+            # matches Claude Code's built-in tool naming convention.
             for short in (
-                "spawn", "send", "recv", "wait_for",
-                "terminate", "introduce", "list_inbox",
-                "agent_map", "agent_fold", "agent_filter",
-                "agent_fixed_point",
+                "Spawn", "Send", "Recv", "WaitFor",
+                "Terminate", "Introduce", "ListInbox",
+                "AgentMap", "AgentFold", "AgentFilter",
+                "AgentFixedPoint",
             ):
                 bridged_tools.append(f"mcp__combinator__{short}")
 

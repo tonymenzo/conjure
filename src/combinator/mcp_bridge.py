@@ -57,30 +57,45 @@ from combinator.tools.primitives import (
 )
 
 
-# Map each MCP tool's short name to the combinator tool class whose
-# fields we inherit. The class name (with ``Tool`` suffix dropped) is
-# also what the SDK sees as the MCP tool's display name.
-_BRIDGE_TARGETS: dict[str, type] = {
-    "spawn": SpawnTool,
-    "send": SendTool,
-    "recv": RecvTool,
-    "wait_for": WaitForTool,
-    "terminate": TerminateTool,
-    "introduce": IntroduceTool,
-    "list_inbox": ListInboxTool,
-    "agent_map": AgentMapTool,
-    "agent_fold": AgentFoldTool,
-    "agent_filter": AgentFilterTool,
-    "agent_fixed_point": AgentFixedPointTool,
+# Map each MCP tool's short name to (combinator tool class,
+# PascalCase MCP display name). The short name is the snake_case
+# token the daemon's ``tool_call`` registry expects (capability
+# checks happen by that name); the display name is what the SDK
+# exposes to the LLM (mcp__combinator__<DisplayName>).
+#
+# We can't rely on orchestral's auto-PascalCase here because
+# ``tool.get_name()`` returns the already-cleaned class name (e.g.
+# ``WaitFor``), which the converter then title-cases to ``Waitfor``.
+# Spelling each display name out keeps multi-word tools readable.
+_BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
+    "spawn": (SpawnTool, "Spawn"),
+    "send": (SendTool, "Send"),
+    "recv": (RecvTool, "Recv"),
+    "wait_for": (WaitForTool, "WaitFor"),
+    "terminate": (TerminateTool, "Terminate"),
+    "introduce": (IntroduceTool, "Introduce"),
+    "list_inbox": (ListInboxTool, "ListInbox"),
+    "agent_map": (AgentMapTool, "AgentMap"),
+    "agent_fold": (AgentFoldTool, "AgentFold"),
+    "agent_filter": (AgentFilterTool, "AgentFilter"),
+    "agent_fixed_point": (AgentFixedPointTool, "AgentFixedPoint"),
 }
 
 
-def _make_bridge_class(short_name: str, target_cls: type) -> type:
+def _make_bridge_class(
+    short_name: str, target_cls: type, display_name: str
+) -> type:
     """Build a subclass of ``target_cls`` that overrides ``_run`` to
     forward the call to the daemon over the control socket. Keeps
     the parent's runtime fields (and their descriptions) intact so
     the MCP-exposed schema matches what the LLM would see if it
-    were calling the tool directly."""
+    were calling the tool directly.
+
+    ``display_name`` sets the PascalCase MCP-side name (orchestral's
+    MCPServer reads ``_mcp_display_name`` when
+    ``use_display_names=True``). We pass it explicitly because the
+    auto-PascalCase'r collapses multi-word names from
+    ``tool.get_name()`` into a single capitalized token."""
 
     def _run(self) -> dict[str, Any]:
         runtime_args: dict[str, Any] = {}
@@ -104,6 +119,7 @@ def _make_bridge_class(short_name: str, target_cls: type) -> type:
         (target_cls,),
         {
             "_run": _run,
+            "_mcp_display_name": display_name,
             "__module__": __name__,
             "__doc__": (target_cls.__doc__ or "")
             + "\n\n(Bridged: forwards to the combinator daemon over MCP.)",
@@ -125,8 +141,8 @@ def _build_bridge_tools(token: str, socket_path: str) -> list:
     """Instantiate one bridge tool per combinator tool, bound to
     this agent's token + the daemon socket."""
     tools = []
-    for short_name, target_cls in _BRIDGE_TARGETS.items():
-        cls = _make_bridge_class(short_name, target_cls)
+    for short_name, (target_cls, display_name) in _BRIDGE_TARGETS.items():
+        cls = _make_bridge_class(short_name, target_cls, display_name)
         # The bridged class still has ``runtime_token`` (inherited);
         # set it to "" so pydantic doesn't object. The real token
         # lives on the private bridge field.
@@ -161,10 +177,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     server = MCPServer(
         tools=tools,
         name="combinator",
-        # Keep the original snake_case names; the SDK lists tools as
-        # ``mcp__combinator__<name>`` so the prefix is already
-        # distinctive.
-        use_display_names=False,
+        # PascalCase display names so the combinator tools read the
+        # same as Claude Code's built-ins (Read, Write, Bash, …) when
+        # they appear in the SDK's tool list and in the chat pane.
+        # Orchestral's adapter auto-converts: spawn → Spawn,
+        # agent_map → AgentMap, agent_fixed_point → AgentFixedPoint.
+        use_display_names=True,
     )
     server.run()
     return 0

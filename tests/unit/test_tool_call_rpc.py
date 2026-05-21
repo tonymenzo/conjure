@@ -12,8 +12,27 @@ from pathlib import Path
 import pytest
 
 from combinator.control import ControlClient, ControlServer
+from combinator.mcp_bridge import _build_bridge_tools
 from combinator.record import AgentSpec
 from combinator.runtime import Runtime
+
+
+def test_bridge_tools_expose_pascalcase_display_names():
+    """The MCP bridge serves combinator tools under PascalCase display
+    names so they read the same as Claude Code's built-in tools (Read,
+    Write, Bash) in the SDK's tool list and the chat pane. Locks in
+    the explicit name map in mcp_bridge._BRIDGE_TARGETS — orchestral's
+    auto-converter collapses multi-word names (WaitFor → Waitfor) so
+    the bridge can't rely on it."""
+    from orchestral.mcp.adapters import get_tool_display_name
+
+    tools = _build_bridge_tools(token="t", socket_path="/tmp/x")
+    names = [get_tool_display_name(t) for t in tools]
+    assert names == [
+        "Spawn", "Send", "Recv", "WaitFor",
+        "Terminate", "Introduce", "ListInbox",
+        "AgentMap", "AgentFold", "AgentFilter", "AgentFixedPoint",
+    ]
 
 
 @pytest.fixture
