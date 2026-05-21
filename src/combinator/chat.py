@@ -38,7 +38,8 @@ from typing import Any, Sequence
 import ast
 import json as _json
 
-from rich.console import Group, RenderableType
+from rich.console import RenderableType
+from rich.table import Table
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -101,12 +102,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-# Background colors used to differentiate user vs agent message
-# blocks. User rows get a noticeable dark tint so they read as
-# quoted input; agent rows get a subtler highlight so the response
-# feels like the "main flow".
-_USER_BG = "on #14202c"
-_AGENT_BG = "on #1c1c1c"
+# Speaker-block layout: 2-column grid (label | body). The label cell
+# is fixed-width so wrapped body text hangs cleanly past the speaker
+# name. ``_LABEL_GAP`` is the horizontal padding between the two
+# columns (visual breathing room).
+_LABEL_WIDTH = 6
+_LABEL_GAP = 2
+_USER_STYLE = "bold cyan"
+_AGENT_STYLE = "bold magenta"
 
 
 class ChatView(VerticalScroll):
@@ -127,6 +130,10 @@ class ChatView(VerticalScroll):
     }
     ChatView > Static {
         height: auto;
+        margin-bottom: 1;
+    }
+    ChatView > Static.subordinate {
+        margin-top: 0;
         margin-bottom: 1;
     }
     """
@@ -203,22 +210,22 @@ class ChatView(VerticalScroll):
 
     def echo_user(self, text: str) -> None:
         """Mount a user block directly (used by the local-input echo)."""
-        rows = _user_rows(text)
-        if rows:
-            self._mount_rows(rows)
+        block = _user_block(text)
+        if block is not None:
+            self._mount(block)
             self._scroll_to_end()
 
     def write_error(self, text: str) -> None:
         """Mount a simple error/status line."""
-        self._mount_rows([Text(text, style="red")])
+        self._mount(Text(text, style="red"))
         self._scroll_to_end()
 
     # ----- internals -----
 
     def _append_event(self, label: str, event: dict[str, Any]) -> None:
-        rows = _format_event(label, event)
-        if rows:
-            self._mount_rows(rows)
+        block, subordinate = _format_event(label, event)
+        if block is not None:
+            self._mount(block, subordinate=subordinate)
             self._scroll_to_end()
 
     def _stream_chunk(self, label: str, text: str) -> None:
@@ -282,13 +289,15 @@ class ChatView(VerticalScroll):
     def _mount_response(
         self, label: str, text: str, tool_calls: list[dict[str, Any]]
     ) -> None:
-        rows = _format_response_rows(label, text, tool_calls)
-        if rows:
-            self._mount_rows(rows)
+        block = _response_block(label, text, tool_calls)
+        if block is not None:
+            self._mount(block)
 
-    def _mount_rows(self, rows: list[Text]) -> None:
-        renderable = _rows_to_renderable(rows)
-        self.mount(Static(renderable))
+    def _mount(self, renderable: RenderableType, *, subordinate: bool = False) -> None:
+        widget = Static(renderable)
+        if subordinate:
+            widget.add_class("subordinate")
+        self.mount(widget)
 
     def _scroll_to_end(self) -> None:
         # call_after_refresh waits for the new mount/update to be in the
@@ -453,114 +462,101 @@ def _streaming_renderable(
     text: str,
     tool_calls: list[dict[str, Any]],
 ) -> RenderableType:
-    """Build the renderable shown while a response is streaming. Same
-    shape as ``_format_response_rows`` produces, just packaged for a
-    Static widget."""
-    rows = _format_response_rows(label, text, tool_calls)
-    return _rows_to_renderable(rows) if rows else Text("")
+    """Renderable for the in-progress streaming block. Empty when the
+    response is empty so the streaming Static reserves space but
+    doesn't draw the label until characters arrive."""
+    block = _response_block(label, text, tool_calls)
+    return block if block is not None else Text("")
 
 
-def _rows_to_renderable(rows: list[Text]) -> RenderableType:
-    """Pack ``Text`` rows into a single ``Group`` (drops trailing empty
-    spacers — CSS margin already gives blocks breathing room)."""
-    filtered = [r for r in rows if r.plain != ""]
-    return Group(*filtered) if filtered else Text("")
+def _user_block(text: str) -> RenderableType | None:
+    if not text:
+        return None
+    return _speaker_block("you", _USER_STYLE, text, [])
 
 
-def _format_response_rows(
+def _response_block(
+    label: str, text: str, tool_calls: list[dict[str, Any]]
+) -> RenderableType | None:
+    if not text and not tool_calls:
+        return None
+    return _speaker_block(label, _AGENT_STYLE, text, tool_calls)
+
+
+def _speaker_block(
     label: str,
+    label_style: str,
     text: str,
     tool_calls: list[dict[str, Any]],
-) -> list[Text]:
-    """Build the rows that a completed (or in-progress) response writes.
-
-    Agent blocks use a subtle background tint to stand apart from user
-    messages, with the agent label as a bold-magenta header and tool
-    calls indented underneath.
-    """
-    rows: list[Text] = []
-    if not text and not tool_calls:
-        return rows
-    rows.append(_agent_header(label))
-    if text:
-        for line in text.split("\n"):
-            row = Text(no_wrap=False)
-            row.append("  ")
-            row.append(line)
-            row.stylize(_AGENT_BG)
-            rows.append(row)
+) -> RenderableType:
+    """The standard 2-column block: speaker name on the left (fixed
+    column), body on the right (wraps with hanging indent because
+    subsequent rows have an empty left cell)."""
+    table = Table.grid(padding=(0, _LABEL_GAP))
+    table.add_column(width=_LABEL_WIDTH, no_wrap=True, justify="left")
+    table.add_column(overflow="fold")
+    label_text = Text(label, style=label_style)
+    body_lines = (text or "").split("\n")
+    if not body_lines:
+        body_lines = [""]
+    table.add_row(label_text, Text(body_lines[0]))
+    for line in body_lines[1:]:
+        table.add_row("", Text(line))
     for tc in tool_calls:
         name = tc.get("name") or tc.get("tool_name") or "?"
         args = _args_preview(tc.get("args") or tc.get("arguments") or {})
-        row = Text(no_wrap=False)
-        row.append("  ● ", style="bold cyan")
-        row.append(name, style="bold cyan")
+        tool_text = Text()
+        tool_text.append("● ", style="bold cyan")
+        tool_text.append(name, style="bold cyan")
+        tool_text.append("(", style="dim cyan")
         if args:
-            row.append(f"({args})", style="dim cyan")
-        else:
-            row.append("()", style="dim cyan")
-        row.stylize(_AGENT_BG)
-        rows.append(row)
-    return rows
+            tool_text.append(args, style="dim cyan")
+        tool_text.append(")", style="dim cyan")
+        table.add_row("", tool_text)
+    return table
 
 
-def _agent_header(label: str) -> Text:
-    row = Text(no_wrap=False)
-    row.append(f" {label} ", style="bold magenta")
-    row.stylize(_AGENT_BG)
-    return row
+def _tool_result_block(summary: str, failed: bool) -> RenderableType:
+    """Tool result lines align to the body column of the preceding
+    response so the result reads as a continuation of it."""
+    table = Table.grid(padding=(0, _LABEL_GAP))
+    table.add_column(width=_LABEL_WIDTH, no_wrap=True)
+    table.add_column(overflow="fold")
+    body = Text()
+    body.append("⎿ ", style="dim")
+    body.append(summary, style="red" if failed else "dim")
+    table.add_row("", body)
+    return table
 
 
-def _user_rows(text: str) -> list[Text]:
-    rows: list[Text] = []
-    if not text:
-        return rows
-    lines = text.split("\n")
-    header = Text(no_wrap=False)
-    header.append(" you ", style="bold cyan")
-    header.append("  ")
-    header.append(lines[0])
-    header.stylize(_USER_BG)
-    rows.append(header)
-    for line in lines[1:]:
-        row = Text(no_wrap=False)
-        row.append("      ")  # align past " you  "
-        row.append(line)
-        row.stylize(_USER_BG)
-        rows.append(row)
-    return rows
-
-
-def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
-    """Convert one event dict into the rows for a single chat block.
-
-    Blocks have no internal spacers — the ``ChatView`` CSS adds
-    ``margin-bottom: 1`` between Static children.
-    """
-    rows: list[Text] = []
+def _format_event(
+    label: str, event: dict[str, Any]
+) -> tuple[RenderableType | None, bool]:
+    """Convert one event into a (Renderable, subordinate) pair. The
+    ``subordinate`` flag tells ``ChatView`` to use the tight margin
+    class so tool results group visually with the response above."""
     kind = event.get("kind")
 
     if kind == "response":
-        return _format_response_rows(
-            label,
-            event.get("text", "") or "",
-            event.get("tool_calls", []) or [],
+        return (
+            _response_block(
+                label,
+                event.get("text", "") or "",
+                event.get("tool_calls", []) or [],
+            ),
+            False,
         )
 
     if kind == "tool":
         failed = bool(event.get("failed"))
         summary = _summarize_tool_result(event.get("text", "") or "")
-        row = Text()
-        row.append("  ⎿ ", style="dim")
-        if failed:
-            row.append(summary, style="red")
-        else:
-            row.append(summary, style="dim")
-        rows.append(row)
-        return rows
+        return (_tool_result_block(summary, failed), True)
 
     if kind == "assistant":
-        return _format_response_rows(label, event.get("text", "") or "", [])
+        return (
+            _response_block(label, event.get("text", "") or "", []),
+            False,
+        )
 
     if kind == "spawned":
         spawned_label = event.get("label") or event.get("addr") or "?"
@@ -570,23 +566,21 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         row.append("+ spawned ", style="dim")
         row.append(spawned_label, style="bold")
         row.append(suffix, style="dim")
-        rows.append(row)
-        return rows
+        return (row, False)
 
     if kind == "terminated":
         addr = event.get("addr", "?")
         row = Text()
         row.append("× terminated ", style="red dim")
         row.append(addr, style="red")
-        rows.append(row)
-        return rows
+        return (row, False)
 
     if kind == "user_input":
-        return _user_rows(event.get("text", "") or "")
+        return (_user_block(event.get("text", "") or ""), False)
 
     # ``user`` is the noisy driver-wrapped prompt; skip silently.
     # ``unknown`` is anything we can't classify.
-    return rows
+    return (None, False)
 
 
 # ---- small parsing helpers ----
