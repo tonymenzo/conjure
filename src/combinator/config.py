@@ -60,7 +60,10 @@ class LLMConfig(BaseModel):
 class RootConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role_prompt: str
-    engine: str = "orchestral"
+    # See ``combinator.engines.resolve_engine_name`` for ``"auto"``
+    # semantics. Override with ``"orchestral"`` or ``"claude_agent"``
+    # to pin a specific surface.
+    engine: str = "auto"
     llm: str = "default"
     tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
     label: str = "root"

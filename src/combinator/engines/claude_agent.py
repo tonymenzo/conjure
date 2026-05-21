@@ -34,6 +34,9 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
+from combinator.llm import api_key_present
+from combinator.runtime import PERMISSION_WAIT_S
+
 if TYPE_CHECKING:
     from combinator.record import AgentRecord
     from combinator.runtime import Runtime
@@ -82,6 +85,7 @@ class ClaudeAgentEngine:
         self._runtime = runtime
         self._stream_emit = stream_emit
         self._cost_used: float = 0.0
+        self._uses_subscription: bool = _detect_subscription()
 
         # Dedicated event loop on a daemon thread so ``step`` (sync)
         # can submit coroutines via ``run_coroutine_threadsafe``.
@@ -114,7 +118,7 @@ class ClaudeAgentEngine:
                 record.status = "awaiting_permission"
                 try:
                     result = await asyncio.to_thread(
-                        req.wait, 300.0
+                        req.wait, PERMISSION_WAIT_S
                     )
                 finally:
                     record.status = previous
@@ -176,9 +180,15 @@ class ClaudeAgentEngine:
         self._client = ClaudeSDKClient(opts)
         self._last_context: tuple[int, int] | None = None
         self._context_fetch_in_flight: bool = False
-        asyncio.run_coroutine_threadsafe(
-            self._client.connect(), self._loop
-        ).result(timeout=30)
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._client.connect(), self._loop
+            ).result(timeout=30)
+        except BaseException:
+            # Without this the daemon loop thread leaks for the
+            # lifetime of the process.
+            self.shutdown()
+            raise
 
     # ----- interface mirroring OrchestralEngine -----
 
@@ -196,6 +206,9 @@ class ClaudeAgentEngine:
             raise
 
     def cost(self) -> float:
+        # Subscription sessions are flat-rate — don't bill them.
+        if self._uses_subscription:
+            return 0.0
         return self._cost_used
 
     def model_name(self) -> str | None:
@@ -249,10 +262,14 @@ class ClaudeAgentEngine:
             self._context_fetch_in_flight = False
 
     def uses_subscription(self) -> bool:
-        """True — the SDK always delegates to the local ``claude`` CLI,
-        which uses whatever auth that CLI is logged into (typically a
-        Max / Pro subscription)."""
-        return True
+        """Whether the underlying ``claude`` CLI is logged into a
+        Max/Pro subscription (vs an API key). The SDK delegates to
+        whatever auth the CLI is configured with, but it can't tell us
+        which; we infer from the absence of ``ANTHROPIC_API_KEY`` in
+        the environment (API-key auth typically requires it). Honest
+        but not authoritative — for billing-critical paths, run
+        ``claude /status`` and check the user's plan."""
+        return self._uses_subscription
 
     def shutdown(self) -> None:
         """Disconnect the client and stop the event loop. Safe to call
@@ -335,6 +352,14 @@ class ClaudeAgentEngine:
             depth=record.depth,
             max_depth=getattr(runtime, "max_depth", 3),
         )
+
+
+def _detect_subscription() -> bool:
+    # A ``claude`` CLI without an Anthropic API key in env is almost
+    # certainly running on a Max/Pro subscription. With the key set,
+    # the CLI may be using API-key auth — err on the side of "not
+    # subscription" so ``cost()`` surfaces the real number.
+    return not api_key_present("anthropic")
 
 
 def _extract_text(msg: Any) -> str:

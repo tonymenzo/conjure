@@ -47,16 +47,15 @@ class AgentSpec(BaseModel):
 
     role_prompt: str
     label: str = ""
-    # ``orchestral`` — the default in-process engine wrapping an LLM
-    # client (Anthropic, Groq, OpenAI, ...). ``claude_agent`` — runs
-    # the agent via the ``claude-agent-sdk`` (Claude Code's surface).
-    engine: str = "orchestral"
+    # ``"orchestral"`` (in-process LLM client), ``"claude_agent"``
+    # (``claude-agent-sdk`` session), or ``"auto"`` — see
+    # ``combinator.engines.resolve_engine_name``.
+    engine: str = "auto"
     tools: list[str] = Field(default_factory=list)
     llm: str = "default"
     capabilities: list[Address] = Field(default_factory=list)
     initial_message: str | None = None
     lazy: bool = False
-    cost_ceiling: int | None = None
     # On-disk sandbox for filesystem tools. ``None`` falls back to
     # ``{runtime.store_dir}/sandboxes/{agent_id}/`` at first FS-tool
     # use. Filesystem tools refuse to read or write outside the
@@ -81,7 +80,6 @@ class AgentRecord:
     parent: Address | None = None
     children: set[Address] = field(default_factory=set)
     status: AgentStatus = "lazy"
-    cost_used: int = 0
     spawned_at: float = field(default_factory=time.time)
     # Tree depth: 0 for the root agent, parent.depth + 1 for any spawn.
     # Used by the runtime to enforce the configured ``max_depth`` ceiling.

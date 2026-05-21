@@ -28,7 +28,7 @@ def test_minimal_config_loads_with_defaults():
     cfg = load_config_from_mapping(_MINIMAL)
     assert cfg.mode == "repl"
     assert cfg.root.label == "root"
-    assert cfg.root.engine == "orchestral"
+    assert cfg.root.engine == "auto"
     assert cfg.root.llm == "default"
     assert cfg.root.tools == ["primitive", "combinator"]
     assert cfg.runtime.max_workers == 32

@@ -18,6 +18,7 @@ from typing import Callable, Any
 
 from combinator.address import Address
 from combinator.config import Config
+from combinator.engines import resolve_engine_name
 from combinator.engines.orchestral import make_orchestral_engine_factory
 from combinator.llm import build_llm
 from combinator.record import AgentRecord, AgentSpec
@@ -63,7 +64,7 @@ def build_runtime(
     )
 
     def dispatch(record: AgentRecord, runtime: Runtime):
-        engine_name = record.spec.engine or "orchestral"
+        engine_name = resolve_engine_name(record.spec.engine)
         if engine_name == "orchestral":
             return orchestral_factory(record, runtime)
         if engine_name == "claude_agent":
@@ -75,7 +76,7 @@ def build_runtime(
             )
         raise ValueError(
             f"unknown engine {engine_name!r} on agent {record.addr.id}; "
-            f"supported: 'orchestral', 'claude_agent'"
+            f"supported: 'orchestral', 'claude_agent', 'auto'"
         )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None

@@ -69,7 +69,7 @@ def spawn_impl(
     capabilities: list[str] | None = None,
     initial_message: str = "",
     lazy: bool = False,
-    engine: str = "orchestral",
+    engine: str = "auto",
     sandbox_dir: str | None = None,
     permissions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -406,13 +406,12 @@ class SpawnTool(StatelessRuntimeTool):
         description="If true, do not start the child's driver until first inbox arrival.",
     )
     engine: str = RuntimeField(
-        default="orchestral",
+        default="auto",
         description=(
-            "Engine for the child agent. ``orchestral`` (default) wraps "
-            "an LLM client with combinator tools. ``claude_agent`` runs "
-            "the child as a claude-agent-sdk session with Claude Code's "
-            "tool surface — pass claude tool names in ``tools`` and a "
-            "sandbox dir."
+            "Engine for the child agent: ``auto`` (default — picks "
+            "``claude_agent`` if the SDK + ``claude`` CLI are present, "
+            "else ``orchestral``), or pin to ``orchestral`` / "
+            "``claude_agent`` explicitly."
         ),
     )
     sandbox_dir: str | None = RuntimeField(
@@ -444,7 +443,7 @@ class SpawnTool(StatelessRuntimeTool):
             capabilities=self.capabilities or [],
             initial_message=self.initial_message or "",
             lazy=bool(self.lazy),
-            engine=self.engine or "orchestral",
+            engine=self.engine or "auto",
             sandbox_dir=self.sandbox_dir,
             permissions=self.permissions,
         )

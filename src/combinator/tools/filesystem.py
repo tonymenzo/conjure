@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from combinator.address import Address
+from combinator.runtime import PERMISSION_WAIT_S
 from combinator.tools._base import (
     RuntimeField,
     StateField,
@@ -97,7 +98,7 @@ def _check_permission(
         previous_status = record.status
         record.status = "awaiting_permission"
         try:
-            result = req.wait(timeout_s=_PERMISSION_WAIT_S)
+            result = req.wait(timeout_s=PERMISSION_WAIT_S)
         finally:
             # Restore status whether allow / deny / timeout — driver
             # state was ``running`` before we started waiting.
@@ -108,16 +109,10 @@ def _check_permission(
             runtime._discard_permission(req.req_id)  # noqa: SLF001
             return _err(
                 "permission_timeout",
-                f"{tool_name} approval timed out after {_PERMISSION_WAIT_S:.0f}s",
+                f"{tool_name} approval timed out after {PERMISSION_WAIT_S:.0f}s",
             )
         return _err("permission_denied", f"{tool_name} denied by user")
     return None
-
-
-# How long a tool waits for a permission decision before giving up.
-# 5 minutes is generous for a human in the loop; tweak via the
-# environment for automated runs.
-_PERMISSION_WAIT_S = 300.0
 
 
 def _enter_sandbox(

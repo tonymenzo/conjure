@@ -47,6 +47,13 @@ if TYPE_CHECKING:
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
 
 
+# Shared default for how long an ``ask``-mode tool call blocks waiting
+# for a UI decision. Used by the filesystem tool group and the
+# claude_agent engine's ``can_use_tool`` callback so both surfaces
+# behave the same.
+PERMISSION_WAIT_S: float = 300.0
+
+
 @dataclass
 class PermissionRequest:
     """One pending tool-permission decision from an ``ask``-mode tool.
