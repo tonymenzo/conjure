@@ -441,10 +441,12 @@ def _format_response_rows(
         name = tc.get("name") or tc.get("tool_name") or "?"
         args = _args_preview(tc.get("args") or tc.get("arguments") or {})
         row = Text(no_wrap=False)
-        row.append("  ")
-        row.append("← ", style="cyan")
+        row.append("  ● ", style="bold cyan")
         row.append(name, style="bold cyan")
-        row.append(f"({args})", style="cyan")
+        if args:
+            row.append(f"({args})", style="dim cyan")
+        else:
+            row.append("()", style="dim cyan")
         row.stylize(_AGENT_BG)
         rows.append(row)
     return rows
@@ -497,10 +499,11 @@ def _format_event(label: str, event: dict[str, Any]) -> list[Text]:
         failed = bool(event.get("failed"))
         summary = _summarize_tool_result(event.get("text", "") or "")
         row = Text()
+        row.append("  ⎿ ", style="dim")
         if failed:
-            row.append(f"✗ {summary}", style="red")
+            row.append(summary, style="red")
         else:
-            row.append(f"✓ {summary}", style="dim cyan")
+            row.append(summary, style="dim")
         rows.append(row)
         return rows
 

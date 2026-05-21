@@ -164,14 +164,14 @@ class MainApp(App):
         scrollbar-size: 1 1;
     }
     #tree-pane > .tree--cursor {
-        background: $boost;
+        background: $surface;
         color: $foreground;
-        text-style: bold;
+        text-style: underline;
     }
     #tree-pane:focus > .tree--cursor {
-        background: $primary 30%;
+        background: $surface;
         color: $foreground;
-        text-style: bold;
+        text-style: bold underline;
     }
     #tree-pane > .tree--highlight,
     #tree-pane > .tree--highlight-line {
