@@ -41,6 +41,10 @@ class AgentSpec(BaseModel):
 
     role_prompt: str
     label: str = ""
+    # ``orchestral`` — the default in-process engine wrapping an LLM
+    # client (Anthropic, Groq, OpenAI, ...). ``claude_agent`` — runs
+    # the agent via the ``claude-agent-sdk`` (Claude Code's surface).
+    engine: str = "orchestral"
     tools: list[str] = Field(default_factory=list)
     llm: str = "default"
     capabilities: list[Address] = Field(default_factory=list)

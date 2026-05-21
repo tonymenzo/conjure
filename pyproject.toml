@@ -22,6 +22,11 @@ dependencies = [
 env = [
     "python-dotenv>=1.0",
 ]
+# Enables ``engine: "claude_agent"`` in AgentSpec — agents that run as
+# claude-agent-sdk sessions with Claude Code's full tool surface.
+claude_agent = [
+    "claude-agent-sdk>=0.2",
+]
 test = [
     "pytest>=7",
     "sympy>=1.12",
