@@ -645,6 +645,7 @@ def _build_tool_registry() -> dict[str, type]:
     from combinator.tools.primitives import (
         IntroduceTool,
         ListInboxTool,
+        PeekTool,
         RecvTool,
         SendTool,
         SpawnTool,
@@ -660,6 +661,7 @@ def _build_tool_registry() -> dict[str, type]:
         "terminate": TerminateTool,
         "introduce": IntroduceTool,
         "list_inbox": ListInboxTool,
+        "peek": PeekTool,
         "agent_map": AgentMapTool,
         "agent_fold": AgentFoldTool,
         "agent_filter": AgentFilterTool,

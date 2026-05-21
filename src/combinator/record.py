@@ -63,6 +63,13 @@ class AgentSpec(BaseModel):
     capabilities: list[Address] = Field(default_factory=list)
     initial_message: str | None = None
     lazy: bool = False
+    # Auto-terminate after the first successful step. Use for fire-
+    # and-forget workers in fan-out patterns so the parent doesn't
+    # have to chase cleanup; the runtime tears down the worker (and
+    # cascades to any descendants) as soon as its turn returns
+    # cleanly. An errored step leaves the agent in ``status="error"``
+    # so the parent can still inspect or retry.
+    oneshot: bool = False
     # On-disk sandbox for filesystem tools. ``None`` falls back to
     # ``{runtime.store_dir}/sandboxes/{agent_id}/`` at first FS-tool
     # use. Filesystem tools refuse to read or write outside the

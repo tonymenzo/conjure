@@ -120,6 +120,25 @@ class Driver:
                     )
                 except Exception:
                     pass
+            # Oneshot lifecycle: after a successful step, auto-
+            # terminate so fire-and-forget workers clean themselves
+            # up. The runtime cascade kills any descendants the
+            # worker spawned. An errored turn does NOT auto-terminate
+            # — leaves the agent in ``status="error"`` for parental
+            # inspection / retry.
+            if (
+                record.spec.oneshot
+                and not errored
+                and record.status != "terminated"
+            ):
+                try:
+                    self.runtime.terminate(
+                        record.addr,
+                        requested_by="oneshot",
+                        cascade=True,
+                    )
+                except Exception:
+                    pass
 
     def _emit_engine_error(self, exc: Exception) -> None:
         event_log = getattr(self.agent.record, "event_log", None)

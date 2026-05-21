@@ -59,6 +59,38 @@ def _addr_from_str(addr_str: str, runtime: "Runtime") -> Address | None:
     return runtime.address_by_id(addr_str)
 
 
+def _resolve_addr(
+    addr_str: str,
+    runtime: "Runtime",
+    caller_addr: Address,
+) -> Address | None:
+    """Resolve a caller-supplied address string. Accepts:
+
+    - ``"self"`` → the caller's own address.
+    - ``"parent"`` → the caller's parent (``None`` for the root).
+    - ``"@user"`` / ``"@system"`` → the sentinels (id lookup).
+    - ``"ag-..."`` → exact id lookup.
+    - ``"<label>"`` → matched against the caller's own children; only
+      resolves when exactly one child carries that label.
+
+    Returns ``None`` if no unambiguous match exists; callers convert
+    that into ``code=no_such_address``."""
+    if not addr_str:
+        return None
+    if addr_str == "self":
+        return caller_addr
+    if addr_str == "parent":
+        return runtime.record_for(caller_addr).parent
+    by_id = runtime.address_by_id(addr_str)
+    if by_id is not None:
+        return by_id
+    caller_record = runtime.record_for(caller_addr)
+    matches = [c for c in caller_record.children if c.label == addr_str]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def spawn_impl(
     *,
     token: str,
@@ -73,6 +105,7 @@ def spawn_impl(
     sandbox_dir: str | None = None,
     permissions: dict[str, str] | None = None,
     model: str | None = None,
+    oneshot: bool = False,
 ) -> dict[str, Any]:
     resolved = _resolve(token)
     if isinstance(resolved, dict):
@@ -87,7 +120,7 @@ def spawn_impl(
     # capability must already be in the caller's set.
     cap_addrs: list[Address] = []
     for cap_id in capabilities or []:
-        cap_addr = _addr_from_str(cap_id, runtime)
+        cap_addr = _resolve_addr(cap_id, runtime, caller_addr)
         if cap_addr is None:
             return _err("no_such_address", f"unknown address: {cap_id}")
         if cap_addr not in caller_record.capabilities:
@@ -107,6 +140,7 @@ def spawn_impl(
         capabilities=cap_addrs,
         initial_message=initial_message or None,
         lazy=lazy,
+        oneshot=oneshot,
         sandbox_dir=sandbox_dir,
         permissions=permissions or {},
     )
@@ -141,7 +175,7 @@ def send_impl(
         return resolved
     runtime, caller_addr = resolved
 
-    target_addr = _addr_from_str(to, runtime)
+    target_addr = _resolve_addr(to, runtime, caller_addr)
     if target_addr is None:
         return _err("no_such_address", f"unknown address: {to}")
 
@@ -322,7 +356,7 @@ def terminate_impl(
         return resolved
     runtime, caller_addr = resolved
 
-    target = _addr_from_str(address, runtime)
+    target = _resolve_addr(address, runtime, caller_addr)
     if target is None:
         return _err("no_such_address", f"unknown address: {address}")
 
@@ -348,8 +382,8 @@ def introduce_impl(
         return resolved
     runtime, caller_addr = resolved
 
-    child_addr = _addr_from_str(child, runtime)
-    cap_addr = _addr_from_str(capability, runtime)
+    child_addr = _resolve_addr(child, runtime, caller_addr)
+    cap_addr = _resolve_addr(capability, runtime, caller_addr)
     if child_addr is None:
         return _err("no_such_address", f"unknown address: {child}")
     if cap_addr is None:
@@ -364,6 +398,56 @@ def introduce_impl(
 
     runtime.record_for(child_addr).capabilities.extend(cap_addr)
     return {"ok": True}
+
+
+def peek_impl(
+    *,
+    token: str,
+    address: str,
+    max_envelopes: int = 5,
+) -> dict[str, Any]:
+    """Snapshot a descendant agent's status + recent inbox. Returns
+    structured data the LLM can dispatch on; the caller must be an
+    ancestor of the target (or the target itself)."""
+    resolved = _resolve(token)
+    if isinstance(resolved, dict):
+        return resolved
+    runtime, caller_addr = resolved
+
+    target = _resolve_addr(address, runtime, caller_addr)
+    if target is None:
+        return _err("no_such_address", f"unknown address: {address}")
+    if not _is_descendant_or_self(runtime, ancestor=caller_addr, descendant=target):
+        return _err(
+            "not_permitted",
+            f"caller cannot peek non-descendant {address}",
+        )
+
+    record = runtime.record_for(target)
+    cap = max(1, int(max_envelopes))
+    envelopes = record.inbox.read(since_seq=0, max_n=cap, timeout_s=0.0)
+    # Keep the most recent ``cap`` envelopes when the inbox is fuller.
+    recent = envelopes[-cap:] if len(envelopes) > cap else envelopes
+    return {
+        "ok": True,
+        "address": target.id,
+        "label": target.label or None,
+        "status": record.status,
+        "depth": record.depth,
+        "parent": record.parent.id if record.parent else None,
+        "children": sorted(c.id for c in record.children),
+        "inbox_size": len(record.inbox),
+        "recent_envelopes": [
+            {
+                "seq": e.seq,
+                "from": e.from_.id,
+                "from_label": e.from_.label or None,
+                "thread_id": e.thread_id,
+                "body": e.body,
+            }
+            for e in recent
+        ],
+    }
 
 
 def list_inbox_impl(
@@ -473,6 +557,17 @@ class SpawnTool(StatelessRuntimeTool):
             "needs more capability. Ignored by the orchestral engine."
         ),
     )
+    oneshot: bool = RuntimeField(
+        default=False,
+        description=(
+            "If true, the child auto-terminates after its first "
+            "successful step. Use for fire-and-forget fan-out workers "
+            "so you don't have to chase cleanup; the runtime tears "
+            "the child down (and cascades to its descendants) as soon "
+            "as its turn returns cleanly. An errored turn leaves the "
+            "child in ``status=\"error\"`` for inspection / retry."
+        ),
+    )
     runtime_token: str = StateField(
         description="(internal) runtime token identifying the calling agent.",
     )
@@ -491,6 +586,7 @@ class SpawnTool(StatelessRuntimeTool):
             sandbox_dir=self.sandbox_dir,
             permissions=self.permissions,
             model=self.model,
+            oneshot=bool(self.oneshot),
         )
 
 
@@ -625,6 +721,34 @@ class ListInboxTool(StatelessRuntimeTool):
         )
 
 
+class PeekTool(StatelessRuntimeTool):
+    """Snapshot a descendant agent's status + recent inbox without
+    consuming any messages. Use this to diagnose stalled fan-ins
+    (``which worker is stuck?``), check progress on long-running
+    children, or confirm a spawn landed before sending it work.
+
+    Authority: caller must be an ancestor of the target (or the
+    target itself). ``address`` accepts ids and the label / `self` /
+    `parent` shortcuts.
+    """
+
+    address: str = RuntimeField(
+        description="Address id, label of a direct child, or 'self' / 'parent'.",
+    )
+    max_envelopes: int = RuntimeField(
+        default=5,
+        description="How many recent inbox envelopes to include in the snapshot.",
+    )
+    runtime_token: str = StateField(description="(internal) caller token.")
+
+    def _run(self) -> dict[str, Any]:
+        return peek_impl(
+            token=self.runtime_token,
+            address=self.address,
+            max_envelopes=int(self.max_envelopes or 5),
+        )
+
+
 PRIMITIVE_TOOL_CLASSES = (
     SpawnTool,
     SendTool,
@@ -633,6 +757,7 @@ PRIMITIVE_TOOL_CLASSES = (
     TerminateTool,
     IntroduceTool,
     ListInboxTool,
+    PeekTool,
 )
 
 

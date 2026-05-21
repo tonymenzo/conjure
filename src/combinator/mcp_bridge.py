@@ -49,6 +49,7 @@ from combinator.tools.combinators import (
 from combinator.tools.primitives import (
     IntroduceTool,
     ListInboxTool,
+    PeekTool,
     RecvTool,
     SendTool,
     SpawnTool,
@@ -75,6 +76,7 @@ _BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
     "terminate": (TerminateTool, "Terminate"),
     "introduce": (IntroduceTool, "Introduce"),
     "list_inbox": (ListInboxTool, "ListInbox"),
+    "peek": (PeekTool, "Peek"),
     "agent_map": (AgentMapTool, "AgentMap"),
     "agent_fold": (AgentFoldTool, "AgentFold"),
     "agent_filter": (AgentFilterTool, "AgentFilter"),

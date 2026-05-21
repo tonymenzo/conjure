@@ -30,7 +30,7 @@ def test_bridge_tools_expose_pascalcase_display_names():
     names = [get_tool_display_name(t) for t in tools]
     assert names == [
         "Spawn", "Send", "Recv", "WaitFor",
-        "Terminate", "Introduce", "ListInbox",
+        "Terminate", "Introduce", "ListInbox", "Peek",
         "AgentMap", "AgentFold", "AgentFilter", "AgentFixedPoint",
     ]
 

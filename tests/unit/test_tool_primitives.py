@@ -19,6 +19,7 @@ from combinator.tools.primitives import (
     build_primitive_tools,
     introduce_impl,
     list_inbox_impl,
+    peek_impl,
     recv_impl,
     send_impl,
     spawn_impl,
@@ -229,6 +230,83 @@ def test_wait_for_returns_partial_on_timeout(rt, root_token):
     assert out["ok"] is True
     assert [e["body"] for e in out["envelopes"]] == ["a"]
     assert out["next_seq"] == 1
+
+
+# ----- address shortcuts ----- (self / parent / label)
+
+def test_send_to_self_shortcut(rt, root_token):
+    out = send_impl(token=root_token, to="self", body="echo")
+    assert out["ok"] is True
+
+
+def test_send_to_parent_shortcut(rt, root_token):
+    """A child can address its parent without knowing the opaque id."""
+    child = spawn_impl(token=root_token, role_prompt="child", label="c")
+    child_token = rt.record_for(rt.address_by_id(child["address"])).token
+    out = send_impl(token=child_token, to="parent", body="hi parent")
+    assert out["ok"] is True
+    envs = rt.read_inbox(rt.root_addr)
+    assert any(e.body == "hi parent" for e in envs)
+
+
+def test_send_to_parent_from_root_fails(rt, root_token):
+    """Root has no parent — the shortcut returns ``no_such_address``."""
+    out = send_impl(token=root_token, to="parent", body="nope")
+    assert out["ok"] is False
+    assert out["code"] == "no_such_address"
+
+
+def test_send_to_child_label_shortcut(rt, root_token):
+    """A parent can address its child by the label it spawned with."""
+    spawn_impl(token=root_token, role_prompt="worker", label="w1")
+    out = send_impl(token=root_token, to="w1", body={"task": 42})
+    assert out["ok"] is True
+
+
+def test_label_shortcut_ambiguous_returns_none(rt, root_token):
+    """When two children share a label, the resolver gives up rather
+    than guessing — caller gets ``no_such_address``."""
+    spawn_impl(token=root_token, role_prompt="a", label="dup")
+    spawn_impl(token=root_token, role_prompt="b", label="dup")
+    out = send_impl(token=root_token, to="dup", body="?")
+    assert out["ok"] is False
+    assert out["code"] == "no_such_address"
+
+
+# ----- peek_impl -----
+
+def test_peek_descendant_returns_status_and_inbox(rt, root_token):
+    child = spawn_impl(token=root_token, role_prompt="c", label="worker")
+    addr = rt.address_by_id(child["address"])
+    rt.send_external(to=addr, body={"task": "x"})
+
+    out = peek_impl(token=root_token, address=child["address"])
+    assert out["ok"] is True
+    assert out["address"] == child["address"]
+    assert out["label"] == "worker"
+    assert out["status"] == "lazy"  # no engine factory wired in this rt
+    assert out["depth"] == 1
+    assert out["parent"] == rt.root_addr.id
+    assert out["inbox_size"] == 1
+    assert out["recent_envelopes"][0]["body"] == {"task": "x"}
+
+
+def test_peek_non_descendant_rejected(rt, root_token):
+    """Authority: a child can't peek a sibling — only ancestors can
+    see down the tree."""
+    a = spawn_impl(token=root_token, role_prompt="a", label="a")
+    b = spawn_impl(token=root_token, role_prompt="b", label="b")
+    a_token = rt.record_for(rt.address_by_id(a["address"])).token
+    out = peek_impl(token=a_token, address=b["address"])
+    assert out["ok"] is False
+    assert out["code"] == "not_permitted"
+
+
+def test_peek_label_shortcut(rt, root_token):
+    spawn_impl(token=root_token, role_prompt="c", label="w1")
+    out = peek_impl(token=root_token, address="w1")
+    assert out["ok"] is True
+    assert out["label"] == "w1"
 
 
 # ----- terminate_impl -----

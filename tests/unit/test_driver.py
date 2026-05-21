@@ -183,6 +183,64 @@ def test_driver_emits_engine_error_to_event_log():
     rt.shutdown()
 
 
+def test_oneshot_auto_terminates_after_successful_step():
+    """``spec.oneshot=True`` makes the runtime tear the agent down
+    as soon as its first step returns cleanly. An errored step
+    leaves it in ``status="error"`` for inspection / retry."""
+    engines: list[MockEngine] = []
+    rt = Runtime(engine_factory=_factory(capture=engines))
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(
+        parent=root,
+        spec=AgentSpec(role_prompt="oneshot", label="ow", oneshot=True),
+    )
+    engine = engines[1]
+
+    rt.send_external(to=child, body="do the thing")
+    _wait_for_call(engine)
+    # Give the driver a moment to flip status + invoke terminate.
+    time.sleep(0.1)
+    assert rt.record_for(child).status == "terminated"
+
+    # Parent gets a supervision event for the auto-termination.
+    root_envs = rt.record_for(root).inbox.read(since_seq=0, max_n=10)
+    events = [
+        e for e in root_envs
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert any(
+        e.body["event"] == "terminated" and e.body["child_addr"] == child.id
+        for e in events
+    )
+    rt.shutdown()
+
+
+def test_oneshot_does_not_terminate_on_errored_step():
+    """A oneshot agent whose engine raises should NOT be auto-
+    terminated — leave it in ``status="error"`` so the parent can
+    inspect or retry."""
+    engines: list[MockEngine] = []
+
+    def factory(record: AgentRecord, runtime: Runtime) -> MockEngine:
+        raise_first = bool(engines)
+        e = MockEngine(raise_once=raise_first)
+        engines.append(e)
+        return e
+
+    rt = Runtime(engine_factory=factory)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(
+        parent=root,
+        spec=AgentSpec(role_prompt="oneshot", oneshot=True),
+    )
+
+    rt.send_external(to=child, body="boom")
+    _wait_for_call(engines[1])
+    time.sleep(0.1)
+    assert rt.record_for(child).status == "error"  # not terminated
+    rt.shutdown()
+
+
 def test_driver_stops_cleanly_on_terminate():
     engines: list[MockEngine] = []
     rt = Runtime(engine_factory=_factory(capture=engines))

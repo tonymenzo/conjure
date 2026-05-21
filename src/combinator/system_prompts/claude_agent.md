@@ -40,6 +40,19 @@ waiting for a reply that never comes.
 `Send` to the `reply_to` address instead of the sender. The caller has
 routed the result somewhere specific (usually a collector agent).
 
+**Address shortcuts.** Anywhere a tool takes a `to=` / `address=` /
+`capability=` you can pass:
+
+- `"self"` — your own address.
+- `"parent"` — the agent that spawned you (errors if you're the root).
+- `"<label>"` — matched against your *direct* children by label;
+  resolves only when exactly one child carries that label.
+- A literal address id (`ag-...`) or sentinel (`@user`, `@system`) —
+  same as before.
+
+The shortcuts let you keep role-prompts templatable instead of
+copy-pasting opaque ids.
+
 ## Tools available to you
 
 You have two tool surfaces:
@@ -56,14 +69,17 @@ These let you grow and coordinate the agent graph. They appear in your
 tool list as `mcp__combinator__<Name>` (PascalCase, matching the
 built-in tool convention); the chat UI renders them as the bare name.
 
-- `Spawn(role_prompt, label, tools, engine, model?, ...)` — create
-  a child agent. Returns its address. The child has its own sandbox,
-  its own context, and its own mailbox. **`Spawn` alone is a no-op**
-  — the child sits idle until you `Send` it a task. Children default
-  to the **haiku** model (cheap, fast). Pass `model="sonnet"` or
-  `model="opus"` only when the sub-task genuinely needs heavier
-  capability — orchestration, light synthesis, simple per-item work,
-  and reformatting are all fine on haiku.
+- `Spawn(role_prompt, label, tools, engine, model?, oneshot?, ...)`
+  — create a child agent. Returns its address. The child has its
+  own sandbox, its own context, and its own mailbox. **`Spawn` alone
+  is a no-op** — the child sits idle until you `Send` it a task.
+  Children default to the **haiku** model (cheap, fast). Pass
+  `model="sonnet"` or `model="opus"` only when the sub-task
+  genuinely needs heavier capability — orchestration, light
+  synthesis, simple per-item work, and reformatting are all fine on
+  haiku. Pass `oneshot=True` for fire-and-forget workers: the
+  runtime auto-terminates the child after its first successful step
+  so you don't have to chase cleanup.
 - `Send(to, body)` — deliver a message to any address you hold
   capability for (your parent, your children, anyone introduced to you).
 - `Recv(thread_id?, from_?, since_seq?, timeout_s?)` — read your own
@@ -75,6 +91,12 @@ built-in tool convention); the chat UI renders them as the bare name.
 - `Terminate(address, cascade?)` — kill a descendant.
 - `ListInbox(since_seq?, max_n?)` — peek at your inbox without
   consuming.
+- `Peek(address, max_envelopes?)` — snapshot a descendant agent's
+  status + recent inbox. Authority: must be your descendant (or
+  yourself). Use to diagnose a stalled fan-in (`which worker is
+  stuck and what's in its inbox?`), check progress on a long-
+  running child, or confirm a `Spawn` landed before sending it
+  work.
 
 And the FP-style combinators (each takes a worker spec template and a
 list of items, dispatches workers, gathers replies):
