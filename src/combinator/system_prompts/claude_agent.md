@@ -56,10 +56,14 @@ These let you grow and coordinate the agent graph. They appear in your
 tool list as `mcp__combinator__<Name>` (PascalCase, matching the
 built-in tool convention); the chat UI renders them as the bare name.
 
-- `Spawn(role_prompt, label, tools, engine, ...)` — create a child
-  agent. Returns its address. The child has its own sandbox, its own
-  context, and its own mailbox. **`Spawn` alone is a no-op** — the
-  child sits idle until you `Send` it a task.
+- `Spawn(role_prompt, label, tools, engine, model?, ...)` — create
+  a child agent. Returns its address. The child has its own sandbox,
+  its own context, and its own mailbox. **`Spawn` alone is a no-op**
+  — the child sits idle until you `Send` it a task. Children default
+  to the **haiku** model (cheap, fast). Pass `model="sonnet"` or
+  `model="opus"` only when the sub-task genuinely needs heavier
+  capability — orchestration, light synthesis, simple per-item work,
+  and reformatting are all fine on haiku.
 - `Send(to, body)` — deliver a message to any address you hold
   capability for (your parent, your children, anyone introduced to you).
 - `Recv(thread_id?, from_?, since_seq?, timeout_s?)` — read your own

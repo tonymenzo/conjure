@@ -54,6 +54,12 @@ class AgentSpec(BaseModel):
     engine: str = "auto"
     tools: list[str] = Field(default_factory=list)
     llm: str = "default"
+    # Model alias ("haiku" / "sonnet" / "opus") or full name
+    # ("claude-sonnet-4-6"). Only consulted by the ``claude_agent``
+    # engine. None means: use the CLI's default for the root, default
+    # spawned children down to "haiku" so the substrate doesn't burn
+    # Opus on every helper agent.
+    model: str | None = None
     capabilities: list[Address] = Field(default_factory=list)
     initial_message: str | None = None
     lazy: bool = False

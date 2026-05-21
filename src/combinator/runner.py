@@ -123,6 +123,7 @@ def _build_claude_agent_engine(
         if event_log is not None:
             stream_emit = event_log.emit
     sandbox = _sandbox_for(record, runtime)
+    model = _resolve_model(record)
     return ClaudeAgentEngine(
         record=record,
         runtime=runtime,
@@ -130,4 +131,25 @@ def _build_claude_agent_engine(
         allowed_tools=record.spec.tools,
         stream_emit=stream_emit,
         mcp_socket=control_socket,
+        model=model,
     )
+
+
+def _resolve_model(record: AgentRecord) -> str | None:
+    """Pick the model for this agent's claude_agent session.
+
+    Resolution order:
+    1. ``spec.model`` if the caller (user config or ``Spawn`` tool
+       call) set it explicitly.
+    2. ``"haiku"`` for any non-root agent — children default to a
+       cheap model so the substrate doesn't burn Opus on every
+       helper. Override with an explicit ``model=`` on ``Spawn``
+       when the child genuinely needs more capability.
+    3. ``None`` for the root, letting the ``claude`` CLI use its
+       configured default (typically what the user is paying for).
+    """
+    if record.spec.model:
+        return record.spec.model
+    if record.parent is not None:
+        return "haiku"
+    return None

@@ -82,6 +82,7 @@ class ClaudeAgentEngine:
         system_prompt: str | None = None,
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
         mcp_socket: Path | None = None,
+        model: str | None = None,
     ) -> None:
         # Import lazily so the runtime doesn't hard-require
         # claude-agent-sdk for agents that only use the orchestral
@@ -198,6 +199,7 @@ class ClaudeAgentEngine:
             permission_mode="default",
             mcp_servers=mcp_servers if mcp_servers else {},
             env=sdk_env,
+            model=model,
         )
         self._options = opts
         self._client = ClaudeSDKClient(opts)

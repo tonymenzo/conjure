@@ -72,6 +72,7 @@ def spawn_impl(
     engine: str = "auto",
     sandbox_dir: str | None = None,
     permissions: dict[str, str] | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     resolved = _resolve(token)
     if isinstance(resolved, dict):
@@ -102,6 +103,7 @@ def spawn_impl(
         engine=engine,
         tools=list(tools or []),
         llm=llm,
+        model=model,
         capabilities=cap_addrs,
         initial_message=initial_message or None,
         lazy=lazy,
@@ -429,6 +431,17 @@ class SpawnTool(StatelessRuntimeTool):
             "``{'Bash': 'ask', 'Write': 'allow'}``."
         ),
     )
+    model: str | None = RuntimeField(
+        default=None,
+        description=(
+            "Model for the child's claude_agent session — alias "
+            "(``haiku``, ``sonnet``, ``opus``) or full name "
+            "(``claude-sonnet-4-6``). Omit to default to a cheap "
+            "model (``haiku``) for the child; explicitly set "
+            "``sonnet`` or ``opus`` only when the task genuinely "
+            "needs more capability. Ignored by the orchestral engine."
+        ),
+    )
     runtime_token: str = StateField(
         description="(internal) runtime token identifying the calling agent.",
     )
@@ -446,6 +459,7 @@ class SpawnTool(StatelessRuntimeTool):
             engine=self.engine or "auto",
             sandbox_dir=self.sandbox_dir,
             permissions=self.permissions,
+            model=self.model,
         )
 
 
