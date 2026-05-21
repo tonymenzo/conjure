@@ -441,6 +441,11 @@ class MainApp(App):
             self._apply_permissions(reply.get("pending_permissions") or [])
             self._apply_context(reply.get("context"))
             self._refresh_context_bar()
+            # Tree is populated now. If we still don't have a
+            # selected agent (the on_mount auto-select ran before
+            # the async snapshot returned), pick root.
+            if self.selected_addr is None:
+                self._select_root_if_available()
         finally:
             self._snapshot_in_flight = False
 
