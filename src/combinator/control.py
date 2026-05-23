@@ -149,6 +149,11 @@ class ControlServer:
             return self._resolve_permission(
                 request.get("req_id"), request.get("decision")
             )
+        if method == "set_auto_mode":
+            self.runtime.auto_mode = bool(request.get("on"))
+            return {"ok": True, "on": self.runtime.auto_mode}
+        if method == "get_auto_mode":
+            return {"ok": True, "on": bool(self.runtime.auto_mode)}
         if method == "tool_call":
             return self._tool_call(request)
         if method == "send":
@@ -238,6 +243,7 @@ class ControlServer:
             "activity": activity_reply.get("activity", []),
             "log_events": log_events_reply.get("events", []),
             "pending_permissions": permissions_reply.get("pending", []),
+            "auto_mode": bool(self.runtime.auto_mode),
         }
         if addr_id:
             inbox_reply = self._inbox(addr_id)

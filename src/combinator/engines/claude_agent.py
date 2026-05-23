@@ -147,6 +147,11 @@ class ClaudeAgentEngine:
                 return PermissionResultDeny(
                     message=f"{tool_name} denied by agent permissions"
                 )
+            # Auto-mode: ``ask`` decisions become silent allows. Deny
+            # is still honored — auto-mode opens gates, never overrides
+            # an explicit deny.
+            if decision == "ask" and runtime.auto_mode:
+                return PermissionResultAllow()
             if decision == "ask":
                 # Submit a request to the runtime's shared permission
                 # queue; the UI banner picks it up. Block this async

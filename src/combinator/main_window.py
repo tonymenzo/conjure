@@ -259,6 +259,7 @@ class MainApp(App):
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
         Binding("r", "refresh", "Refresh", show=False),
+        Binding("f6", "toggle_auto_mode", "Auto-mode"),
     ]
 
     def __init__(
@@ -412,6 +413,23 @@ class MainApp(App):
     def action_refresh(self) -> None:
         self.refresh_all()
 
+    def action_toggle_auto_mode(self) -> None:
+        """Flip the daemon's ``auto_mode`` flag. When on, ``ask``
+        tool decisions are auto-allowed without surfacing the perm-
+        banner — the "trust me, just go" mode for fast iteration.
+        Status is reflected in the bottom gutter so it's not invisible.
+        """
+        new_state = not bool(getattr(self, "_auto_mode", False))
+        try:
+            reply = self.client.call("set_auto_mode", on=new_state)
+        except Exception:
+            return
+        if reply.get("ok"):
+            self._auto_mode = bool(reply.get("on"))
+            # Force the gutter to repaint with the new flag.
+            self._context_signature = None
+            self._refresh_context_bar()
+
     def action_open_in_window(self) -> None:
         """Open the selected agent in a dedicated fullscreen chat window.
 
@@ -505,6 +523,7 @@ class MainApp(App):
                 return
             self._apply_tree(reply.get("tree"))
             self._apply_cost(reply.get("cost") or {})
+            self._auto_mode = bool(reply.get("auto_mode"))
             # Merge envelope activity + tool events on a single
             # time-sorted feed so the activity pane shows the full
             # picture (agent ↔ agent traffic + each agent's local
@@ -654,15 +673,21 @@ class MainApp(App):
 
     def _refresh_context_bar(self) -> None:
         """Render the unified status gutter at the bottom of the
-        screen: cost + model on the left, context-window meter pinned
-        to the right via a two-column ``Table.grid``. Diff-checked so
-        the gutter doesn't repaint every tick when nothing changed."""
+        screen: cost + model (+ auto-mode flag) on the left, context-
+        window meter pinned to the right via a two-column
+        ``Table.grid``. Diff-checked so the gutter doesn't repaint
+        every tick when nothing changed."""
         addr = self.selected_addr
         model = self._addr_models.get(addr) if addr else None
         ctx = self._addr_context.get(addr) if addr else None
         cost = getattr(self, "_cost_total", None)
         has_sub = bool(getattr(self, "_cost_has_sub", False))
-        sig = (addr, model, ctx, round(cost, 6) if cost is not None else None, has_sub)
+        auto_mode = bool(getattr(self, "_auto_mode", False))
+        sig = (
+            addr, model, ctx,
+            round(cost, 6) if cost is not None else None,
+            has_sub, auto_mode,
+        )
         if sig == self._context_signature:
             return
         self._context_signature = sig
@@ -677,6 +702,10 @@ class MainApp(App):
             if len(left):
                 left.append("   ·   ", style="dim")
             left.append(model, style="dim cyan")
+        if auto_mode:
+            if len(left):
+                left.append("   ·   ", style="dim")
+            left.append("AUTO", style="bold yellow")
 
         right = _render_token_bar(*ctx) if ctx is not None else Text("")
 

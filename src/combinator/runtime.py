@@ -156,6 +156,11 @@ class Runtime:
         # ``resolve_permission`` to satisfy them.
         self._permission_requests: dict[str, PermissionRequest] = {}
         self._permission_lock = threading.Lock()
+        # Auto-mode: when True, every tool with an ``ask`` decision is
+        # auto-allowed (no banner, no wait). Toggle from the UI via the
+        # control RPC ``set_auto_mode``. Off by default — explicit
+        # opt-in for the "trust me, just go" flow.
+        self.auto_mode: bool = False
         # Shared asyncio loop + thread for engines that need a sync-
         # from-async bridge (currently ``ClaudeAgentEngine``). Started
         # lazily on first access; the runtime owns its lifetime so we
