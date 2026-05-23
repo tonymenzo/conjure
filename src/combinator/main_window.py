@@ -42,14 +42,14 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Header, Input, Static, Tree
+from textual.message import Message
+from textual.widgets import Header, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from combinator.chat import ChatView
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 from combinator.status_tree import StatusTree
-from combinator.tui_select import set_mouse_tracking
 
 
 # Status icon = filled circle in every state; only the color
@@ -156,17 +156,56 @@ def _current_tmux_session() -> str | None:
     return out.stdout.strip() or None
 
 
+class TextChoice(Static):
+    """A focusable inline label — colored text only, no border, no
+    background, no chunky button frame. Bold-underlined when focused
+    so the active choice is unmistakable; emits ``Activated`` on
+    Enter / Space so the parent can route the decision."""
+
+    can_focus = True
+
+    DEFAULT_CSS = """
+    TextChoice {
+        width: auto;
+        height: 1;
+        padding: 0 2;
+        background: ansi_default;
+    }
+    TextChoice:focus {
+        text-style: bold underline;
+    }
+    """
+
+    BINDINGS = [
+        Binding("enter,space", "activate", "Activate", show=False),
+    ]
+
+    class Activated(Message):
+        def __init__(self, choice: "TextChoice") -> None:
+            self.choice = choice
+            super().__init__()
+
+        @property
+        def control(self) -> "TextChoice":
+            # ``@on(TextChoice.Activated, "#selector")`` matches
+            # against this property — letting the parent route
+            # decisions by widget id.
+            return self.choice
+
+    def action_activate(self) -> None:
+        self.post_message(self.Activated(self))
+
+
 class PermissionPanel(Container):
     """Inline approval pane that lives at the bottom of the chat
     column, just above the input. Collapsed (``height: 0``) until a
     permission request lands; ``.active`` expands it to a small
-    bordered block showing the agent, tool, and args, plus
-    ``[ Allow ]`` / ``[ Deny ]`` buttons. Focus auto-lands on
-    Allow when the panel opens; Left / Right arrows cycle focus
-    between buttons; Enter activates the focused button. Splits
-    the chat area naturally — the chat history shrinks by however
-    many rows the panel takes — instead of overlaying a modal
-    dialog on top of everything.
+    bordered block showing the agent + tool + args plus two
+    colored-text choices ``Allow`` (green) and ``Deny`` (red).
+    Focus auto-lands on Allow when the panel opens; Left / Right
+    arrows hop focus between choices; Enter / Space confirms the
+    focused one. Splits the chat column naturally — the chat
+    history just shrinks by however many rows the panel takes.
     """
 
     BINDINGS = [
@@ -177,8 +216,8 @@ class PermissionPanel(Container):
     def compose(self) -> ComposeResult:
         yield Static("", id="perm-line")
         with Horizontal(id="perm-buttons"):
-            yield Button("Allow", id="perm-allow", variant="success")
-            yield Button("Deny", id="perm-deny", variant="error")
+            yield TextChoice("Allow", id="perm-allow")
+            yield TextChoice("Deny", id="perm-deny")
 
 
 class MainApp(App):
@@ -257,16 +296,6 @@ class MainApp(App):
     #chat-input:focus {
         border: round white;
     }
-    /* select-mode indicator — hidden when ``height: 0``; F5 toggles
-       the ``active`` class which gives it a row of yellow text. */
-    #select-indicator {
-        height: 0;
-        background: ansi_default;
-        padding: 0 1;
-    }
-    #select-indicator.active {
-        height: 1;
-    }
     /* Inline permission-prompt panel — sits above the chat input,
        splitting the chat column when a permission request arrives. */
     #perm-panel {
@@ -286,13 +315,14 @@ class MainApp(App):
         color: $foreground;
     }
     #perm-buttons {
-        height: 3;
-        align: left middle;
+        height: 1;
         background: ansi_default;
     }
-    #perm-allow, #perm-deny {
-        margin-right: 2;
-        min-width: 12;
+    #perm-allow {
+        color: #00FF41;
+    }
+    #perm-deny {
+        color: #FF4136;
     }
     Header {
         background: #1B4D3E;
@@ -301,14 +331,9 @@ class MainApp(App):
 
     BINDINGS = [
         Binding("f2", "toggle_sidebar", "Toggle sidebar"),
-        Binding("f5", "toggle_select_mode", "Select"),
         # ``F6`` toggles auto-mode (silently allow every ``ask``
         # tool decision); ``Ctrl+G`` is the fallback for terminals
-        # or tmux configs that intercept F6. Previously F6 was
-        # *also* bound to ``toggle_internal`` (hidden diagnostic
-        # for showing combinator-internal agents in the tree),
-        # which won precedence and made auto-mode look broken;
-        # ``toggle_internal`` is now on ``Ctrl+I``.
+        # or tmux configs that intercept F6.
         Binding("f6", "toggle_auto_mode", "Auto", show=True),
         Binding("ctrl+g", "toggle_auto_mode", "Auto", show=False),
         Binding("ctrl+i", "toggle_internal", "Show internal", show=False),
@@ -417,9 +442,6 @@ class MainApp(App):
                 # permission request arrives. Splits the chat column
                 # naturally instead of overlaying a modal.
                 yield PermissionPanel(id="perm-panel")
-                # Select-mode indicator sits just above the chat input
-                # so the F5 state is visible from the cursor's column.
-                yield Static("", id="select-indicator")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
@@ -454,14 +476,6 @@ class MainApp(App):
         self._stop_chat_tail()
 
     # ----- actions -----
-
-    def action_toggle_select_mode(self) -> None:
-        """Release / re-acquire textual's mouse capture so the user
-        can click-drag-select text natively. Header subtitle gets a
-        ``[select]`` tag while active."""
-        self._select_mode = not getattr(self, "_select_mode", False)
-        set_mouse_tracking(self, on=not self._select_mode)
-        self._update_subtitle()
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar")
@@ -728,11 +742,7 @@ class MainApp(App):
         walk(tree.root)
 
     def _update_subtitle(self) -> None:
-        """Header subtitle reflects the selected agent + its model.
-        Plain text only — textual 8.x Header renders sub_title as
-        a literal string (no markup parsing), so the select-mode
-        indicator lives in its own ``#select-indicator`` widget
-        and ``sub_title`` stays clean."""
+        """Header subtitle reflects the selected agent + its model."""
         base = f"session: {self.socket_path.stem}"
         if self.selected_addr:
             label = self.selected_label or self.selected_addr
@@ -743,20 +753,6 @@ class MainApp(App):
                 base = f"{base}  ·  {label}"
         self._base_sub_title = base
         self.sub_title = base
-        # Sync the dedicated select-indicator widget with the current
-        # mode so its visibility tracks ``self._select_mode``.
-        try:
-            indicator = self.query_one("#select-indicator", Static)
-        except Exception:
-            return
-        if getattr(self, "_select_mode", False):
-            indicator.update(
-                Text("[select — F5 to exit]", style="bold yellow")
-            )
-            indicator.add_class("active")
-        else:
-            indicator.update("")
-            indicator.remove_class("active")
 
     def _cache_extras(self, addr_id: str, node: dict[str, Any]) -> None:
         """Pluck the per-agent ``model`` off a tree node. Context
@@ -872,10 +868,10 @@ class MainApp(App):
         except Exception:
             pass
         panel.add_class("active")
-        # Land focus on Allow so a stray Enter approves the safer
-        # default; arrow keys hop to Deny.
+        # Land focus on Allow so a quick Enter approves; arrow keys
+        # hop to Deny when the user wants to refuse.
         try:
-            self.query_one("#perm-allow", Button).focus()
+            self.query_one("#perm-allow", TextChoice).focus()
         except Exception:
             pass
 
@@ -899,11 +895,11 @@ class MainApp(App):
         except Exception:
             pass
 
-    @on(Button.Pressed, "#perm-allow")
+    @on(TextChoice.Activated, "#perm-allow")
     def _on_perm_allow(self) -> None:
         self._resolve_active_permission("allow")
 
-    @on(Button.Pressed, "#perm-deny")
+    @on(TextChoice.Activated, "#perm-deny")
     def _on_perm_deny(self) -> None:
         self._resolve_active_permission("deny")
 
