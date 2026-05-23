@@ -244,7 +244,8 @@ class MainApp(App):
         border: round white;
     }
     Header {
-        background: #00FF41;
+        background: #003B00;
+        color: white;
     }
     """
 

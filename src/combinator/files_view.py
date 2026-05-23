@@ -157,8 +157,8 @@ class FilesApp(App):
         border: round white;
     }
     #search-input.active { display: block; }
-    Header { background: #00FF41; }
-    Footer { background: #00FF41; }
+    Header { background: #003B00; color: white; }
+    Footer { background: #003B00; color: white; }
     """
 
     BINDINGS = [

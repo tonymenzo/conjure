@@ -353,8 +353,8 @@ class ChatApp(App):
         border: round white;
     }
     Header {
-        background: #00FF41;
-        color: $text;
+        background: #003B00;
+        color: white;
     }
     """
 
