@@ -207,20 +207,29 @@ class PermissionPanel(Container):
       auto-allow this tool for the rest of the session), and
       ``Deny`` (red, refuse this call). Focus auto-lands on Allow
       when the panel opens; ``Up`` / ``Down`` arrows hop focus
-      between choices; ``Enter`` / ``Space`` confirms the focused
-      one.
-    - Right: a three-line summary — ``agent: <label>``,
-      ``tool: <Name>``, ``args: <preview>`` — so the user can
-      verify *what* is being asked without scanning the rest of
-      the chat.
+      between choices (wrapping at the ends, scoped to the panel);
+      ``Enter`` / ``Space`` confirms the focused one.
+    - Right: a multi-line summary — ``agent: <label>``,
+      ``tool: <Name>``, then each tool arg on its own row —
+      so the user can verify *what* is being asked without
+      scanning the rest of the chat. Panel grows to fit.
 
     Splits the chat column naturally — the history just shrinks by
     the panel's rows.
     """
 
+    # Local focus cycling: ``app.focus_next`` / ``app.focus_previous``
+    # walk the entire screen's focus chain (tree, chat history, input,
+    # ...), which means Down on Deny would escape to chat-input and
+    # Up on Allow to chat-history. Both feel laggy because the user
+    # is watching unrelated widgets briefly flash focus. Explicit
+    # cycling within the panel's own choices is O(3) and never leaves
+    # the panel.
+    _CHOICE_IDS = ("perm-allow", "perm-allow-always", "perm-deny")
+
     BINDINGS = [
-        Binding("up", "app.focus_previous", "Prev", show=False),
-        Binding("down", "app.focus_next", "Next", show=False),
+        Binding("up", "focus_prev_choice", "Prev", show=False),
+        Binding("down", "focus_next_choice", "Next", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -229,10 +238,26 @@ class PermissionPanel(Container):
                 yield TextChoice("Allow", id="perm-allow")
                 yield TextChoice("Allow always", id="perm-allow-always")
                 yield TextChoice("Deny", id="perm-deny")
-            with Vertical(id="perm-summary"):
-                yield Static("", id="perm-agent")
-                yield Static("", id="perm-tool")
-                yield Static("", id="perm-args")
+            yield Static("", id="perm-summary")
+
+    def _cycle_focus(self, delta: int) -> None:
+        try:
+            current_idx = next(
+                i for i, cid in enumerate(self._CHOICE_IDS)
+                if self.app.focused is self.query_one(f"#{cid}", TextChoice)
+            )
+        except StopIteration:
+            current_idx = -1
+        target_idx = (current_idx + delta) % len(self._CHOICE_IDS)
+        self.query_one(
+            f"#{self._CHOICE_IDS[target_idx]}", TextChoice
+        ).focus()
+
+    def action_focus_prev_choice(self) -> None:
+        self._cycle_focus(-1)
+
+    def action_focus_next_choice(self) -> None:
+        self._cycle_focus(1)
 
 
 class MainApp(App):
@@ -327,23 +352,19 @@ class MainApp(App):
         height: auto;
     }
     #perm-row {
-        height: 3;
+        height: auto;
         background: ansi_default;
     }
     #perm-choices {
         width: 22;
-        height: 3;
+        height: auto;
         background: ansi_default;
     }
     #perm-summary {
         width: 1fr;
-        height: 3;
+        height: auto;
         background: ansi_default;
         padding-left: 2;
-    }
-    #perm-agent, #perm-tool, #perm-args {
-        height: 1;
-        background: ansi_default;
     }
     #perm-allow {
         color: #00FF41;
@@ -875,28 +896,32 @@ class MainApp(App):
             or "?"
         )
         tool_name = first.get("tool_name") or "?"
-        args_preview = _args_preview(first.get("args") or {})
-        # Right-hand summary: three labeled rows — agent / tool /
-        # args. Labels are dim so the values pop; values get
-        # appropriate weight (bold for the agent label since the
-        # user's first scan is "who is this", cyan-bold for the
-        # tool name since that's the key decision input).
-        agent_row = Text(no_wrap=True, overflow="ellipsis")
-        agent_row.append("agent: ", style="dim")
-        agent_row.append(agent_label, style="bold #FFB000")
-        tool_row = Text(no_wrap=True, overflow="ellipsis")
-        tool_row.append("tool:  ", style="dim")
-        tool_row.append(tool_name, style="bold cyan")
-        args_row = Text(no_wrap=True, overflow="ellipsis")
-        args_row.append("args:  ", style="dim")
-        if args_preview:
-            args_row.append(args_preview, style="dim")
-        else:
-            args_row.append("(none)", style="dim")
+        args = first.get("args") or {}
+        # Right-hand summary — one Static with newline-separated
+        # rows so the panel auto-grows to fit. Each arg key gets
+        # its own line so a Write's ``content`` isn't ellipsized
+        # off-screen behind ``file_path``. Labels dim, values
+        # weighted by importance: bold amber on the agent (first
+        # scan: who is this), bold cyan on the tool (the key
+        # decision input), dim on the arg values.
+        summary = Text(no_wrap=True, overflow="ellipsis")
+        summary.append("agent: ", style="dim")
+        summary.append(agent_label, style="bold #FFB000")
+        summary.append("\n")
+        summary.append("tool:  ", style="dim")
+        summary.append(tool_name, style="bold cyan")
+        if args:
+            label_width = max(len(str(k)) for k in args.keys()) + 1
+            for key, value in args.items():
+                s = value if isinstance(value, str) else repr(value)
+                summary.append("\n")
+                summary.append(
+                    f"{str(key) + ':':<{label_width + 1}} ",
+                    style="dim",
+                )
+                summary.append(_truncate(s, 200), style="white")
         try:
-            self.query_one("#perm-agent", Static).update(agent_row)
-            self.query_one("#perm-tool", Static).update(tool_row)
-            self.query_one("#perm-args", Static).update(args_row)
+            self.query_one("#perm-summary", Static).update(summary)
         except Exception:
             pass
         panel.add_class("active")
@@ -919,11 +944,10 @@ class MainApp(App):
             panel.remove_class("active")
         except Exception:
             return
-        for wid in ("#perm-agent", "#perm-tool", "#perm-args"):
-            try:
-                self.query_one(wid, Static).update("")
-            except Exception:
-                pass
+        try:
+            self.query_one("#perm-summary", Static).update("")
+        except Exception:
+            pass
         try:
             self.query_one("#chat-input", Input).focus()
         except Exception:
@@ -1296,17 +1320,6 @@ def _fmt_tokens(n: int) -> str:
     if n >= 1000:
         return f"{n / 1000:.1f}k"
     return str(n)
-
-
-def _args_preview(args: dict[str, Any]) -> str:
-    """One-line preview of tool args for the permission banner."""
-    if not args:
-        return ""
-    parts = []
-    for k, v in args.items():
-        s = str(v) if isinstance(v, str) else repr(v)
-        parts.append(f"{k}={_truncate(s, 60)}")
-    return ", ".join(parts)
 
 
 def _render_envelope_row(
