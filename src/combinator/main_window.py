@@ -41,7 +41,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 
@@ -179,7 +179,12 @@ class MainApp(App):
         padding: 0 1;
     }
     #tree-pane     { height: 45%; }
-    #activity-pane { height: 55%; }
+    #activity-pane {
+        height: 55%;
+        scrollbar-size: 1 1;
+        scrollbar-gutter: stable;
+    }
+    #activity-content { height: auto; }
     Tree {
         background: $surface;
         scrollbar-size: 1 1;
@@ -323,7 +328,11 @@ class MainApp(App):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield StatusTree("spawn tree", id="tree-pane")
-                yield Static("(no activity yet)", id="activity-pane")
+                # Activity-pane is a scrollable container so the feed
+                # can hold more rows than fit on screen; the actual
+                # content widget lives one level deeper.
+                with VerticalScroll(id="activity-pane"):
+                    yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
                 yield Static("", id="perm-banner")
@@ -717,11 +726,19 @@ class MainApp(App):
         banner.update("")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
-        """Cross-agent activity feed. Each row carries time, sender,
-        recipient, a kind tag (from ``headers["kind"]`` or inferred
-        from the body shape), an optional reply marker, and the body
-        preview. Diff-checked: skip render entirely when nothing
-        changed since the last tick."""
+        """Cross-agent activity feed. Renders one ``Text`` per row
+        with manual padding so the ``from → to`` column lines up
+        across rows even inside the narrow sidebar. The sender label
+        gets right-padded to the longest seen sender width so the
+        arrow is always at the same x.
+
+        Color treatment: sender / recipient labels keep their type
+        colors (cyan for ``@user``, magenta for agents, dim for
+        ``@system``); kind tags + body and timestamp are demoted to
+        dim by default so ``[error]`` (the only loud color) draws
+        the eye when it matters.
+
+        Diff-checked: skip render entirely when nothing changed."""
         sig = tuple(
             (r.get("ts"), r.get("from"), r.get("to"), r.get("in_reply_to"))
             for r in rows
@@ -729,48 +746,56 @@ class MainApp(App):
         if sig == self._activity_signature:
             return
         self._activity_signature = sig
-        pane = self.query_one("#activity-pane", Static)
-        from rich.console import Group as _Group
-        import time as _time
-
-        out: list[Any] = [Text("activity", style="bold"), Text("")]
+        content = self.query_one("#activity-content", Static)
+        pane = self.query_one("#activity-pane", VerticalScroll)
         if not rows:
-            out.append(Text("(no messages yet)", style="dim"))
-        else:
-            now = _time.time()
-            for r in rows:
-                src = r.get("from_label") or r.get("from") or "?"
-                dst = r.get("to_label") or r.get("to") or "?"
-                tag, body_preview = _classify_activity(
-                    r.get("body"),
-                    r.get("headers"),
-                    r.get("from"),
-                )
-                line = Text()
-                # Relative timestamp, right-padded to 4 cells so the
-                # sender column lines up across rows.
-                ts_str = _relative_time(r.get("ts"), now).rjust(4)
-                line.append(ts_str, style="dim")
+            content.update(Text("(no messages yet)", style="dim"))
+            return
+        import time as _time
+        from rich.console import Group as _Group
+
+        now = _time.time()
+        # Right-pad the sender column to the longest sender we see so
+        # the arrow always sits at the same x. Cap at a sane max so
+        # one outlier label doesn't waste half the pane.
+        max_src = min(
+            12,
+            max(
+                len(r.get("from_label") or r.get("from") or "?")
+                for r in rows
+            ),
+        )
+        lines: list[Any] = []
+        for r in rows:
+            src_id = r.get("from")
+            dst_id = r.get("to")
+            src = r.get("from_label") or src_id or "?"
+            dst = r.get("to_label") or dst_id or "?"
+            tag, body_preview = _classify_activity(
+                r.get("body"), r.get("headers"), src_id
+            )
+            line = Text(no_wrap=True, overflow="ellipsis")
+            line.append(_relative_time(r.get("ts"), now).rjust(4), style="dim")
+            line.append("  ")
+            # Right-pad the source label inside its own Text so the
+            # padding inherits dim/transparent style (not the label's
+            # color).
+            line.append(src[:max_src].rjust(max_src), style=_activity_label_style(src_id))
+            line.append(" → ", style="dim")
+            line.append(dst, style=_activity_label_style(dst_id))
+            if r.get("in_reply_to"):
+                line.append(" ↩", style="dim")
+            if tag != "msg":
                 line.append("  ")
-                line.append(src, style=_activity_label_style(r.get("from")))
-                line.append(" → ", style="dim")
-                line.append(dst, style=_activity_label_style(r.get("to")))
-                # Reply marker only when the envelope is part of a
-                # reply chain — distinguishes new threads from replies.
-                if r.get("in_reply_to"):
-                    line.append("  ↩", style="dim")
-                # Kind tag — colored short label so result/event/error
-                # stand out against ordinary msg traffic.
-                if tag != "msg":
-                    line.append("  ")
-                    line.append(
-                        f"[{tag}]",
-                        style=_KIND_STYLES.get(tag, "dim"),
-                    )
-                line.append("  ")
-                line.append(_truncate(body_preview, 120), style="dim")
-                out.append(line)
-        pane.update(_Group(*out))
+                line.append(f"[{tag}]", style=_KIND_STYLES.get(tag, "dim"))
+            line.append("  ")
+            line.append(body_preview, style="dim")
+            lines.append(line)
+        content.update(_Group(*lines))
+        # New content arrived — scroll to the end so the latest row is
+        # always in view by default. ``call_after_refresh`` waits for
+        # the layout to settle before measuring.
+        pane.call_after_refresh(pane.scroll_end, animate=False)
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
         """Stash the latest cost into instance state; the gutter
@@ -1067,13 +1092,14 @@ def _args_preview(args: dict[str, Any]) -> str:
 
 
 def _activity_label_style(addr_id: str | None) -> str:
-    """Color the sender/recipient label in the activity feed by kind:
-    cyan for the human user, magenta for an agent, dim for system."""
+    """Color the sender/recipient label in the activity feed. Plain
+    cyan / magenta (no bold) — saturated enough to parse the agent
+    flow at a glance, restrained enough to not dominate the feed."""
     if addr_id == "@user":
-        return "bold cyan"
+        return "cyan"
     if addr_id == "@system":
         return "dim"
-    return "bold magenta"
+    return "magenta"
 
 
 def _relative_time(ts: float | None, now: float) -> str:
@@ -1097,12 +1123,14 @@ def _relative_time(ts: float | None, now: float) -> str:
 
 # Body-shape classifier: maps an envelope body + ``headers["kind"]``
 # to a short tag we can show as a colored badge so the user can scan
-# the feed for results/events without reading bodies.
+# the feed for results/events without reading bodies. Only ``error``
+# is loud; everything else stays muted so it reads as ambient
+# metadata rather than a Christmas tree.
 _KIND_STYLES = {
     "msg":       "dim",
-    "result":    "bold green",
+    "result":    "dim green",
     "error":     "bold red",
-    "event":     "bold yellow",
+    "event":     "dim yellow",
     "system":    "dim cyan",
 }
 
