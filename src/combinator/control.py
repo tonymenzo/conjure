@@ -134,6 +134,11 @@ class ControlServer:
             return self._inboxes(int(request.get("limit", 20) or 20))
         if method == "sandbox":
             return self._sandbox(request.get("addr"), request.get("path"))
+        if method == "sandbox_recent":
+            return self._sandbox_recent(
+                request.get("addr"),
+                int(request.get("limit", 20) or 20),
+            )
         if method == "permissions":
             return self._permissions(request.get("addr"))
         if method == "resolve_permission":
@@ -316,6 +321,56 @@ class ControlServer:
             "content": content,
             "truncated": truncated,
         }
+
+    def _sandbox_recent(
+        self, addr_id: str | None, limit: int
+    ) -> dict[str, Any]:
+        """Walk the agent's sandbox and return the ``limit`` most
+        recently-modified files (newest first). Hidden files / dirs
+        (leading ``.``) are skipped. Capped at 10k files scanned so
+        an enormous sandbox can't hang the popup."""
+        from combinator.tools.filesystem import _sandbox_for
+
+        if not addr_id:
+            return {"ok": False, "error": "missing addr"}
+        addr = self.runtime.address_by_id(addr_id)
+        if addr is None:
+            return {"ok": False, "error": f"unknown addr: {addr_id}"}
+        record = self.runtime.record_for(addr)
+        sandbox = _sandbox_for(record, self.runtime)
+        if sandbox is None:
+            return {
+                "ok": False,
+                "error": "agent has no sandbox dir configured",
+            }
+        entries: list[tuple[float, str, int]] = []
+        scanned = 0
+        try:
+            for child in sandbox.rglob("*"):
+                scanned += 1
+                if scanned > 10_000:
+                    break
+                # Skip dotfiles and anything under a dot-directory —
+                # checked via any ancestor name starting with ``.``.
+                if any(part.startswith(".") for part in child.relative_to(sandbox).parts):
+                    continue
+                if not child.is_file():
+                    continue
+                try:
+                    st = child.stat()
+                except OSError:
+                    continue
+                entries.append(
+                    (st.st_mtime, str(child.relative_to(sandbox)), st.st_size)
+                )
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        entries.sort(key=lambda t: -t[0])
+        out = [
+            {"path": p, "mtime": mt, "size": sz}
+            for mt, p, sz in entries[:limit]
+        ]
+        return {"ok": True, "entries": out, "scanned": scanned}
 
     def _inboxes(self, limit: int) -> dict[str, Any]:
         """Every agent's recent inbox envelopes + conversation peers.
