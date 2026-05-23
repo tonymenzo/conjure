@@ -52,6 +52,21 @@ _SYSTEM_PROMPT_PATH = (
 )
 
 
+# Tools whose side effects can mutate the user's environment — file
+# writes, shell commands, system-state-changing operations. Default
+# permission is ``ask`` so the perm-banner surfaces them; explicit
+# per-agent ``spec.permissions[tool_name]`` always wins. Read-only
+# tools (Read, Glob, Grep, NotebookRead, WebFetch, WebSearch, etc.)
+# stay default-allow so navigation isn't interrupted.
+_ASK_BY_DEFAULT: frozenset[str] = frozenset({
+    "Bash",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Write",
+})
+
+
 @functools.cache
 def _load_default_system_template() -> string.Template:
     """Compile the templated system prompt from
@@ -118,7 +133,16 @@ class ClaudeAgentEngine:
         self._loop = runtime.get_shared_async_loop()
 
         async def can_use_tool(tool_name, args, ctx):  # type: ignore[no-untyped-def]
-            decision = (record.spec.permissions or {}).get(tool_name, "allow")
+            # Tools whose side effects can change the user's environment
+            # (filesystem writes, shell commands) default to ``ask`` so
+            # the perm-banner surfaces them — anyone who configured an
+            # explicit decision per agent in ``spec.permissions``
+            # overrides this. Read-only tools (Read, Glob, Grep, ...)
+            # keep the default-allow.
+            explicit = (record.spec.permissions or {}).get(tool_name)
+            decision = explicit or (
+                "ask" if tool_name in _ASK_BY_DEFAULT else "allow"
+            )
             if decision == "deny":
                 return PermissionResultDeny(
                     message=f"{tool_name} denied by agent permissions"
