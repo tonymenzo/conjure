@@ -83,6 +83,30 @@ _STATIC_STYLES = {
 _INITIAL_BACKLOG = 60
 
 
+def _resolve_build_hash() -> str:
+    """Best-effort short git hash for the running combinator install,
+    so the bottom gutter can show ``build XXXXXXX`` and the user can
+    confirm at a glance whether the TUI process picked up the latest
+    code. Falls back to empty string when the source tree isn't a git
+    repo (e.g., shipped via pip install)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent),
+             "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+_BUILD_HASH = _resolve_build_hash()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="combinator-main")
     parser.add_argument(
@@ -791,6 +815,13 @@ class MainApp(App):
             if len(left):
                 left.append("   ·   ", style="dim")
             left.append(model, style="dim cyan")
+        # Build-hash indicator so the user can verify they're running
+        # the freshly-restarted TUI, not a stale process from a prior
+        # ``combinator run``. Computed at module load.
+        if _BUILD_HASH:
+            if len(left):
+                left.append("   ·   ", style="dim")
+            left.append(f"build {_BUILD_HASH}", style="dim")
         # Auto-mode now surfaces as a dedicated banner above the
         # input (see #auto-banner), not in the gutter.
 
