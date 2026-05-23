@@ -244,7 +244,7 @@ class MainApp(App):
         border: round white;
     }
     Header {
-        background: $primary;
+        background: green;
     }
     """
 
