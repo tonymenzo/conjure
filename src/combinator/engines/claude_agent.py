@@ -160,6 +160,13 @@ class ClaudeAgentEngine:
                 return PermissionResultDeny(
                     message=f"{tool_name} denied by agent permissions"
                 )
+            # Session allow-list: when the user previously picked
+            # "Allow always" for this tool on this agent, short-
+            # circuit the prompt. Resets on ``combinator quit``.
+            if decision == "ask" and runtime.session_allow_contains(
+                record.addr, tool_name
+            ):
+                return PermissionResultAllow()
             # Auto-mode: ``ask`` decisions become silent allows. Deny
             # is still honored — auto-mode opens gates, never overrides
             # an explicit deny.

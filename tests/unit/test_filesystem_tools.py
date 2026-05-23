@@ -197,6 +197,41 @@ def test_permission_ask_resolved_to_deny(rt):
     assert result["out"]["code"] == "permission_denied"
 
 
+def test_session_allow_list_records_on_session_scope(rt):
+    """``resolve_permission(..., scope="session")`` records the
+    tool name in the per-agent session allow-list so the engine
+    can short-circuit future prompts. ``scope="once"`` (default)
+    does not."""
+    addr = rt.root(AgentSpec(role_prompt="r", label="root"))
+
+    # Initially the allow-list is empty.
+    assert rt.session_allow_contains(addr, "Bash") is False
+
+    # Resolve with scope=once → no allow-list change.
+    req = rt.submit_permission_request(
+        addr=addr, tool_name="Bash", args={"command": "ls"}
+    )
+    assert rt.resolve_permission(req.req_id, "allow", scope="once") is True
+    assert rt.session_allow_contains(addr, "Bash") is False
+
+    # Resolve with scope=session → allow-list records Bash.
+    req2 = rt.submit_permission_request(
+        addr=addr, tool_name="Bash", args={"command": "pwd"}
+    )
+    assert rt.resolve_permission(req2.req_id, "allow", scope="session") is True
+    assert rt.session_allow_contains(addr, "Bash") is True
+    # Per-tool: Edit isn't in the list.
+    assert rt.session_allow_contains(addr, "Edit") is False
+
+    # scope=session with decision=deny does NOT add to the list —
+    # only an allow-always grant should.
+    req3 = rt.submit_permission_request(
+        addr=addr, tool_name="Edit", args={"file_path": "/x"}
+    )
+    assert rt.resolve_permission(req3.req_id, "deny", scope="session") is True
+    assert rt.session_allow_contains(addr, "Edit") is False
+
+
 def test_no_sandbox_when_no_store_dir():
     """Without a runtime store_dir and no explicit sandbox_dir, FS
     tools refuse to run."""

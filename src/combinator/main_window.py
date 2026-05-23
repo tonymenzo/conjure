@@ -200,24 +200,39 @@ class PermissionPanel(Container):
     """Inline approval pane that lives at the bottom of the chat
     column, just above the input. Collapsed (``height: 0``) until a
     permission request lands; ``.active`` expands it to a small
-    bordered block showing the agent + tool + args plus two
-    colored-text choices ``Allow`` (green) and ``Deny`` (red).
-    Focus auto-lands on Allow when the panel opens; Left / Right
-    arrows hop focus between choices; Enter / Space confirms the
-    focused one. Splits the chat column naturally — the chat
-    history just shrinks by however many rows the panel takes.
+    bordered block split into two columns:
+
+    - Left: three vertically-stacked colored choices —
+      ``Allow`` (green, this call only), ``Allow always`` (amber,
+      auto-allow this tool for the rest of the session), and
+      ``Deny`` (red, refuse this call). Focus auto-lands on Allow
+      when the panel opens; ``Up`` / ``Down`` arrows hop focus
+      between choices; ``Enter`` / ``Space`` confirms the focused
+      one.
+    - Right: a three-line summary — ``agent: <label>``,
+      ``tool: <Name>``, ``args: <preview>`` — so the user can
+      verify *what* is being asked without scanning the rest of
+      the chat.
+
+    Splits the chat column naturally — the history just shrinks by
+    the panel's rows.
     """
 
     BINDINGS = [
-        Binding("left", "app.focus_previous", "Prev", show=False),
-        Binding("right", "app.focus_next", "Next", show=False),
+        Binding("up", "app.focus_previous", "Prev", show=False),
+        Binding("down", "app.focus_next", "Next", show=False),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="perm-line")
-        with Horizontal(id="perm-buttons"):
-            yield TextChoice("Allow", id="perm-allow")
-            yield TextChoice("Deny", id="perm-deny")
+        with Horizontal(id="perm-row"):
+            with Vertical(id="perm-choices"):
+                yield TextChoice("Allow", id="perm-allow")
+                yield TextChoice("Allow always", id="perm-allow-always")
+                yield TextChoice("Deny", id="perm-deny")
+            with Vertical(id="perm-summary"):
+                yield Static("", id="perm-agent")
+                yield Static("", id="perm-tool")
+                yield Static("", id="perm-args")
 
 
 class MainApp(App):
@@ -297,7 +312,9 @@ class MainApp(App):
         border: round white;
     }
     /* Inline permission-prompt panel — sits above the chat input,
-       splitting the chat column when a permission request arrives. */
+       splitting the chat column when a permission request arrives.
+       Two columns: stacked choices on the left, agent/tool/args
+       summary on the right. */
     #perm-panel {
         height: 0;
         background: ansi_default;
@@ -309,17 +326,30 @@ class MainApp(App):
         display: block;
         height: auto;
     }
-    #perm-line {
-        height: 1;
+    #perm-row {
+        height: 3;
         background: ansi_default;
-        color: $foreground;
     }
-    #perm-buttons {
+    #perm-choices {
+        width: 22;
+        height: 3;
+        background: ansi_default;
+    }
+    #perm-summary {
+        width: 1fr;
+        height: 3;
+        background: ansi_default;
+        padding-left: 2;
+    }
+    #perm-agent, #perm-tool, #perm-args {
         height: 1;
         background: ansi_default;
     }
     #perm-allow {
         color: #00FF41;
+    }
+    #perm-allow-always {
+        color: #FFB000;
     }
     #perm-deny {
         color: #FF4136;
@@ -454,7 +484,7 @@ class MainApp(App):
     def on_mount(self) -> None:
         tree = self.query_one("#tree-pane", StatusTree)
         # The synthetic "agents" root would render its own expand
-        # arrow next to iota's; hide it so the user sees only the
+        # arrow next to root's; hide it so the user sees only the
         # real agents (one arrow per agent that has children).
         tree.show_root = False
         # ``guides`` are the vertical lines tying parent → child;
@@ -467,7 +497,7 @@ class MainApp(App):
         self.set_interval(1.0, self.refresh_all)
         # Smooth status-dot pulse for active agents.
         self.set_interval(_PULSE_INTERVAL, self._tick_pulse)
-        # Pre-select iota in the tree (drives the chat pane) but land
+        # Pre-select root in the tree (drives the chat pane) but land
         # the cursor in the input box so the user can just start typing.
         self._select_root_if_available()
         self.query_one("#chat-input", Input).focus()
@@ -846,22 +876,33 @@ class MainApp(App):
         )
         tool_name = first.get("tool_name") or "?"
         args_preview = _args_preview(first.get("args") or {})
-        # One-line summary: ``{agent} wants to use {Tool}(args…)``.
-        # Bold the agent + tool, dim the args so the salient words
-        # land first even if the args wrap. Subtle by design.
-        line = Text(no_wrap=True, overflow="ellipsis")
-        line.append(agent_label, style="bold #FFB000")
-        line.append("  wants to use  ", style="dim")
-        line.append(tool_name, style="bold cyan")
+        # Right-hand summary: three labeled rows — agent / tool /
+        # args. Labels are dim so the values pop; values get
+        # appropriate weight (bold for the agent label since the
+        # user's first scan is "who is this", cyan-bold for the
+        # tool name since that's the key decision input).
+        agent_row = Text(no_wrap=True, overflow="ellipsis")
+        agent_row.append("agent: ", style="dim")
+        agent_row.append(agent_label, style="bold #FFB000")
+        tool_row = Text(no_wrap=True, overflow="ellipsis")
+        tool_row.append("tool:  ", style="dim")
+        tool_row.append(tool_name, style="bold cyan")
+        args_row = Text(no_wrap=True, overflow="ellipsis")
+        args_row.append("args:  ", style="dim")
         if args_preview:
-            line.append(f"({args_preview})", style="dim")
+            args_row.append(args_preview, style="dim")
+        else:
+            args_row.append("(none)", style="dim")
         try:
-            self.query_one("#perm-line", Static).update(line)
+            self.query_one("#perm-agent", Static).update(agent_row)
+            self.query_one("#perm-tool", Static).update(tool_row)
+            self.query_one("#perm-args", Static).update(args_row)
         except Exception:
             pass
         panel.add_class("active")
         # Land focus on Allow so a quick Enter approves; arrow keys
-        # hop to Deny when the user wants to refuse.
+        # hop down to Allow always / Deny when the user wants
+        # something else.
         try:
             self.query_one("#perm-allow", TextChoice).focus()
         except Exception:
@@ -870,7 +911,7 @@ class MainApp(App):
     def _collapse_perm_panel(self, panel: "PermissionPanel | None" = None) -> None:
         """Hide the inline panel and return focus to the chat input.
         Called both when the snapshot reports no pending and when
-        the user resolves via Allow/Deny."""
+        the user resolves via Allow / Allow always / Deny."""
         self._active_perm = None
         try:
             if panel is None:
@@ -878,10 +919,11 @@ class MainApp(App):
             panel.remove_class("active")
         except Exception:
             return
-        try:
-            self.query_one("#perm-line", Static).update("")
-        except Exception:
-            pass
+        for wid in ("#perm-agent", "#perm-tool", "#perm-args"):
+            try:
+                self.query_one(wid, Static).update("")
+            except Exception:
+                pass
         try:
             self.query_one("#chat-input", Input).focus()
         except Exception:
@@ -889,13 +931,19 @@ class MainApp(App):
 
     @on(TextChoice.Activated, "#perm-allow")
     def _on_perm_allow(self) -> None:
-        self._resolve_active_permission("allow")
+        self._resolve_active_permission("allow", scope="once")
+
+    @on(TextChoice.Activated, "#perm-allow-always")
+    def _on_perm_allow_always(self) -> None:
+        self._resolve_active_permission("allow", scope="session")
 
     @on(TextChoice.Activated, "#perm-deny")
     def _on_perm_deny(self) -> None:
-        self._resolve_active_permission("deny")
+        self._resolve_active_permission("deny", scope="once")
 
-    def _resolve_active_permission(self, decision: str) -> None:
+    def _resolve_active_permission(
+        self, decision: str, *, scope: str = "once"
+    ) -> None:
         req = self._active_perm
         if not req:
             return
@@ -904,6 +952,7 @@ class MainApp(App):
                 "resolve_permission",
                 req_id=req.get("req_id"),
                 decision=decision,
+                scope=scope,
             )
         except Exception:
             pass

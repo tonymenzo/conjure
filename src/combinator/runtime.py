@@ -161,6 +161,14 @@ class Runtime:
         # control RPC ``set_auto_mode``. Off by default — explicit
         # opt-in for the "trust me, just go" flow.
         self.auto_mode: bool = False
+        # Per-agent session allow-list: when the user picks "Allow
+        # always" on a permission prompt, the tool name lands here so
+        # the engine's ``can_use_tool`` callback can short-circuit
+        # future requests for that tool from that agent without
+        # prompting again. Keyed by Address (not just label) so two
+        # agents with the same label have independent allow-lists.
+        # Lives in memory only — clears on ``combinator quit``.
+        self._session_allow: dict[Address, set[str]] = {}
         # Shared asyncio loop + thread for engines that need a sync-
         # from-async bridge (currently ``ClaudeAgentEngine``). Started
         # lazily on first access; the runtime owns its lifetime so we
@@ -194,15 +202,34 @@ class Runtime:
             self._permission_requests[req.req_id] = req
         return req
 
-    def resolve_permission(self, req_id: str, decision: str) -> bool:
+    def resolve_permission(
+        self, req_id: str, decision: str, *, scope: str | None = None
+    ) -> bool:
         """Resolve a pending request. Returns False if the request
-        was never registered (or was already collected)."""
+        was never registered (or was already collected).
+
+        When ``scope="session"`` and ``decision="allow"``, the
+        tool name is added to the agent's session allow-list so
+        future calls of the same tool from that agent are silently
+        allowed. ``scope="once"`` (or ``None``) is the default.
+        """
         with self._permission_lock:
             req = self._permission_requests.pop(req_id, None)
+            if req is not None and decision == "allow" and scope == "session":
+                self._session_allow.setdefault(req.addr, set()).add(
+                    req.tool_name
+                )
         if req is None:
             return False
         req.resolve(decision)
         return True
+
+    def session_allow_contains(self, addr: Address, tool_name: str) -> bool:
+        """True if the user has previously picked "Allow always" for
+        ``tool_name`` on this agent. Engines short-circuit the perm
+        prompt when this returns True."""
+        with self._permission_lock:
+            return tool_name in self._session_allow.get(addr, set())
 
     def list_pending_permissions(
         self, *, addr: Address | None = None

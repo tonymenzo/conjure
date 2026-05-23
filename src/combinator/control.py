@@ -147,7 +147,9 @@ class ControlServer:
             return self._permissions(request.get("addr"))
         if method == "resolve_permission":
             return self._resolve_permission(
-                request.get("req_id"), request.get("decision")
+                request.get("req_id"),
+                request.get("decision"),
+                scope=request.get("scope"),
             )
         if method == "set_auto_mode":
             self.runtime.auto_mode = bool(request.get("on"))
@@ -214,13 +216,22 @@ class ControlServer:
         return result if isinstance(result, dict) else {"ok": True, "result": result}
 
     def _resolve_permission(
-        self, req_id: str | None, decision: str | None
+        self,
+        req_id: str | None,
+        decision: str | None,
+        *,
+        scope: str | None = None,
     ) -> dict[str, Any]:
         if not req_id:
             return {"ok": False, "error": "missing req_id"}
         if decision not in ("allow", "deny"):
             return {"ok": False, "error": "decision must be 'allow' or 'deny'"}
-        ok = self.runtime.resolve_permission(req_id, decision)
+        if scope not in (None, "once", "session"):
+            return {
+                "ok": False,
+                "error": "scope must be 'once' or 'session' when set",
+            }
+        ok = self.runtime.resolve_permission(req_id, decision, scope=scope)
         return {"ok": True, "resolved": ok}
 
     def _snapshot(self, addr_id: str | None) -> dict[str, Any]:
