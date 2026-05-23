@@ -83,28 +83,6 @@ _STATIC_STYLES = {
 _INITIAL_BACKLOG = 60
 
 
-def _resolve_build_hash() -> str:
-    """Best-effort short git hash for the running combinator install,
-    so the bottom gutter can show ``build XXXXXXX`` and the user can
-    confirm at a glance whether the TUI process picked up the latest
-    code. Falls back to empty string when the source tree isn't a git
-    repo (e.g., shipped via pip install)."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parent),
-             "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        if out.returncode == 0:
-            return out.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return ""
-
-
-_BUILD_HASH = _resolve_build_hash()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -404,15 +382,12 @@ class MainApp(App):
                 with activity_pane:
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
-                # Mode indicator: visible while select-mode (F5) is on
-                # so the user knows clicks pass through to the terminal.
-                # Hidden (height: 0) otherwise. Lives docked-top of
-                # the chat column so it doesn't displace the gutter.
-                yield Static("", id="select-indicator")
                 yield ChatView(id="chat-history")
-                # Auto-mode banner — docked just above the chat input
-                # so it's adjacent to where the user is typing. Hidden
-                # by default; toggles on with F6 / Ctrl+G.
+                # Mode indicators stack just above the chat input, in
+                # the spot where the user is looking when interacting.
+                # All three are hidden (height: 0) by default and
+                # reveal themselves when their toggle is on.
+                yield Static("", id="select-indicator")
                 yield Static("", id="auto-banner")
                 yield Static("", id="perm-banner")
                 yield Input(
@@ -815,13 +790,6 @@ class MainApp(App):
             if len(left):
                 left.append("   ·   ", style="dim")
             left.append(model, style="dim cyan")
-        # Build-hash indicator so the user can verify they're running
-        # the freshly-restarted TUI, not a stale process from a prior
-        # ``combinator run``. Computed at module load.
-        if _BUILD_HASH:
-            if len(left):
-                left.append("   ·   ", style="dim")
-            left.append(f"build {_BUILD_HASH}", style="dim")
         # Auto-mode now surfaces as a dedicated banner above the
         # input (see #auto-banner), not in the gutter.
 

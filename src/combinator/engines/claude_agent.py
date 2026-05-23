@@ -133,6 +133,19 @@ class ClaudeAgentEngine:
         self._loop = runtime.get_shared_async_loop()
 
         async def can_use_tool(tool_name, args, ctx):  # type: ignore[no-untyped-def]
+            # Diagnostic: emit a chat-log event every time the SDK
+            # consults us. If you're hitting Edit / Write / Bash and
+            # NOT seeing this event in the chat pane, the SDK isn't
+            # routing those tools through ``can_use_tool`` — typically
+            # means the CLI's ``permission_mode`` is auto-allowing
+            # them at the CLI layer before reaching the SDK.
+            self._emit_event(
+                {
+                    "kind": "perm_probe",
+                    "tool": tool_name,
+                    "explicit": (record.spec.permissions or {}).get(tool_name),
+                }
+            )
             # Tools whose side effects can change the user's environment
             # (filesystem writes, shell commands) default to ``ask`` so
             # the perm-banner surfaces them — anyone who configured an

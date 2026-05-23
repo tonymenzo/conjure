@@ -1058,6 +1058,22 @@ def _format_event(
         # the chat pane — not rendered inline as a block.
         return (None, ())
 
+    if kind == "perm_probe":
+        # Diagnostic: the SDK consulted ``can_use_tool`` for this
+        # tool. If you see this block but no perm-banner pops, the
+        # request was either short-circuited by auto-mode or the
+        # tool isn't in ``_ASK_BY_DEFAULT``. If you DON'T see this
+        # block when the agent runs Edit/Write/Bash, the SDK is
+        # auto-allowing those at the CLI layer before reaching us.
+        tool = event.get("tool", "?")
+        row = Text()
+        row.append("· perm probe ", style="dim")
+        row.append(str(tool), style="dim cyan")
+        explicit = event.get("explicit")
+        if explicit:
+            row.append(f"  [{explicit}]", style="dim")
+        return (row, ())
+
     if kind == "system_prompt":
         return (
             _system_prompt_block(
