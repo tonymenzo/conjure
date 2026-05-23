@@ -173,14 +173,13 @@ class MainApp(App):
     #sidebar.hidden {
         display: none;
     }
-    #tree-pane, #activity-pane, #cost-pane {
+    #tree-pane, #activity-pane {
         border: round $primary;
         background: $surface;
         padding: 0 1;
     }
-    #tree-pane     { height: 50%; }
-    #activity-pane { height: 30%; }
-    #cost-pane     { height: 20%; }
+    #tree-pane     { height: 45%; }
+    #activity-pane { height: 55%; }
     Tree {
         background: $surface;
         scrollbar-size: 1 1;
@@ -206,7 +205,7 @@ class MainApp(App):
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: $surface;
+        background: $surface-darken-1;
         color: $foreground;
     }
     #perm-banner {
@@ -305,9 +304,13 @@ class MainApp(App):
         # the same event loop as the panes, so a redundant update
         # every tick burns frame-budget that should be servicing
         # keystrokes.
-        self._cost_signature: tuple | None = None
         self._activity_signature: tuple | None = None
         self._permissions_signature: tuple | None = None
+        # Latest cost values, written by ``_apply_cost`` and read by
+        # ``_refresh_context_bar`` so the bottom status gutter shows
+        # cost + model + context usage as a single line.
+        self._cost_total: float | None = None
+        self._cost_has_sub: bool = False
         self._context_signature: tuple | None = None
         # Currently-displayed permission request for the selected
         # agent (None when no pending request). F3/F4 resolve this.
@@ -321,15 +324,17 @@ class MainApp(App):
             with Vertical(id="sidebar"):
                 yield StatusTree("spawn tree", id="tree-pane")
                 yield Static("(no activity yet)", id="activity-pane")
-                yield Static("(no costs yet)", id="cost-pane")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
-                yield Static("", id="context-bar")
                 yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
                 )
+        # Bottom status gutter — full width, below the sidebar/chat
+        # split. Renders cost + selected agent's model + the context-
+        # window meter on a single line.
+        yield Static("", id="context-bar")
 
     def on_mount(self) -> None:
         tree = self.query_one("#tree-pane", StatusTree)
@@ -612,27 +617,43 @@ class MainApp(App):
             self._addr_models[addr_id] = model
 
     def _refresh_context_bar(self) -> None:
-        """Render the model + context-window meter for the selected
-        agent. Diff-checked: skips re-render when nothing changed."""
+        """Render the unified status gutter at the bottom of the
+        screen: cost + model on the left, context-window meter pinned
+        to the right via a two-column ``Table.grid``. Diff-checked so
+        the gutter doesn't repaint every tick when nothing changed."""
         addr = self.selected_addr
         model = self._addr_models.get(addr) if addr else None
         ctx = self._addr_context.get(addr) if addr else None
-        sig = (addr, model, ctx)
+        cost = getattr(self, "_cost_total", None)
+        has_sub = bool(getattr(self, "_cost_has_sub", False))
+        sig = (addr, model, ctx, round(cost, 6) if cost is not None else None, has_sub)
         if sig == self._context_signature:
             return
         self._context_signature = sig
         bar = self.query_one("#context-bar", Static)
-        if not addr:
-            bar.update("")
-            return
-        line = Text()
+
+        left = Text()
+        if cost is not None:
+            left.append_text(Text.from_markup(_format_usd(cost)))
+            if has_sub:
+                left.append(" *", style="bold magenta")
         if model:
-            line.append(model, style="dim cyan")
-        if ctx is not None:
-            used, total = ctx
-            line.append("   ")
-            line.append(_render_token_bar(used, total))
-        bar.update(line)
+            if len(left):
+                left.append("   ·   ", style="dim")
+            left.append(model, style="dim cyan")
+
+        right = _render_token_bar(*ctx) if ctx is not None else Text("")
+
+        # Two-column grid: left flexes, right hugs its content and
+        # is right-justified so the token meter pins to the gutter's
+        # right edge regardless of width.
+        from rich.table import Table as _Table
+
+        grid = _Table.grid(expand=True)
+        grid.add_column(justify="left", no_wrap=True, overflow="ellipsis")
+        grid.add_column(justify="right", no_wrap=True)
+        grid.add_row(left, right)
+        bar.update(grid)
         # Refresh subtitle too — the model may have just become known.
         self._update_subtitle()
 
@@ -696,62 +717,66 @@ class MainApp(App):
         banner.update("")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
-        """Cross-agent activity feed. Diff-checked: skip the render
-        entirely if nothing changed since last tick (cheap path on
-        every tick when the agents are quiet)."""
+        """Cross-agent activity feed. Each row carries time, sender,
+        recipient, a kind tag (from ``headers["kind"]`` or inferred
+        from the body shape), an optional reply marker, and the body
+        preview. Diff-checked: skip render entirely when nothing
+        changed since the last tick."""
         sig = tuple(
-            (r.get("ts"), r.get("from"), r.get("to")) for r in rows
+            (r.get("ts"), r.get("from"), r.get("to"), r.get("in_reply_to"))
+            for r in rows
         )
         if sig == self._activity_signature:
             return
         self._activity_signature = sig
         pane = self.query_one("#activity-pane", Static)
         from rich.console import Group as _Group
+        import time as _time
 
         out: list[Any] = [Text("activity", style="bold"), Text("")]
         if not rows:
             out.append(Text("(no messages yet)", style="dim"))
         else:
+            now = _time.time()
             for r in rows:
                 src = r.get("from_label") or r.get("from") or "?"
                 dst = r.get("to_label") or r.get("to") or "?"
-                body = r.get("body")
-                body_repr = body if isinstance(body, str) else _short_repr(body, 80)
+                tag, body_preview = _classify_activity(
+                    r.get("body"),
+                    r.get("headers"),
+                    r.get("from"),
+                )
                 line = Text()
+                # Relative timestamp, right-padded to 4 cells so the
+                # sender column lines up across rows.
+                ts_str = _relative_time(r.get("ts"), now).rjust(4)
+                line.append(ts_str, style="dim")
+                line.append("  ")
                 line.append(src, style=_activity_label_style(r.get("from")))
                 line.append(" → ", style="dim")
                 line.append(dst, style=_activity_label_style(r.get("to")))
+                # Reply marker only when the envelope is part of a
+                # reply chain — distinguishes new threads from replies.
+                if r.get("in_reply_to"):
+                    line.append("  ↩", style="dim")
+                # Kind tag — colored short label so result/event/error
+                # stand out against ordinary msg traffic.
+                if tag != "msg":
+                    line.append("  ")
+                    line.append(
+                        f"[{tag}]",
+                        style=_KIND_STYLES.get(tag, "dim"),
+                    )
                 line.append("  ")
-                line.append(_truncate(str(body_repr), 80), style="dim")
+                line.append(_truncate(body_preview, 120), style="dim")
                 out.append(line)
         pane.update(_Group(*out))
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
-        """Minimal cost pane: just the running total. A trailing
-        ``*`` marks the total when any agent runs on a subscription
-        (claude_agent engine)."""
-        total = float(cost.get("total", 0.0) or 0.0)
-        has_sub = bool(cost.get("has_subscription_agent"))
-        sig = (round(total, 6), has_sub)
-        if sig == self._cost_signature:
-            return
-        self._cost_signature = sig
-        cost_pane = self.query_one("#cost-pane", Static)
-        from rich.console import Group as _Group
-
-        total_line = Text.from_markup(_format_usd(total))
-        if has_sub:
-            total_line.append(" *", style="bold magenta")
-        rows: list[Any] = [
-            Text("cost", style="bold"),
-            Text(""),
-            total_line,
-        ]
-        if has_sub:
-            rows.append(
-                Text("* claude_agent (subscription)", style="dim magenta")
-            )
-        cost_pane.update(_Group(*rows))
+        """Stash the latest cost into instance state; the gutter
+        (``_refresh_context_bar``) does the actual rendering."""
+        self._cost_total = float(cost.get("total", 0.0) or 0.0)
+        self._cost_has_sub = bool(cost.get("has_subscription_agent"))
 
     # ----- selection / chat pane swap -----
 
@@ -809,13 +834,23 @@ class MainApp(App):
     def _swap_chat_to(self, *, addr: str, label: str) -> None:
         """Bind the chat pane to a new agent: stop the old tail,
         clear ChatView, replay the agent's recent backlog, then start
-        a fresh tail."""
+        a fresh tail.
+
+        Snappy refresh: re-render the bottom gutter immediately so
+        the model + cached context bar flip in the same frame as the
+        swap. ``refresh_all`` is also triggered (by the caller) to
+        pull a fresh context-window reading from the daemon."""
         if addr == self.selected_addr:
             return
         self.selected_addr = addr
         self.selected_label = label
         self._pending_user_echoes = 0
         self._update_subtitle()
+        # Force the gutter to repaint for the new agent right away.
+        # Reset the diff signature so any cached values for the new
+        # addr land in the same frame as the tree highlight.
+        self._context_signature = None
+        self._refresh_context_bar()
 
         view = self.query_one(ChatView)
         view.reset()
@@ -1039,6 +1074,79 @@ def _activity_label_style(addr_id: str | None) -> str:
     if addr_id == "@system":
         return "dim"
     return "bold magenta"
+
+
+def _relative_time(ts: float | None, now: float) -> str:
+    """``ts`` → ``"3s"`` / ``"1m"`` / ``"2h"`` / ``"1d"``. Returns
+    ``""`` when ``ts`` is missing/invalid. Width is bounded at 4
+    chars so the column lines up cleanly."""
+    if ts is None:
+        return ""
+    try:
+        delta = max(0.0, now - float(ts))
+    except (TypeError, ValueError):
+        return ""
+    if delta < 60:
+        return f"{int(delta)}s"
+    if delta < 3600:
+        return f"{int(delta // 60)}m"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h"
+    return f"{int(delta // 86400)}d"
+
+
+# Body-shape classifier: maps an envelope body + ``headers["kind"]``
+# to a short tag we can show as a colored badge so the user can scan
+# the feed for results/events without reading bodies.
+_KIND_STYLES = {
+    "msg":       "dim",
+    "result":    "bold green",
+    "error":     "bold red",
+    "event":     "bold yellow",
+    "system":    "dim cyan",
+}
+
+
+def _classify_activity(
+    body: Any, headers: dict[str, str] | None, from_id: str | None
+) -> tuple[str, str]:
+    """Pick a (tag, body_preview) pair for one activity row.
+
+    Priority:
+    1. ``headers["kind"]`` from the sender's ``Send(kind=...)`` arg.
+    2. ``body["kind"] == "child_event"`` — runtime supervision.
+    3. ``body["ok"] is False`` — tool/RPC failure.
+    4. ``body["ok"] is True`` and a ``result`` field — RPC reply.
+    5. Fallback ``"msg"``.
+
+    The preview is shaped to the chosen tag so common structured
+    shapes don't render as ``{'kind': 'child_event', ...}``."""
+    hdr_kind = (headers or {}).get("kind") if isinstance(headers, dict) else None
+    if isinstance(body, dict):
+        body_kind = body.get("kind") if isinstance(body.get("kind"), str) else None
+        if body_kind == "child_event":
+            event = body.get("event") or "?"
+            child = body.get("child_label") or body.get("child_addr") or ""
+            if event == "batch_terminated":
+                count = body.get("count", "?")
+                return ("event", f"batch_terminated × {count}")
+            tail = f": {child}" if child else ""
+            return ("event", f"{event}{tail}")
+        if body.get("ok") is False:
+            code = body.get("code") or "error"
+            msg = body.get("error") or ""
+            return ("error", f"{code}: {msg}" if msg else str(code))
+        if body.get("ok") is True and "result" in body:
+            return ("result", _short_repr(body.get("result"), 120))
+    if hdr_kind and hdr_kind != "msg":
+        # Caller tagged it (e.g. ``Send(kind="result")``) — believe them.
+        preview = body if isinstance(body, str) else _short_repr(body, 120)
+        return (hdr_kind, str(preview))
+    if from_id == "@system":
+        preview = body if isinstance(body, str) else _short_repr(body, 120)
+        return ("system", str(preview))
+    preview = body if isinstance(body, str) else _short_repr(body, 120)
+    return ("msg", str(preview))
 
 
 if __name__ == "__main__":

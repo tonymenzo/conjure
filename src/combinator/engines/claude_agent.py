@@ -104,6 +104,12 @@ class ClaudeAgentEngine:
         self._stream_emit = stream_emit
         self._cost_used: float = 0.0
         self._uses_subscription: bool = _detect_subscription()
+        # Actual model the SDK reports on the last AssistantMessage —
+        # populated lazily from the response stream so we surface the
+        # *real* id (e.g. ``claude-haiku-4-5-20251001``) rather than
+        # the alias (``"haiku"``) or ``None`` (when the root falls
+        # through to the CLI default).
+        self._observed_model: str | None = None
 
         # Shared sync-from-async bridge: every claude_agent engine in
         # the runtime posts onto the same event loop. Cuts N children's
@@ -253,8 +259,14 @@ class ClaudeAgentEngine:
         return self._cost_used
 
     def model_name(self) -> str | None:
-        """Best-effort model identifier from the SDK options. Falls
-        back to ``None`` when the SDK uses its CLI default."""
+        """Best-effort model identifier. Prefers the value the SDK
+        actually reports on its last ``AssistantMessage`` (the real
+        model id, including version suffix) over the alias passed
+        to the options (e.g. ``"haiku"``). Falls back to the option
+        value, and finally ``None`` when neither is known."""
+        observed = getattr(self, "_observed_model", None)
+        if isinstance(observed, str) and observed:
+            return observed
         return getattr(self._options, "model", None) if hasattr(self, "_options") else None
 
     def context_usage(self) -> tuple[int, int] | None:
@@ -288,17 +300,27 @@ class ClaudeAgentEngine:
         except Exception:
             self._context_fetch_in_flight = False
             return
-        used = (
-            getattr(usage, "tokens_used", None)
-            or getattr(usage, "input_tokens", None)
-            or getattr(usage, "used_tokens", None)
-        )
-        total = (
-            getattr(usage, "tokens_max", None)
-            or getattr(usage, "context_window", None)
-            or getattr(usage, "max_tokens", None)
-            or 200_000
-        )
+        # The SDK returns a ``TypedDict`` (i.e. a plain ``dict``), so
+        # we read keys with ``.get()``. The older code used
+        # ``getattr`` which always returned ``None`` on a dict — that
+        # was the bug that kept the context bar empty.
+        def _pick(*keys: str) -> Any:
+            if isinstance(usage, dict):
+                for k in keys:
+                    v = usage.get(k)
+                    if v is not None:
+                        return v
+                return None
+            for k in keys:
+                v = getattr(usage, k, None)
+                if v is not None:
+                    return v
+            return None
+
+        used = _pick("totalTokens", "tokens_used", "input_tokens", "used_tokens")
+        total = _pick(
+            "maxTokens", "tokens_max", "context_window", "max_tokens"
+        ) or 200_000
         try:
             if used is not None:
                 self._last_context = (int(used), int(total))
@@ -351,6 +373,9 @@ class ClaudeAgentEngine:
             await self._client.query(prompt)
             async for msg in self._client.receive_response():
                 if isinstance(msg, AssistantMessage):
+                    observed = getattr(msg, "model", None)
+                    if isinstance(observed, str) and observed:
+                        self._observed_model = observed
                     text = _extract_text(msg)
                     if text:
                         self._emit_chunk(text)

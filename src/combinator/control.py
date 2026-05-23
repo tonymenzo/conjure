@@ -128,7 +128,7 @@ class ControlServer:
         if method == "snapshot":
             return self._snapshot(request.get("addr"))
         if method == "activity":
-            return self._activity(int(request.get("limit", 12) or 12))
+            return self._activity(int(request.get("limit", 24) or 24))
         if method == "inboxes":
             return self._inboxes(int(request.get("limit", 20) or 20))
         if method == "sandbox":
@@ -215,7 +215,7 @@ class ControlServer:
         per tick is cheaper than separate ones."""
         tree_reply = self._tree()
         cost_reply = self._cost()
-        activity_reply = self._activity(12)
+        activity_reply = self._activity(24)
         permissions_reply = self._permissions(addr_id)
         result: dict[str, Any] = {
             "ok": True,
@@ -412,6 +412,8 @@ class ControlServer:
                         "to": rec.addr.id,
                         "to_label": rec.addr.label,
                         "body": e.body,
+                        "headers": dict(e.headers) if e.headers else {},
+                        "in_reply_to": e.in_reply_to,
                     }
                 )
         rows.sort(key=lambda r: r.get("ts") or 0)

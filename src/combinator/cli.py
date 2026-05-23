@@ -250,18 +250,21 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
         chat pane is the primary interface; the ``o`` keypress in
         the main window creates a dedicated window on-demand.
 
-        The first event written to every agent's log is its
-        ``system_prompt`` — the role prompt it was spawned with —
+        For *child* agents, the first event written is their
+        ``system_prompt`` — the role prompt they were spawned with —
         so the chat pane opens with that initialization context as
-        the first visible block."""
+        the first visible block. The root agent is skipped: its
+        role prompt is the user's own configuration, not something
+        the user needs to see echoed back inside its own chat."""
         log_path = agents_dir / f"{record.addr.id}.jsonl"
         record.event_log = EventLog(log_path)
-        record.event_log.emit(
-            make_system_prompt_event(
-                text=record.spec.role_prompt or "",
-                label=record.spec.label or record.addr.label,
+        if record.parent is not None:
+            record.event_log.emit(
+                make_system_prompt_event(
+                    text=record.spec.role_prompt or "",
+                    label=record.spec.label or record.addr.label,
+                )
             )
-        )
 
     def event_log_router(record: AgentRecord) -> EventLog | None:
         return record.event_log
