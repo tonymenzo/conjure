@@ -253,6 +253,20 @@ class MainApp(App):
     #select-indicator.active {
         height: 1;
     }
+    /* Auto-mode banner — sits right above the chat input so it's
+       unmissable while permissions are auto-approved. Hidden until
+       the user flips F6 / Ctrl+G. Not docked so it stacks above
+       the chat-input and perm-banner via natural Vertical flow. */
+    #auto-banner {
+        height: 0;
+        background: #5F0000;
+        color: white;
+        padding: 0 1;
+        text-style: bold;
+    }
+    #auto-banner.active {
+        height: 1;
+    }
     Header {
         background: #1B4D3E;
     }
@@ -372,6 +386,10 @@ class MainApp(App):
                 # the chat column so it doesn't displace the gutter.
                 yield Static("", id="select-indicator")
                 yield ChatView(id="chat-history")
+                # Auto-mode banner — docked just above the chat input
+                # so it's adjacent to where the user is typing. Hidden
+                # by default; toggles on with F6 / Ctrl+G.
+                yield Static("", id="auto-banner")
                 yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
@@ -429,6 +447,27 @@ class MainApp(App):
 
     def action_refresh(self) -> None:
         self.refresh_all()
+
+    def _sync_auto_banner(self) -> None:
+        """Mirror ``self._auto_mode`` onto the dedicated banner widget
+        above the chat input. When on, a single bold row reads
+        ``● AUTO-APPROVE — F6 to disable`` against a dark-red bg so
+        it can't be confused with any other status."""
+        try:
+            banner = self.query_one("#auto-banner", Static)
+        except Exception:
+            return
+        on = bool(getattr(self, "_auto_mode", False))
+        if on:
+            body = Text()
+            body.append("● ", style="bold #FFFF00")
+            body.append("AUTO-APPROVE", style="bold #FFFF00")
+            body.append("  ·  permissions auto-allowed  ·  F6 to disable")
+            banner.update(body)
+            banner.set_class(True, "active")
+        else:
+            banner.update("")
+            banner.set_class(False, "active")
 
     def action_toggle_auto_mode(self) -> None:
         """Flip the daemon's ``auto_mode`` flag. When on, ``ask``
@@ -730,11 +769,13 @@ class MainApp(App):
         ctx = self._addr_context.get(addr) if addr else None
         cost = getattr(self, "_cost_total", None)
         has_sub = bool(getattr(self, "_cost_has_sub", False))
-        auto_mode = bool(getattr(self, "_auto_mode", False))
+        # Sync the auto-mode banner separately — its visibility tracks
+        # ``self._auto_mode`` rather than going through the gutter.
+        self._sync_auto_banner()
         sig = (
             addr, model, ctx,
             round(cost, 6) if cost is not None else None,
-            has_sub, auto_mode,
+            has_sub,
         )
         if sig == self._context_signature:
             return
@@ -750,10 +791,8 @@ class MainApp(App):
             if len(left):
                 left.append("   ·   ", style="dim")
             left.append(model, style="dim cyan")
-        if auto_mode:
-            if len(left):
-                left.append("   ·   ", style="dim")
-            left.append("AUTO", style="bold yellow")
+        # Auto-mode now surfaces as a dedicated banner above the
+        # input (see #auto-banner), not in the gutter.
 
         right = _render_token_bar(*ctx) if ctx is not None else Text("")
 
@@ -771,16 +810,26 @@ class MainApp(App):
         self._update_subtitle()
 
     def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
-        """Show the first pending permission for the selected agent
-        as a banner above the input. Diff-checked."""
-        if self.selected_addr is None:
-            mine: list[dict[str, Any]] = []
-        else:
-            mine = [p for p in pending if p.get("addr") == self.selected_addr]
-        first = mine[0] if mine else None
+        """Show the first pending permission as a banner above the
+        input. Permissions from *any* agent are surfaced — not just
+        the currently-selected one — so a request from a background
+        worker doesn't sit silently waiting. F3/F4 resolve by
+        ``req_id``, which is agent-agnostic. Diff-checked."""
+        # Prefer pendings on the currently-selected agent (so they
+        # render at the top), but fall back to any other agent's
+        # pending so cross-agent requests are still surfaced.
+        mine: list[dict[str, Any]] = []
+        others: list[dict[str, Any]] = []
+        for p in pending:
+            if self.selected_addr and p.get("addr") == self.selected_addr:
+                mine.append(p)
+            else:
+                others.append(p)
+        first = (mine + others)[0] if (mine or others) else None
         sig = (
             first.get("req_id") if first else None,
             first.get("tool_name") if first else None,
+            first.get("addr") if first else None,
         )
         if sig == self._permissions_signature:
             self._active_perm = first
@@ -794,8 +843,15 @@ class MainApp(App):
             return
         self._active_perm = first
         args_preview = _args_preview(first.get("args") or {})
+        agent_label = (
+            self._addr_labels.get(first.get("addr"))
+            or first.get("addr")
+            or "?"
+        )
         body = Text()
         body.append("PERMISSION REQUEST  ", style="bold magenta")
+        body.append(agent_label, style="bold magenta")
+        body.append("  ·  ", style="dim")
         body.append(first.get("tool_name", "?"), style="bold cyan")
         body.append(f"({args_preview})", style="dim cyan")
         body.append("    ")

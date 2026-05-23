@@ -404,7 +404,14 @@ class ClaudeAgentEngine:
         # AssistantMessages stream in; ``thinking_end`` removes the
         # status widget when the turn finishes (success or failure).
         self._emit_event({"kind": "thinking_start"})
-        turn_tokens_in = 0
+        # ``turn_tokens_out`` accumulates *output* tokens across all
+        # AssistantMessages in this turn (each one is unique new
+        # generation, so summing is meaningful). ``turn_tokens_in``
+        # is intentionally *not* accumulated — Anthropic's API
+        # echoes the whole conversation as input_tokens on each
+        # subsequent call within a turn, so summing them double-
+        # counts. The per-turn UI shows only output tokens; the
+        # bottom gutter's context-window meter covers input.
         turn_tokens_out = 0
         try:
             await self._client.query(prompt)
@@ -414,14 +421,13 @@ class ClaudeAgentEngine:
                     if isinstance(observed, str) and observed:
                         self._observed_model = observed
                     usage = getattr(msg, "usage", None) or {}
-                    delta_in, delta_out = _extract_usage(usage)
-                    if delta_in or delta_out:
-                        turn_tokens_in += delta_in
+                    _, delta_out = _extract_usage(usage)
+                    if delta_out:
                         turn_tokens_out += delta_out
                         self._emit_event(
                             {
                                 "kind": "usage",
-                                "tokens_in": turn_tokens_in,
+                                "tokens_in": 0,
                                 "tokens_out": turn_tokens_out,
                             }
                         )
