@@ -493,13 +493,10 @@ class MainApp(App):
 
     def action_toggle_auto_mode(self) -> None:
         """Flip the daemon's ``auto_mode`` flag. When on, ``ask``
-        tool decisions are auto-allowed without surfacing the perm-
-        banner — the "trust me, just go" mode for fast iteration.
-        Status is reflected in the bottom gutter (``AUTO``) and a
-        transient toast confirms the toggle so the user knows the
-        keybinding actually fired (some tmux configs intercept F6;
-        if the toast doesn't appear, try ``Ctrl+G``).
-        """
+        tool decisions are silently allowed (no permission panel).
+        The bottom gutter's ``auto mode on`` marker is the sole
+        confirmation; failures (RPC error, daemon refusal) still
+        toast so a broken toggle isn't silent."""
         new_state = not bool(getattr(self, "_auto_mode", False))
         try:
             reply = self.client.call("set_auto_mode", on=new_state)
@@ -520,11 +517,6 @@ class MainApp(App):
         # Force the gutter to repaint with the new flag.
         self._context_signature = None
         self._refresh_context_bar()
-        self.notify(
-            f"auto-mode {'ON' if self._auto_mode else 'OFF'}",
-            severity="information",
-            timeout=2,
-        )
 
     def action_open_in_window(self) -> None:
         """Open the selected agent in a dedicated fullscreen chat window.
