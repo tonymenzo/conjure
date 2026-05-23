@@ -131,13 +131,13 @@ class ChatView(VerticalScroll):
 
     DEFAULT_CSS = """
     ChatView {
-        background: $surface;
+        background: ansi_default;
         padding: 1 2;
         scrollbar-size: 1 1;
         scrollbar-gutter: stable;
-        scrollbar-background: $surface;
-        scrollbar-background-hover: $surface;
-        scrollbar-background-active: $surface;
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
         scrollbar-color: $primary-darken-2;
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $accent;
@@ -335,10 +335,10 @@ class ChatApp(App):
 
     CSS = """
     Screen {
-        background: $surface;
-        scrollbar-background: $surface;
-        scrollbar-background-hover: $surface;
-        scrollbar-background-active: $surface;
+        background: ansi_default;
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
         scrollbar-color: $primary-darken-2;
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $accent;

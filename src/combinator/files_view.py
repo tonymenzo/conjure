@@ -110,11 +110,11 @@ class FilesApp(App):
     """File browser for any agent's sandbox."""
 
     CSS = """
-    Screen { background: $surface; }
+    Screen { background: ansi_default; }
     #left { width: 28%; }
     #agents-pane, #files-pane, #recent-pane, #preview-pane {
         border: round $primary;
-        background: $surface;
+        background: ansi_default;
         padding: 0 1;
     }
     /* Focused pane gets an accent-colored border so the active panel
@@ -133,16 +133,16 @@ class FilesApp(App):
         overflow-y: auto;
         scrollbar-size: 1 1;
         scrollbar-gutter: stable;
-        scrollbar-background: $surface;
+        scrollbar-background: ansi_default;
         scrollbar-color: $primary-darken-2;
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $accent;
     }
-    Tree { background: $surface; }
+    Tree { background: ansi_default; }
     #agents-pane > .tree--cursor,
     #files-pane > .tree--cursor,
     #recent-pane > .tree--cursor {
-        background: $surface;
+        background: ansi_default;
         text-style: bold underline;
     }
     /* Search input docked at the bottom, hidden until ``/`` opens it. */

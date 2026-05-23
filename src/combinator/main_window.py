@@ -158,11 +158,11 @@ class MainApp(App):
 
     CSS = """
     Screen {
-        background: $surface;
+        background: ansi_default;
         scrollbar-size: 1 1;
-        scrollbar-background: $surface;
-        scrollbar-background-hover: $surface;
-        scrollbar-background-active: $surface;
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
         scrollbar-color: $primary-darken-2;
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $accent;
@@ -175,7 +175,7 @@ class MainApp(App):
     }
     #tree-pane, #activity-pane {
         border: round $primary;
-        background: $surface;
+        background: ansi_default;
         padding: 0 1;
     }
     #tree-pane     { height: 45%; }
@@ -186,23 +186,23 @@ class MainApp(App):
     }
     #activity-content { height: auto; }
     Tree {
-        background: $surface;
+        background: ansi_default;
         scrollbar-size: 1 1;
     }
     #tree-pane > .tree--cursor {
-        background: $surface;
+        background: ansi_default;
         text-style: underline;
     }
     #tree-pane:focus > .tree--cursor {
-        background: $surface;
+        background: ansi_default;
         text-style: bold underline;
     }
     #tree-pane > .tree--highlight,
     #tree-pane > .tree--highlight-line {
-        background: $surface;
+        background: ansi_default;
     }
     ChatView {
-        background: $surface;
+        background: ansi_default;
         scrollbar-size: 1 1;
         border: none;
     }
@@ -217,7 +217,7 @@ class MainApp(App):
         dock: bottom;
         height: auto;
         padding: 0 1;
-        background: $surface;
+        background: ansi_default;
         color: $foreground;
         display: none;
         border: round magenta;
