@@ -41,9 +41,8 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
-from textual.widgets import Header, Input, Label, Static, Tree
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Header, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from combinator.chat import ChatView
@@ -157,85 +156,29 @@ def _current_tmux_session() -> str | None:
     return out.stdout.strip() or None
 
 
-class PermissionPromptScreen(ModalScreen[str]):
-    """Centered approval dialog for an ``ask``-mode tool call. Push
-    one onto the screen stack when a permission request lands; the
-    user picks Allow (F3 / a / y / Enter) or Deny (F4 / d / n / Esc)
-    and the screen dismisses with the decision string."""
-
-    DEFAULT_CSS = """
-    PermissionPromptScreen {
-        align: center middle;
-        background: black 50%;
-    }
-    #perm-dialog {
-        width: 72;
-        max-width: 90%;
-        height: auto;
-        background: $surface;
-        border: thick #FFB000;
-        padding: 1 2;
-    }
-    #perm-title {
-        text-style: bold;
-        color: #FFB000;
-        content-align: center middle;
-        margin-bottom: 1;
-    }
-    #perm-tool {
-        text-style: bold;
-        color: $foreground;
-    }
-    #perm-args {
-        color: $text-muted;
-        margin-bottom: 1;
-    }
-    #perm-hint {
-        color: $text-muted;
-        content-align: center middle;
-        margin-top: 1;
-    }
+class PermissionPanel(Container):
+    """Inline approval pane that lives at the bottom of the chat
+    column, just above the input. Collapsed (``height: 0``) until a
+    permission request lands; ``.active`` expands it to a small
+    bordered block showing the agent, tool, and args, plus
+    ``[ Allow ]`` / ``[ Deny ]`` buttons. Focus auto-lands on
+    Allow when the panel opens; Left / Right arrows cycle focus
+    between buttons; Enter activates the focused button. Splits
+    the chat area naturally — the chat history shrinks by however
+    many rows the panel takes — instead of overlaying a modal
+    dialog on top of everything.
     """
 
     BINDINGS = [
-        Binding("f3,enter,a,y", "decide('allow')", "Allow"),
-        Binding("f4,d,n,escape", "decide('deny')", "Deny"),
+        Binding("left", "app.focus_previous", "Prev", show=False),
+        Binding("right", "app.focus_next", "Next", show=False),
     ]
 
-    def __init__(
-        self,
-        *,
-        req_id: str,
-        agent_label: str,
-        tool_name: str,
-        args_preview: str,
-    ) -> None:
-        super().__init__()
-        self.req_id = req_id
-        self._agent_label = agent_label
-        self._tool_name = tool_name
-        self._args_preview = args_preview
-
     def compose(self) -> ComposeResult:
-        with Vertical(id="perm-dialog"):
-            yield Label(
-                f"Permission request · {self._agent_label}",
-                id="perm-title",
-            )
-            yield Static(self._tool_name, id="perm-tool")
-            if self._args_preview:
-                yield Static(self._args_preview, id="perm-args")
-            yield Static(
-                Text.from_markup(
-                    "[bold green][F3] allow[/]    "
-                    "[bold red][F4] deny[/]    "
-                    "[dim](enter/a/y · esc/d/n)[/]"
-                ),
-                id="perm-hint",
-            )
-
-    def action_decide(self, decision: str) -> None:
-        self.dismiss(decision)
+        yield Static("", id="perm-line")
+        with Horizontal(id="perm-buttons"):
+            yield Button("Allow", id="perm-allow", variant="success")
+            yield Button("Deny", id="perm-deny", variant="error")
 
 
 class MainApp(App):
@@ -324,6 +267,33 @@ class MainApp(App):
     #select-indicator.active {
         height: 1;
     }
+    /* Inline permission-prompt panel — sits above the chat input,
+       splitting the chat column when a permission request arrives. */
+    #perm-panel {
+        height: 0;
+        background: ansi_default;
+        border: round #FFB000;
+        padding: 0 1;
+        display: none;
+    }
+    #perm-panel.active {
+        display: block;
+        height: auto;
+    }
+    #perm-line {
+        height: 1;
+        background: ansi_default;
+        color: $foreground;
+    }
+    #perm-buttons {
+        height: 3;
+        align: left middle;
+        background: ansi_default;
+    }
+    #perm-allow, #perm-deny {
+        margin-right: 2;
+        min-width: 12;
+    }
     Header {
         background: #1B4D3E;
     }
@@ -331,19 +301,21 @@ class MainApp(App):
 
     BINDINGS = [
         Binding("f2", "toggle_sidebar", "Toggle sidebar"),
-        Binding("f3", "permission_allow", "Allow", show=False),
-        Binding("f4", "permission_deny", "Deny", show=False),
         Binding("f5", "toggle_select_mode", "Select"),
-        Binding("f6", "toggle_internal", "Show internal", show=False),
+        # ``F6`` toggles auto-mode (silently allow every ``ask``
+        # tool decision); ``Ctrl+G`` is the fallback for terminals
+        # or tmux configs that intercept F6. Previously F6 was
+        # *also* bound to ``toggle_internal`` (hidden diagnostic
+        # for showing combinator-internal agents in the tree),
+        # which won precedence and made auto-mode look broken;
+        # ``toggle_internal`` is now on ``Ctrl+I``.
+        Binding("f6", "toggle_auto_mode", "Auto", show=True),
+        Binding("ctrl+g", "toggle_auto_mode", "Auto", show=False),
+        Binding("ctrl+i", "toggle_internal", "Show internal", show=False),
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
         Binding("r", "refresh", "Refresh", show=False),
-        # Both F6 and Ctrl+G map to the same auto-mode toggle. Some
-        # terminals / tmux configs intercept F6, so the Ctrl+G fallback
-        # ensures the toggle is always reachable.
-        Binding("f6", "toggle_auto_mode", "Auto", show=True),
-        Binding("ctrl+g", "toggle_auto_mode", "Auto", show=False),
     ]
 
     def __init__(
@@ -415,13 +387,11 @@ class MainApp(App):
         self._cost_total: float | None = None
         self._cost_has_sub: bool = False
         self._context_signature: tuple | None = None
-        # Currently-displayed permission request (None when no
-        # pending request is being prompted). Tracked alongside the
-        # ``PermissionPromptScreen`` instance so we don't stack
-        # multiple modals when the snapshot fires faster than the
-        # user resolves.
+        # Currently-displayed permission request (None when the
+        # inline panel is collapsed). The panel is reused across
+        # requests — we just rewrite its content when ``req_id``
+        # changes, never tear down the widget.
         self._active_perm: dict[str, Any] | None = None
-        self._perm_screen: PermissionPromptScreen | None = None
 
     # ----- compose -----
 
@@ -442,12 +412,13 @@ class MainApp(App):
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
+                # Inline permission-prompt panel — collapsed by
+                # default; expands above the chat input when a
+                # permission request arrives. Splits the chat column
+                # naturally instead of overlaying a modal.
+                yield PermissionPanel(id="perm-panel")
                 # Select-mode indicator sits just above the chat input
                 # so the F5 state is visible from the cursor's column.
-                # The auto-mode marker lives in the bottom gutter; the
-                # permission popup is a modal screen (push on pending,
-                # dismiss on resolve), so neither needs its own row
-                # here.
                 yield Static("", id="select-indicator")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
@@ -848,15 +819,14 @@ class MainApp(App):
         self._update_subtitle()
 
     def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
-        """Push a ``PermissionPromptScreen`` modal for the first
-        pending request, dismiss it when no requests remain. Any
-        agent's pending request surfaces — not just the selected
-        one — so a background worker blocked on Edit/Write/Bash
-        always gets the user's attention.
+        """Drive the inline ``#perm-panel`` from the snapshot's
+        pending list. Any agent's request surfaces — preferring the
+        selected one so the prompt labels the agent the user is
+        already reading. When the snapshot says nothing is pending,
+        the panel collapses; when a fresh request lands, the panel
+        expands and focus auto-jumps to the Allow button so a quick
+        ``Enter`` approves.
         """
-        # Prefer pendings on the currently-selected agent (so the
-        # modal labels the agent the user is actively reading),
-        # falling back to any other agent's pending request.
         mine: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
         for p in pending:
@@ -871,82 +841,86 @@ class MainApp(App):
             first.get("addr") if first else None,
         )
         if sig == self._permissions_signature:
-            self._active_perm = first
             return
         self._permissions_signature = sig
+        try:
+            panel = self.query_one("#perm-panel", PermissionPanel)
+        except Exception:
+            return
         if first is None:
-            # Server says no pending — dismiss any modal we still
-            # have up. The user may have resolved through some other
-            # path; we just sync visual state to truth.
-            self._active_perm = None
-            screen = self._perm_screen
-            if screen is not None:
-                self._perm_screen = None
-                try:
-                    screen.dismiss(None)
-                except Exception:
-                    pass
+            self._collapse_perm_panel(panel)
             return
-        # If we're already prompting for this same request, don't
-        # re-push. Same req_id ⇒ same modal stays put.
-        if (
-            self._perm_screen is not None
-            and self._active_perm is not None
-            and self._active_perm.get("req_id") == first.get("req_id")
-        ):
-            return
-        # Dismiss any stale modal (different req_id) before pushing
-        # the fresh one.
-        if self._perm_screen is not None:
-            stale = self._perm_screen
-            self._perm_screen = None
-            try:
-                stale.dismiss(None)
-            except Exception:
-                pass
         self._active_perm = first
         agent_label = (
             self._addr_labels.get(first.get("addr"))
             or first.get("addr")
             or "?"
         )
-        modal = PermissionPromptScreen(
-            req_id=first.get("req_id") or "",
-            agent_label=agent_label,
-            tool_name=first.get("tool_name") or "?",
-            args_preview=_args_preview(first.get("args") or {}),
-        )
-        self._perm_screen = modal
-        self.push_screen(modal, self._on_perm_decision)
+        tool_name = first.get("tool_name") or "?"
+        args_preview = _args_preview(first.get("args") or {})
+        # One-line summary: ``{agent} wants to use {Tool}(args…)``.
+        # Bold the agent + tool, dim the args so the salient words
+        # land first even if the args wrap. Subtle by design.
+        line = Text(no_wrap=True, overflow="ellipsis")
+        line.append(agent_label, style="bold #FFB000")
+        line.append("  wants to use  ", style="dim")
+        line.append(tool_name, style="bold cyan")
+        if args_preview:
+            line.append(f"({args_preview})", style="dim")
+        try:
+            self.query_one("#perm-line", Static).update(line)
+        except Exception:
+            pass
+        panel.add_class("active")
+        # Land focus on Allow so a stray Enter approves the safer
+        # default; arrow keys hop to Deny.
+        try:
+            self.query_one("#perm-allow", Button).focus()
+        except Exception:
+            pass
 
-    def _on_perm_decision(self, decision: str | None) -> None:
-        """Callback fired when the permission modal dismisses. ``None``
-        means the modal was dismissed by code (e.g. snapshot saw the
-        request already gone), so we don't call resolve_permission
-        in that case."""
-        screen = self._perm_screen
-        self._perm_screen = None
-        req = self._active_perm
+    def _collapse_perm_panel(self, panel: "PermissionPanel | None" = None) -> None:
+        """Hide the inline panel and return focus to the chat input.
+        Called both when the snapshot reports no pending and when
+        the user resolves via Allow/Deny."""
         self._active_perm = None
-        if decision in ("allow", "deny") and req is not None:
-            try:
-                self.client.call(
-                    "resolve_permission",
-                    req_id=req.get("req_id"),
-                    decision=decision,
-                )
-            except Exception:
-                pass
-        # Force the next snapshot to repaint permission state cleanly.
+        try:
+            if panel is None:
+                panel = self.query_one("#perm-panel", PermissionPanel)
+            panel.remove_class("active")
+        except Exception:
+            return
+        try:
+            self.query_one("#perm-line", Static).update("")
+        except Exception:
+            pass
+        try:
+            self.query_one("#chat-input", Input).focus()
+        except Exception:
+            pass
+
+    @on(Button.Pressed, "#perm-allow")
+    def _on_perm_allow(self) -> None:
+        self._resolve_active_permission("allow")
+
+    @on(Button.Pressed, "#perm-deny")
+    def _on_perm_deny(self) -> None:
+        self._resolve_active_permission("deny")
+
+    def _resolve_active_permission(self, decision: str) -> None:
+        req = self._active_perm
+        if not req:
+            return
+        try:
+            self.client.call(
+                "resolve_permission",
+                req_id=req.get("req_id"),
+                decision=decision,
+            )
+        except Exception:
+            pass
         self._permissions_signature = None
-
-    def action_permission_allow(self) -> None:
-        if self._perm_screen is not None:
-            self._perm_screen.action_decide("allow")
-
-    def action_permission_deny(self) -> None:
-        if self._perm_screen is not None:
-            self._perm_screen.action_decide("deny")
+        self._collapse_perm_panel()
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
         """Unified activity feed. Each row is one of:
