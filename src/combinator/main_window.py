@@ -42,7 +42,8 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Header, Input, Static, Tree
+from textual.screen import ModalScreen
+from textual.widgets import Header, Input, Label, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from combinator.chat import ChatView
@@ -156,6 +157,87 @@ def _current_tmux_session() -> str | None:
     return out.stdout.strip() or None
 
 
+class PermissionPromptScreen(ModalScreen[str]):
+    """Centered approval dialog for an ``ask``-mode tool call. Push
+    one onto the screen stack when a permission request lands; the
+    user picks Allow (F3 / a / y / Enter) or Deny (F4 / d / n / Esc)
+    and the screen dismisses with the decision string."""
+
+    DEFAULT_CSS = """
+    PermissionPromptScreen {
+        align: center middle;
+        background: black 50%;
+    }
+    #perm-dialog {
+        width: 72;
+        max-width: 90%;
+        height: auto;
+        background: $surface;
+        border: thick #FFB000;
+        padding: 1 2;
+    }
+    #perm-title {
+        text-style: bold;
+        color: #FFB000;
+        content-align: center middle;
+        margin-bottom: 1;
+    }
+    #perm-tool {
+        text-style: bold;
+        color: $foreground;
+    }
+    #perm-args {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    #perm-hint {
+        color: $text-muted;
+        content-align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("f3,enter,a,y", "decide('allow')", "Allow"),
+        Binding("f4,d,n,escape", "decide('deny')", "Deny"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        req_id: str,
+        agent_label: str,
+        tool_name: str,
+        args_preview: str,
+    ) -> None:
+        super().__init__()
+        self.req_id = req_id
+        self._agent_label = agent_label
+        self._tool_name = tool_name
+        self._args_preview = args_preview
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="perm-dialog"):
+            yield Label(
+                f"Permission request · {self._agent_label}",
+                id="perm-title",
+            )
+            yield Static(self._tool_name, id="perm-tool")
+            if self._args_preview:
+                yield Static(self._args_preview, id="perm-args")
+            yield Static(
+                Text.from_markup(
+                    "[bold green][F3] allow[/]    "
+                    "[bold red][F4] deny[/]    "
+                    "[dim](enter/a/y · esc/d/n)[/]"
+                ),
+                id="perm-hint",
+            )
+
+    def action_decide(self, decision: str) -> None:
+        self.dismiss(decision)
+
+
 class MainApp(App):
 
     CSS = """
@@ -223,19 +305,6 @@ class MainApp(App):
         background: $surface-darken-1;
         color: $foreground;
     }
-    #perm-banner {
-        dock: bottom;
-        height: auto;
-        padding: 0 1;
-        background: ansi_default;
-        color: $foreground;
-        display: none;
-        border: round magenta;
-        text-style: bold;
-    }
-    #perm-banner.active {
-        display: block;
-    }
     #chat-input {
         dock: bottom;
         border: round #00FF41;
@@ -253,20 +322,6 @@ class MainApp(App):
         padding: 0 1;
     }
     #select-indicator.active {
-        height: 1;
-    }
-    /* Auto-mode banner — sits right above the chat input so it's
-       unmissable while permissions are auto-approved. Hidden until
-       the user flips F6 / Ctrl+G. Not docked so it stacks above
-       the chat-input and perm-banner via natural Vertical flow. */
-    #auto-banner {
-        height: 0;
-        background: #5F0000;
-        color: white;
-        padding: 0 1;
-        text-style: bold;
-    }
-    #auto-banner.active {
         height: 1;
     }
     Header {
@@ -360,9 +415,13 @@ class MainApp(App):
         self._cost_total: float | None = None
         self._cost_has_sub: bool = False
         self._context_signature: tuple | None = None
-        # Currently-displayed permission request for the selected
-        # agent (None when no pending request). F3/F4 resolve this.
+        # Currently-displayed permission request (None when no
+        # pending request is being prompted). Tracked alongside the
+        # ``PermissionPromptScreen`` instance so we don't stack
+        # multiple modals when the snapshot fires faster than the
+        # user resolves.
         self._active_perm: dict[str, Any] | None = None
+        self._perm_screen: PermissionPromptScreen | None = None
 
     # ----- compose -----
 
@@ -383,13 +442,13 @@ class MainApp(App):
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
-                # Mode indicators stack just above the chat input, in
-                # the spot where the user is looking when interacting.
-                # All three are hidden (height: 0) by default and
-                # reveal themselves when their toggle is on.
+                # Select-mode indicator sits just above the chat input
+                # so the F5 state is visible from the cursor's column.
+                # The auto-mode marker lives in the bottom gutter; the
+                # permission popup is a modal screen (push on pending,
+                # dismiss on resolve), so neither needs its own row
+                # here.
                 yield Static("", id="select-indicator")
-                yield Static("", id="auto-banner")
-                yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
                     id="chat-input",
@@ -446,27 +505,6 @@ class MainApp(App):
 
     def action_refresh(self) -> None:
         self.refresh_all()
-
-    def _sync_auto_banner(self) -> None:
-        """Mirror ``self._auto_mode`` onto the dedicated banner widget
-        above the chat input. When on, a single bold row reads
-        ``● AUTO-APPROVE — F6 to disable`` against a dark-red bg so
-        it can't be confused with any other status."""
-        try:
-            banner = self.query_one("#auto-banner", Static)
-        except Exception:
-            return
-        on = bool(getattr(self, "_auto_mode", False))
-        if on:
-            body = Text()
-            body.append("● ", style="bold #FFFF00")
-            body.append("AUTO-APPROVE", style="bold #FFFF00")
-            body.append("  ·  permissions auto-allowed  ·  F6 to disable")
-            banner.update(body)
-            banner.set_class(True, "active")
-        else:
-            banner.update("")
-            banner.set_class(False, "active")
 
     def action_toggle_auto_mode(self) -> None:
         """Flip the daemon's ``auto_mode`` flag. When on, ``ask``
@@ -759,7 +797,7 @@ class MainApp(App):
 
     def _refresh_context_bar(self) -> None:
         """Render the unified status gutter at the bottom of the
-        screen: cost + model (+ auto-mode flag) on the left, context-
+        screen: cost + model + auto-mode marker on the left, context-
         window meter pinned to the right via a two-column
         ``Table.grid``. Diff-checked so the gutter doesn't repaint
         every tick when nothing changed."""
@@ -768,13 +806,12 @@ class MainApp(App):
         ctx = self._addr_context.get(addr) if addr else None
         cost = getattr(self, "_cost_total", None)
         has_sub = bool(getattr(self, "_cost_has_sub", False))
-        # Sync the auto-mode banner separately — its visibility tracks
-        # ``self._auto_mode`` rather than going through the gutter.
-        self._sync_auto_banner()
+        auto = bool(getattr(self, "_auto_mode", False))
         sig = (
             addr, model, ctx,
             round(cost, 6) if cost is not None else None,
             has_sub,
+            auto,
         )
         if sig == self._context_signature:
             return
@@ -790,8 +827,10 @@ class MainApp(App):
             if len(left):
                 left.append("   ·   ", style="dim")
             left.append(model, style="dim cyan")
-        # Auto-mode now surfaces as a dedicated banner above the
-        # input (see #auto-banner), not in the gutter.
+        if auto:
+            if len(left):
+                left.append("   ·   ", style="dim")
+            left.append("auto mode on", style="bold yellow")
 
         right = _render_token_bar(*ctx) if ctx is not None else Text("")
 
@@ -809,14 +848,15 @@ class MainApp(App):
         self._update_subtitle()
 
     def _apply_permissions(self, pending: list[dict[str, Any]]) -> None:
-        """Show the first pending permission as a banner above the
-        input. Permissions from *any* agent are surfaced — not just
-        the currently-selected one — so a request from a background
-        worker doesn't sit silently waiting. F3/F4 resolve by
-        ``req_id``, which is agent-agnostic. Diff-checked."""
-        # Prefer pendings on the currently-selected agent (so they
-        # render at the top), but fall back to any other agent's
-        # pending so cross-agent requests are still surfaced.
+        """Push a ``PermissionPromptScreen`` modal for the first
+        pending request, dismiss it when no requests remain. Any
+        agent's pending request surfaces — not just the selected
+        one — so a background worker blocked on Edit/Write/Bash
+        always gets the user's attention.
+        """
+        # Prefer pendings on the currently-selected agent (so the
+        # modal labels the agent the user is actively reading),
+        # falling back to any other agent's pending request.
         mine: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
         for p in pending:
@@ -834,55 +874,79 @@ class MainApp(App):
             self._active_perm = first
             return
         self._permissions_signature = sig
-        banner = self.query_one("#perm-banner", Static)
         if first is None:
+            # Server says no pending — dismiss any modal we still
+            # have up. The user may have resolved through some other
+            # path; we just sync visual state to truth.
             self._active_perm = None
-            banner.set_class(False, "active")
-            banner.update("")
+            screen = self._perm_screen
+            if screen is not None:
+                self._perm_screen = None
+                try:
+                    screen.dismiss(None)
+                except Exception:
+                    pass
             return
+        # If we're already prompting for this same request, don't
+        # re-push. Same req_id ⇒ same modal stays put.
+        if (
+            self._perm_screen is not None
+            and self._active_perm is not None
+            and self._active_perm.get("req_id") == first.get("req_id")
+        ):
+            return
+        # Dismiss any stale modal (different req_id) before pushing
+        # the fresh one.
+        if self._perm_screen is not None:
+            stale = self._perm_screen
+            self._perm_screen = None
+            try:
+                stale.dismiss(None)
+            except Exception:
+                pass
         self._active_perm = first
-        args_preview = _args_preview(first.get("args") or {})
         agent_label = (
             self._addr_labels.get(first.get("addr"))
             or first.get("addr")
             or "?"
         )
-        body = Text()
-        body.append("PERMISSION REQUEST  ", style="bold magenta")
-        body.append(agent_label, style="bold magenta")
-        body.append("  ·  ", style="dim")
-        body.append(first.get("tool_name", "?"), style="bold cyan")
-        body.append(f"({args_preview})", style="dim cyan")
-        body.append("    ")
-        body.append("[F3] allow", style="bold green")
-        body.append("    ")
-        body.append("[F4] deny", style="bold red")
-        banner.update(body)
-        banner.set_class(True, "active")
+        modal = PermissionPromptScreen(
+            req_id=first.get("req_id") or "",
+            agent_label=agent_label,
+            tool_name=first.get("tool_name") or "?",
+            args_preview=_args_preview(first.get("args") or {}),
+        )
+        self._perm_screen = modal
+        self.push_screen(modal, self._on_perm_decision)
+
+    def _on_perm_decision(self, decision: str | None) -> None:
+        """Callback fired when the permission modal dismisses. ``None``
+        means the modal was dismissed by code (e.g. snapshot saw the
+        request already gone), so we don't call resolve_permission
+        in that case."""
+        screen = self._perm_screen
+        self._perm_screen = None
+        req = self._active_perm
+        self._active_perm = None
+        if decision in ("allow", "deny") and req is not None:
+            try:
+                self.client.call(
+                    "resolve_permission",
+                    req_id=req.get("req_id"),
+                    decision=decision,
+                )
+            except Exception:
+                pass
+        # Force the next snapshot to repaint permission state cleanly.
+        self._permissions_signature = None
 
     def action_permission_allow(self) -> None:
-        self._resolve_active_permission("allow")
+        if self._perm_screen is not None:
+            self._perm_screen.action_decide("allow")
 
     def action_permission_deny(self) -> None:
-        self._resolve_active_permission("deny")
-
-    def _resolve_active_permission(self, decision: str) -> None:
-        req = self._active_perm
-        if not req:
-            return
-        try:
-            self.client.call(
-                "resolve_permission",
-                req_id=req.get("req_id"),
-                decision=decision,
-            )
-        except Exception:
-            pass
-        # Hide the banner immediately — the next snapshot will confirm.
-        self._active_perm = None
-        banner = self.query_one("#perm-banner", Static)
-        banner.set_class(False, "active")
-        banner.update("")
+        if self._perm_screen is not None:
+            self._perm_screen.action_decide("deny")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
         """Unified activity feed. Each row is one of:

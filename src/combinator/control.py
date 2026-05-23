@@ -232,7 +232,13 @@ class ControlServer:
         cost_reply = self._cost()
         activity_reply = self._activity(80)
         log_events_reply = self._log_events(20)
-        permissions_reply = self._permissions(addr_id)
+        # Return every agent's pending permissions, not just the
+        # selected one — a child agent blocked on Edit/Write/Bash
+        # while the user is reading the parent's chat would otherwise
+        # sit silently waiting. The UI picks the request to prompt
+        # for (preferring the selected agent so the modal labels the
+        # one the user is reading).
+        permissions_reply = self._permissions(None)
         result: dict[str, Any] = {
             "ok": True,
             "tree": tree_reply.get("tree"),
