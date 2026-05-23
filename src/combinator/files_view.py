@@ -113,16 +113,16 @@ class FilesApp(App):
     Screen { background: ansi_default; }
     #left { width: 28%; }
     #agents-pane, #files-pane, #recent-pane, #preview-pane {
-        border: round $primary;
+        border: round ansi_default;
         background: ansi_default;
         padding: 0 1;
     }
-    /* Focused pane gets an accent-colored border so the active panel
-       is unmistakable — VerticalScroll has no built-in cursor, so
-       without this the focus is invisible when it lands on preview. */
+    /* Focused pane brightens to white so the active panel is
+       unmistakable. VerticalScroll has no built-in cursor; without
+       this rule, focus on the preview pane is invisible. */
     #agents-pane:focus, #files-pane:focus,
     #recent-pane:focus, #preview-pane:focus {
-        border: round $accent;
+        border: round white;
     }
     /* Three stacked panels on the left; preview fills the right. */
     #agents-pane  { height: 18%; }

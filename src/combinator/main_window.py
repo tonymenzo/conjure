@@ -174,9 +174,17 @@ class MainApp(App):
         display: none;
     }
     #tree-pane, #activity-pane {
-        border: round $primary;
+        border: round ansi_default;
         background: ansi_default;
         padding: 0 1;
+    }
+    /* Focused pane gets a brighter border so the active panel is
+       visible at a glance regardless of which widget kind sits in
+       it (Tree has its own cursor underline; VerticalScroll has
+       no built-in indicator, so without this Shift+Tab onto the
+       activity feed looked like a no-op). */
+    #tree-pane:focus, #activity-pane:focus {
+        border: round white;
     }
     #tree-pane     { height: 45%; }
     #activity-pane {
