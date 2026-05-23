@@ -345,7 +345,7 @@ class ChatApp(App):
     }
     Input {
         dock: bottom;
-        border: round green;
+        border: round #00FF41;
         background: ansi_default;
         margin: 0;
     }
@@ -353,7 +353,7 @@ class ChatApp(App):
         border: round white;
     }
     Header {
-        background: green;
+        background: #00FF41;
         color: $text;
     }
     """

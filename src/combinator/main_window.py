@@ -174,7 +174,7 @@ class MainApp(App):
         display: none;
     }
     #tree-pane, #activity-pane {
-        border: round green;
+        border: round #00FF41;
         background: ansi_default;
         padding: 0 1;
     }
@@ -236,7 +236,7 @@ class MainApp(App):
     }
     #chat-input {
         dock: bottom;
-        border: round green;
+        border: round #00FF41;
         background: ansi_default;
         margin: 0;
     }
@@ -244,7 +244,7 @@ class MainApp(App):
         border: round white;
     }
     Header {
-        background: green;
+        background: #00FF41;
     }
     """
 

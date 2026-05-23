@@ -148,7 +148,7 @@ class FilesApp(App):
     /* Search input docked at the bottom, hidden until ``/`` opens it. */
     #search-input {
         dock: bottom;
-        border: round green;
+        border: round #00FF41;
         background: ansi_default;
         margin: 0;
         display: none;
@@ -157,8 +157,8 @@ class FilesApp(App):
         border: round white;
     }
     #search-input.active { display: block; }
-    Header { background: green; }
-    Footer { background: green; }
+    Header { background: #00FF41; }
+    Footer { background: #00FF41; }
     """
 
     BINDINGS = [
