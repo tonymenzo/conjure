@@ -39,7 +39,14 @@ class EventLog:
         self._closed = False
 
     def emit(self, event: dict[str, Any]) -> None:
-        """Append one event as a single JSONL line. No-op after close."""
+        """Append one event as a single JSONL line. No-op after close.
+
+        Injects ``ts`` (wall-clock seconds) when the caller didn't
+        supply one. This is what lets the activity feed merge tool
+        events (sourced from these logs) with envelope events
+        (sourced from inbox seqs) on a single time-sorted timeline."""
+        if "ts" not in event:
+            event = {**event, "ts": time.time()}
         line = json.dumps(event, default=str, ensure_ascii=False) + "\n"
         with self._lock:
             if self._closed:

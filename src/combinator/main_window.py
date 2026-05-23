@@ -486,7 +486,15 @@ class MainApp(App):
                 return
             self._apply_tree(reply.get("tree"))
             self._apply_cost(reply.get("cost") or {})
-            self._apply_activity(reply.get("activity") or [])
+            # Merge envelope activity + tool events on a single
+            # time-sorted feed so the activity pane shows the full
+            # picture (agent ↔ agent traffic + each agent's local
+            # tool invocations) rather than just messages.
+            merged = _merge_feed(
+                reply.get("activity") or [],
+                reply.get("log_events") or [],
+            )
+            self._apply_activity(merged)
             self._apply_permissions(reply.get("pending_permissions") or [])
             self._apply_context(reply.get("context"))
             self._refresh_context_bar()
@@ -726,21 +734,23 @@ class MainApp(App):
         banner.update("")
 
     def _apply_activity(self, rows: list[dict[str, Any]]) -> None:
-        """Cross-agent activity feed. Renders one ``Text`` per row
-        with manual padding so the ``from → to`` column lines up
-        across rows even inside the narrow sidebar. The sender label
-        gets right-padded to the longest seen sender width so the
-        arrow is always at the same x.
+        """Unified activity feed. Each row is one of:
 
-        Color treatment: sender / recipient labels keep their type
-        colors (cyan for ``@user``, magenta for agents, dim for
-        ``@system``); kind tags + body and timestamp are demoted to
-        dim by default so ``[error]`` (the only loud color) draws
-        the eye when it matters.
+        - ``_kind == "envelope"`` — a message between agents:
+          ``ts  src → dst  [kind]  body``
+        - ``_kind == "tool_call"`` — an agent invoked a tool:
+          ``ts  src    ● ToolName``
+        - ``_kind == "tool_result"`` — a tool returned (success/fail):
+          ``ts  src    ⎿ ✓`` / ``⎿ ✗ summary``
 
-        Diff-checked: skip render entirely when nothing changed."""
+        All rows share the same ``ts`` / sender padding so the eye
+        scans the same column for *who is doing what*. Sender labels
+        keep their type colors (cyan @user / magenta agent / dim
+        @system); body + metadata are dim; ``[error]`` and failed
+        tool results are the only loud colors. Diff-checked."""
         sig = tuple(
-            (r.get("ts"), r.get("from"), r.get("to"), r.get("in_reply_to"))
+            (r.get("ts"), r.get("from"), r.get("to"), r.get("_kind"),
+             r.get("tool"), r.get("failed"), r.get("in_reply_to"))
             for r in rows
         )
         if sig == self._activity_signature:
@@ -749,15 +759,12 @@ class MainApp(App):
         content = self.query_one("#activity-content", Static)
         pane = self.query_one("#activity-pane", VerticalScroll)
         if not rows:
-            content.update(Text("(no messages yet)", style="dim"))
+            content.update(Text("(no activity yet)", style="dim"))
             return
         import time as _time
         from rich.console import Group as _Group
 
         now = _time.time()
-        # Right-pad the sender column to the longest sender we see so
-        # the arrow always sits at the same x. Cap at a sane max so
-        # one outlier label doesn't waste half the pane.
         max_src = min(
             12,
             max(
@@ -767,34 +774,16 @@ class MainApp(App):
         )
         lines: list[Any] = []
         for r in rows:
-            src_id = r.get("from")
-            dst_id = r.get("to")
-            src = r.get("from_label") or src_id or "?"
-            dst = r.get("to_label") or dst_id or "?"
-            tag, body_preview = _classify_activity(
-                r.get("body"), r.get("headers"), src_id
-            )
-            line = Text(no_wrap=True, overflow="ellipsis")
-            line.append(_relative_time(r.get("ts"), now).rjust(4), style="dim")
-            line.append("  ")
-            # Right-pad the source label inside its own Text so the
-            # padding inherits dim/transparent style (not the label's
-            # color).
-            line.append(src[:max_src].rjust(max_src), style=_activity_label_style(src_id))
-            line.append(" → ", style="dim")
-            line.append(dst, style=_activity_label_style(dst_id))
-            if r.get("in_reply_to"):
-                line.append(" ↩", style="dim")
-            if tag != "msg":
-                line.append("  ")
-                line.append(f"[{tag}]", style=_KIND_STYLES.get(tag, "dim"))
-            line.append("  ")
-            line.append(body_preview, style="dim")
-            lines.append(line)
+            kind = r.get("_kind", "envelope")
+            if kind == "envelope":
+                lines.append(_render_envelope_row(r, max_src, now))
+            elif kind == "tool_call":
+                lines.append(_render_tool_call_row(r, max_src, now))
+            elif kind == "tool_result":
+                lines.append(_render_tool_result_row(r, max_src, now))
+            # Unknown kinds are silently dropped — better than
+            # rendering garbage into the feed.
         content.update(_Group(*lines))
-        # New content arrived — scroll to the end so the latest row is
-        # always in view by default. ``call_after_refresh`` waits for
-        # the layout to settle before measuring.
         pane.call_after_refresh(pane.scroll_end, animate=False)
 
     def _apply_cost(self, cost: dict[str, Any]) -> None:
@@ -1089,6 +1078,115 @@ def _args_preview(args: dict[str, Any]) -> str:
         s = str(v) if isinstance(v, str) else repr(v)
         parts.append(f"{k}={_truncate(s, 60)}")
     return ", ".join(parts)
+
+
+def _render_envelope_row(
+    r: dict[str, Any], max_src: int, now: float
+) -> Text:
+    """``ts  src → dst  [kind]  body`` — one envelope between agents."""
+    src_id = r.get("from")
+    dst_id = r.get("to")
+    src = r.get("from_label") or src_id or "?"
+    dst = r.get("to_label") or dst_id or "?"
+    tag, body_preview = _classify_activity(
+        r.get("body"), r.get("headers"), src_id
+    )
+    line = Text(no_wrap=True, overflow="ellipsis")
+    line.append(_relative_time(r.get("ts"), now).rjust(4), style="dim")
+    line.append("  ")
+    line.append(
+        src[:max_src].rjust(max_src), style=_activity_label_style(src_id)
+    )
+    line.append(" → ", style="dim")
+    line.append(dst, style=_activity_label_style(dst_id))
+    if r.get("in_reply_to"):
+        line.append(" ↩", style="dim")
+    if tag != "msg":
+        line.append("  ")
+        line.append(f"[{tag}]", style=_KIND_STYLES.get(tag, "dim"))
+    line.append("  ")
+    line.append(body_preview, style="dim")
+    return line
+
+
+def _render_tool_call_row(
+    r: dict[str, Any], max_src: int, now: float
+) -> Text:
+    """``ts  src       ● ToolName`` — an agent called a tool. The
+    sender column is the same width as in envelope rows so tool
+    invocations line up with messages from the same agent — you
+    can scan a column straight down to see one agent's activity."""
+    src_id = r.get("from")
+    src = r.get("from_label") or src_id or "?"
+    tool = r.get("tool") or "?"
+    line = Text(no_wrap=True, overflow="ellipsis")
+    line.append(_relative_time(r.get("ts"), now).rjust(4), style="dim")
+    line.append("  ")
+    line.append(
+        src[:max_src].rjust(max_src), style=_activity_label_style(src_id)
+    )
+    # Empty arrow column — tools are local to the agent, no recipient.
+    # Three spaces keep the post-sender content aligned with envelope
+    # rows' ``" → "`` separator.
+    line.append("   ")
+    line.append("● ", style="cyan")
+    line.append(str(tool), style="cyan")
+    return line
+
+
+def _render_tool_result_row(
+    r: dict[str, Any], max_src: int, now: float
+) -> Text:
+    """``ts  src       ⎿ ✓`` or ``⎿ ✗ <summary>`` — tool returned.
+    Success is silent (just the checkmark); failure shows a brief
+    error summary so the user can spot trouble without opening the
+    chat pane."""
+    src_id = r.get("from")
+    src = r.get("from_label") or src_id or "?"
+    failed = bool(r.get("failed"))
+    summary = (r.get("summary") or "").strip()
+    line = Text(no_wrap=True, overflow="ellipsis")
+    line.append(_relative_time(r.get("ts"), now).rjust(4), style="dim")
+    line.append("  ")
+    line.append(
+        src[:max_src].rjust(max_src), style=_activity_label_style(src_id)
+    )
+    line.append("   ")
+    if failed:
+        line.append("⎿ ", style="dim red")
+        line.append("✗ ", style="bold red")
+        line.append(summary or "(failed)", style="red")
+    else:
+        line.append("⎿ ", style="dim green")
+        line.append("✓", style="green")
+    return line
+
+
+def _merge_feed(
+    envelopes: list[dict[str, Any]],
+    log_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine envelope-activity and tool-event rows into one
+    time-sorted feed. Each row is tagged with ``_kind``:
+
+    - ``"envelope"`` — a message between agents (from the inbox
+      tap on the daemon side)
+    - ``"tool_call"`` / ``"tool_result"`` — a local tool invocation
+      from an agent's event log
+
+    The renderer dispatches on ``_kind``. ts is the float seconds
+    we sort on; envelopes already carry it, log events too (the
+    EventLog now injects ``ts`` on emit). The merged list is
+    truncated to a sane cap so even a busy session doesn't grow
+    unbounded."""
+    rows: list[dict[str, Any]] = []
+    for env in envelopes:
+        rows.append({**env, "_kind": "envelope"})
+    for ev in log_events:
+        # log_events already carry "kind": "tool_call" / "tool_result"
+        rows.append({**ev, "_kind": ev.get("kind") or "tool_call"})
+    rows.sort(key=lambda r: float(r.get("ts") or 0.0))
+    return rows[-120:]
 
 
 def _activity_label_style(addr_id: str | None) -> str:

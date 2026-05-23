@@ -20,10 +20,24 @@ def test_emit_appends_jsonl_line(tmp_path: Path):
 
     content = (tmp_path / "events.jsonl").read_text()
     lines = [json.loads(l) for l in content.splitlines() if l.strip()]
+    # ``ts`` is injected by emit when not present — strip it to keep
+    # this test focused on the field-preservation contract.
+    for line in lines:
+        assert isinstance(line.pop("ts", None), float)
     assert lines == [
         {"kind": "response", "text": "hello"},
         {"kind": "tool", "text": "ok"},
     ]
+
+
+def test_emit_preserves_caller_supplied_ts(tmp_path: Path):
+    """When the caller already set ``ts`` we keep their value rather
+    than overwriting — replay code can backdate events."""
+    log = EventLog(tmp_path / "events.jsonl")
+    log.emit({"kind": "x", "ts": 12345.0})
+    log.close()
+    line = json.loads((tmp_path / "events.jsonl").read_text().splitlines()[0])
+    assert line["ts"] == 12345.0
 
 
 def test_emit_after_close_is_noop(tmp_path: Path):
@@ -51,6 +65,9 @@ def test_tail_yields_existing_events(tmp_path: Path):
     a = next(gen)
     b = next(gen)
     stop.set()
+    # ``ts`` is injected by emit; drop it for the field comparison.
+    a.pop("ts", None)
+    b.pop("ts", None)
     assert a == {"kind": "a", "v": 1}
     assert b == {"kind": "b", "v": 2}
 
@@ -75,7 +92,9 @@ def test_tail_waits_for_file_creation(tmp_path: Path):
     time.sleep(0.2)
     stop.set()
     t.join(timeout=2.0)
-    assert {"kind": "late", "v": 42} in results
+    # Drop the injected ``ts`` for the contains check.
+    matches = [r for r in results if r.get("kind") == "late"]
+    assert matches and matches[0]["v"] == 42
     log.close()
 
 

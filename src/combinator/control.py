@@ -130,6 +130,10 @@ class ControlServer:
             return self._snapshot(request.get("addr"))
         if method == "activity":
             return self._activity(int(request.get("limit", 80) or 80))
+        if method == "log_events":
+            return self._log_events(
+                int(request.get("limit_per_agent", 20) or 20)
+            )
         if method == "inboxes":
             return self._inboxes(int(request.get("limit", 20) or 20))
         if method == "sandbox":
@@ -222,6 +226,7 @@ class ControlServer:
         tree_reply = self._tree()
         cost_reply = self._cost()
         activity_reply = self._activity(80)
+        log_events_reply = self._log_events(20)
         permissions_reply = self._permissions(addr_id)
         result: dict[str, Any] = {
             "ok": True,
@@ -231,6 +236,7 @@ class ControlServer:
                 "rows": cost_reply.get("rows", []),
             },
             "activity": activity_reply.get("activity", []),
+            "log_events": log_events_reply.get("events", []),
             "pending_permissions": permissions_reply.get("pending", []),
         }
         if addr_id:
@@ -321,6 +327,93 @@ class ControlServer:
             "content": content,
             "truncated": truncated,
         }
+
+    def _log_events(self, limit_per_agent: int) -> dict[str, Any]:
+        """Read recent tool / stream events from each agent's event
+        log and return them as a flat, time-sorted list.
+
+        Sourced from the per-agent JSONL files (the same ones the
+        chat pane tails) so the daemon doesn't need to maintain a
+        separate event buffer. For each agent we read the last
+        ``limit_per_agent * 4`` lines (cheap upper bound — most
+        events aren't tool-related), filter to the kinds the
+        activity feed cares about, and tag each row with the
+        agent's addr/label.
+
+        Returned shape per row (mirrors the envelope-activity
+        format where it can, so the renderer treats them uniformly):
+
+            {"ts": float, "from": addr_id, "from_label": str,
+             "kind": "tool_call" | "tool_result",
+             "tool": tool_name, "failed": bool (results only)}
+        """
+        from collections import deque
+        import json as _json
+
+        out: list[dict[str, Any]] = []
+        with self.runtime._lock:  # noqa: SLF001
+            records = list(self.runtime._records.values())  # noqa: SLF001
+        for rec in records:
+            event_log = getattr(rec, "event_log", None)
+            log_path = getattr(event_log, "path", None) if event_log else None
+            if log_path is None:
+                continue
+            # Tail the log without reading the whole file: keep the
+            # last ``window`` lines in a deque. ``window`` is generous
+            # so streamy text/chunk events don't push tool events out.
+            window = max(40, limit_per_agent * 8)
+            tail_lines: deque[str] = deque(maxlen=window)
+            try:
+                with open(log_path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        tail_lines.append(line)
+            except OSError:
+                continue
+            collected: list[dict[str, Any]] = []
+            for raw in tail_lines:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    ev = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    continue
+                kind = ev.get("kind")
+                ts = ev.get("ts")
+                if not isinstance(ts, (int, float)):
+                    continue
+                if kind == "stream_end":
+                    for tc in ev.get("tool_calls") or []:
+                        collected.append(
+                            {
+                                "ts": float(ts),
+                                "from": rec.addr.id,
+                                "from_label": rec.addr.label or rec.addr.id,
+                                "kind": "tool_call",
+                                "tool": (
+                                    tc.get("name")
+                                    or tc.get("tool_name")
+                                    or "?"
+                                ),
+                            }
+                        )
+                elif kind == "tool":
+                    collected.append(
+                        {
+                            "ts": float(ts),
+                            "from": rec.addr.id,
+                            "from_label": rec.addr.label or rec.addr.id,
+                            "kind": "tool_result",
+                            "failed": bool(ev.get("failed")),
+                            "summary": (ev.get("text") or "")[:80],
+                        }
+                    )
+            # Keep only the most recent ``limit_per_agent`` per agent
+            # so a chatty agent can't crowd out a quieter one.
+            collected.sort(key=lambda e: e["ts"])
+            out.extend(collected[-limit_per_agent:])
+        out.sort(key=lambda e: e["ts"])
+        return {"ok": True, "events": out}
 
     def _sandbox_recent(
         self, addr_id: str | None, limit: int
