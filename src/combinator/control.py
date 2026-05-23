@@ -1,9 +1,10 @@
 """Unix-socket JSON-RPC control plane for the daemon.
 
 The daemon starts a ``ControlServer`` on a per-session Unix domain
-socket at ``~/.combinator/sessions/<session>.sock``. The meta-view
-popup (``combinator meta``) connects through ``ControlClient``,
-issues short-lived requests, and renders the responses.
+socket at ``~/.combinator/sessions/<session>.sock``. The main TUI
+(``combinator-main``) and the files popup (``combinator-files``)
+connect through ``ControlClient``, issue short-lived requests, and
+render the responses.
 
 Protocol: one JSON object per line, request + response. Methods:
 

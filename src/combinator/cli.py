@@ -315,12 +315,12 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     except Exception as exc:
         print(f"daemon: control server failed to start: {exc}", file=sys.stderr)
 
-    # Bind Ctrl+B M to a popup running the meta-view. tmux key bindings
-    # are server-global; the most recent daemon wins if there are
+    # Bind ``Ctrl+B F`` to the files popup. tmux key bindings are
+    # server-global; the most recent daemon wins if there are
     # multiple, which is fine — the popup auto-discovers the live
-    # socket if asked.
-    _bind_meta_popup(session_name)
-    _bind_inbox_popup(session_name)
+    # socket if asked. The old ``M`` / ``I`` bindings (meta + inbox
+    # popups) were retired once the main window's sidebar grew to
+    # cover the same ground.
     _bind_files_popup(session_name)
 
     if cfg.mode == "one-shot" and cfg.initial_task:
@@ -449,74 +449,6 @@ def _bind_files_popup(session_name: str) -> None:
                 "-w", "85%",
                 "-h", "85%",
                 "-T", f" files › {session_name} ",
-                popup_cmd,
-            ],
-            check=False,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-
-
-def _bind_inbox_popup(session_name: str) -> None:
-    """Bind ``prefix + I`` to a popup running the inbox-view for
-    this daemon. Same pattern as ``_bind_meta_popup``."""
-    import shutil
-    import subprocess
-
-    inbox_path = shutil.which("combinator-inbox") or "combinator-inbox"
-    popup_cmd = f"{inbox_path} --session {session_name}"
-    try:
-        subprocess.run(
-            [
-                "tmux",
-                "bind-key",
-                "I",
-                "display-popup",
-                "-E",
-                "-w", "75%",
-                "-h", "75%",
-                "-T", f" inboxes › {session_name} ",
-                popup_cmd,
-            ],
-            check=False,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-
-
-def _bind_meta_popup(session_name: str) -> None:
-    """Bind ``prefix + M`` to a popup running the meta-view for this
-    daemon. ``-E`` makes the popup close when the meta app exits.
-
-    Resolves the absolute path to ``combinator-meta`` so the popup
-    works regardless of the user's login shell PATH — tmux's
-    ``display-popup`` shells out via the user's default shell, which
-    rarely has a conda env on PATH.
-
-    Failure is swallowed — the binding is a convenience, not load-bearing.
-    """
-    import shutil
-    import subprocess
-
-    meta_path = shutil.which("combinator-meta")
-    if meta_path is None:
-        # Fall back to the bare name; will rely on PATH at popup time
-        # and surface a useful error in the popup if it fails.
-        meta_path = "combinator-meta"
-    popup_cmd = f"{meta_path} --session {session_name}"
-    try:
-        subprocess.run(
-            [
-                "tmux",
-                "bind-key",
-                "M",
-                "display-popup",
-                "-E",
-                "-w", "85%",
-                "-h", "85%",
-                "-T", f" combinator › {session_name} ",
                 popup_cmd,
             ],
             check=False,
