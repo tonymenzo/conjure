@@ -45,7 +45,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Input, Static, Tree
 from textual.widgets.tree import TreeNode
 
-from combinator.chat import ChatView, ThinkingStatus
+from combinator.chat import ChatView
 from combinator.control import ControlClient
 from combinator.daemon import list_session_names, socket_path_for
 from combinator.status_tree import StatusTree
@@ -354,7 +354,6 @@ class MainApp(App):
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
-                yield ThinkingStatus(id="thinking-status")
                 yield Static("", id="perm-banner")
                 yield Input(
                     placeholder="type a message — Enter to send to selected agent",
@@ -913,12 +912,6 @@ class MainApp(App):
         # addr land in the same frame as the tree highlight.
         self._context_signature = None
         self._refresh_context_bar()
-        # The previous agent's "thinking…" state doesn't apply to the
-        # new pane — stop the widget so we start clean.
-        try:
-            self.query_one("#thinking-status", ThinkingStatus).stop()
-        except Exception:
-            pass
 
         view = self.query_one(ChatView)
         view.reset()
@@ -990,42 +983,17 @@ class MainApp(App):
         # while this tail was producing events.
         if label != self.selected_label:
             return
-        kind = event.get("kind")
-        if kind == "user_input" and self._pending_user_echoes > 0:
+        if event.get("kind") == "user_input" and self._pending_user_echoes > 0:
             self._pending_user_echoes -= 1
             return
-        if kind in ("thinking_start", "thinking_end", "usage"):
-            self._apply_thinking_event(event)
-            return
+        # thinking / usage / chunk / stream_end all flow through
+        # ChatView.apply_event — the in-flow TurnHeader block manages
+        # its own lifecycle from these events.
         view = self.query_one(ChatView)
         try:
             view.apply_event(label, event)
         except Exception as exc:
             view.write_error(f"render error: {exc}")
-
-    def _apply_thinking_event(self, event: dict[str, Any]) -> None:
-        """Route thinking_start / usage / thinking_end events from
-        the selected agent's log into the ThinkingStatus widget at
-        the bottom of the chat pane."""
-        try:
-            widget = self.query_one("#thinking-status", ThinkingStatus)
-        except Exception:
-            return
-        kind = event.get("kind")
-        if kind == "thinking_start":
-            ts = event.get("ts")
-            if not isinstance(ts, (int, float)):
-                import time as _t
-
-                ts = _t.time()
-            widget.start(float(ts))
-        elif kind == "usage":
-            widget.update_tokens(
-                int(event.get("tokens_in", 0) or 0),
-                int(event.get("tokens_out", 0) or 0),
-            )
-        elif kind == "thinking_end":
-            widget.stop()
 
     def _stop_chat_tail(self) -> None:
         if self._tail_stop is not None:

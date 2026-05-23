@@ -120,6 +120,97 @@ _TOOL_RESULT_PREFIX = "⎿ "
 _GUTTER = 1  # column between bar and content
 
 
+class TurnHeader(Static):
+    """In-flow chat-history block rendered above each agent reply.
+
+    Mounts when ``thinking_start`` arrives and runs a ~10Hz spinner
+    that ticks elapsed seconds + cumulative tokens. On the first
+    ``chunk`` (i.e. the model began generating text) the spinner +
+    ``Thinking…`` text are dropped and the block ``finalize()``s
+    to just ``Ns · Mk tokens`` — a frozen, persistent header that
+    stays in the chat history above the reply that follows.
+
+    Visual: a single dim line, no speaker bar. Renders below any
+    user-block and above the agent's first chunk so the reading
+    order is ``user → header → reply``.
+    """
+
+    DEFAULT_CSS = """
+    TurnHeader {
+        height: 1;
+        padding: 0 1;
+        background: ansi_default;
+    }
+    """
+
+    _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    _TICK = 0.1
+
+    def __init__(self, started_at: float, **kwargs: Any) -> None:
+        super().__init__(" ", **kwargs)
+        self._started_at = started_at
+        self._frozen_elapsed: int | None = None
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self._frame = 0
+        self._finalized = False
+        self.can_focus = False
+
+    def on_mount(self) -> None:
+        self.set_interval(self._TICK, self._tick)
+        self._redraw()
+
+    def update_tokens(self, tokens_in: int, tokens_out: int) -> None:
+        self._tokens_in = tokens_in
+        self._tokens_out = tokens_out
+        self._redraw()
+
+    def finalize(self) -> None:
+        """Freeze the elapsed counter and drop the ``Thinking…`` tail.
+        Idempotent — second call is a no-op."""
+        if self._finalized:
+            return
+        import time as _t
+
+        self._frozen_elapsed = max(0, int(_t.time() - self._started_at))
+        self._finalized = True
+        self._redraw()
+
+    def finalize_with_elapsed(self, elapsed: int) -> None:
+        """Replay variant: freeze to a known elapsed value (used when
+        reconstructing history where we don't have wall-clock anchor)."""
+        if self._finalized:
+            return
+        self._frozen_elapsed = max(0, elapsed)
+        self._finalized = True
+        self._redraw()
+
+    def _tick(self) -> None:
+        if self._finalized:
+            return
+        self._frame = (self._frame + 1) % len(self._SPINNER)
+        self._redraw()
+
+    def _redraw(self) -> None:
+        import time as _t
+
+        elapsed = (
+            self._frozen_elapsed
+            if self._frozen_elapsed is not None
+            else max(0, int(_t.time() - self._started_at))
+        )
+        line = Text(no_wrap=True, overflow="ellipsis")
+        line.append(f"{elapsed}s", style="dim")
+        total = self._tokens_in + self._tokens_out
+        if total > 0:
+            line.append(f"  ·  {_format_tokens(total)} tokens", style="dim")
+        if not self._finalized:
+            line.append("  ·  ")
+            line.append(self._SPINNER[self._frame], style="#00FF41")
+            line.append(" Thinking…", style="dim")
+        self.update(line)
+
+
 class ThinkingStatus(Static):
     """Transient status row mounted just above the chat input while
     an agent's turn is active. Shows a spinner glyph, "Thinking…",
@@ -259,6 +350,12 @@ class ChatView(VerticalScroll):
         self._stream_target: str = ""
         self._stream_shown: str = ""
         self._stream_tool_calls: list[dict[str, Any]] = []
+        # Tracks the TurnHeader block for the currently-active agent
+        # turn. Lifecycle: mounted on ``thinking_start``; updated on
+        # ``usage``; finalized when the first ``chunk`` of the turn
+        # arrives or at ``thinking_end`` (whichever comes first); set
+        # back to None so the next turn gets its own header.
+        self._turn_header: TurnHeader | None = None
         self.can_focus = False
 
     def on_mount(self) -> None:
@@ -275,11 +372,28 @@ class ChatView(VerticalScroll):
         self._stream_target = ""
         self._stream_shown = ""
         self._stream_tool_calls = []
+        self._turn_header = None
 
     def apply_event(self, label: str, event: dict[str, Any]) -> None:
         """Route one live event (from the log tail) to the right path."""
         kind = event.get("kind")
+        # Turn-header lifecycle: thinking_start mounts a TurnHeader in
+        # place; usage updates the token counter; chunk / thinking_end
+        # finalizes it (drops the spinner + ``Thinking…`` tail).
+        if kind == "thinking_start":
+            self._start_turn_header(event.get("ts"))
+            return
+        if kind == "usage":
+            self._update_turn_header_tokens(event)
+            return
+        if kind == "thinking_end":
+            self._finalize_turn_header()
+            return
         if kind == "chunk":
+            # First chunk of the turn → finalize the header (model is
+            # generating text now, drop the "Thinking…" tail).
+            if self._turn_header is not None and not self._turn_header._finalized:
+                self._turn_header.finalize()
             self._stream_chunk(label, event.get("text", "") or "")
             return
         if kind == "stream_end":
@@ -291,16 +405,86 @@ class ChatView(VerticalScroll):
             self._finalize_stream(label, [])
         self._append_event(label, event)
 
+    def _start_turn_header(self, ts: Any) -> None:
+        """Mount a fresh TurnHeader block at the bottom of the chat
+        for a new agent turn. Replaces any in-progress streaming
+        block above it (defensive — should rarely fire)."""
+        import time as _t
+
+        if not isinstance(ts, (int, float)):
+            ts = _t.time()
+        if self._streaming_block is not None:
+            self._finalize_stream("", [])
+        header = TurnHeader(float(ts))
+        self.mount(header)
+        self._turn_header = header
+        self._scroll_to_end()
+
+    def _update_turn_header_tokens(self, event: dict[str, Any]) -> None:
+        if self._turn_header is None:
+            return
+        self._turn_header.update_tokens(
+            int(event.get("tokens_in", 0) or 0),
+            int(event.get("tokens_out", 0) or 0),
+        )
+
+    def _finalize_turn_header(self) -> None:
+        if self._turn_header is None:
+            return
+        self._turn_header.finalize()
+        self._turn_header = None
+
     def replay_events(self, label: str, events: list[dict[str, Any]]) -> None:
         """Replay a backlog: accumulate chunk events into complete
-        responses, mount everything in order, scroll to the bottom.
-        ``label`` is no longer rendered per-block (the window title
-        identifies the speaker) but is kept for API compatibility."""
+        responses, mount headers, mount blocks in order, scroll to
+        the bottom. Headers are reconstructed from the thinking_start
+        + usage + (first chunk or thinking_end) events in the log so
+        time / tokens are visible on historical turns too. ``label``
+        is no longer rendered per-block (the window title identifies
+        the speaker) but is kept for API compatibility."""
         del label
         chunk_buffer = ""
         for event in events:
             kind = event.get("kind")
+            if kind == "thinking_start":
+                # Finalize any existing pending header (shouldn't
+                # normally happen — defensive).
+                if self._turn_header is not None:
+                    self._turn_header.finalize_with_elapsed(0)
+                    self._turn_header = None
+                ts = event.get("ts")
+                if isinstance(ts, (int, float)):
+                    header = TurnHeader(float(ts))
+                    self.mount(header)
+                    self._turn_header = header
+                continue
+            if kind == "usage":
+                self._update_turn_header_tokens(event)
+                continue
+            if kind == "thinking_end":
+                # Replay path: freeze elapsed from the wall-clock delta
+                # between thinking_start and thinking_end so historical
+                # turns show their final duration.
+                if self._turn_header is not None:
+                    ts = event.get("ts")
+                    if isinstance(ts, (int, float)):
+                        elapsed = int(float(ts) - self._turn_header._started_at)
+                        self._turn_header.finalize_with_elapsed(elapsed)
+                    else:
+                        self._turn_header.finalize()
+                    self._turn_header = None
+                continue
             if kind == "chunk":
+                # First chunk freezes the header (turn started
+                # producing text). ``ts`` may be present; if so we
+                # freeze to the difference, else fall back to live.
+                if self._turn_header is not None and not self._turn_header._finalized:
+                    ts = event.get("ts")
+                    if isinstance(ts, (int, float)):
+                        elapsed = int(float(ts) - self._turn_header._started_at)
+                        self._turn_header.finalize_with_elapsed(elapsed)
+                    else:
+                        self._turn_header.finalize()
                 chunk_buffer += event.get("text", "") or ""
                 continue
             if kind == "stream_end":
@@ -483,7 +667,6 @@ class ChatApp(App):
         yield Header(show_clock=True)
         with Vertical():
             yield ChatView(id="history")
-        yield ThinkingStatus(id="thinking-status")
         yield Input(placeholder="type a message — Enter to send", id="input")
 
     def on_mount(self) -> None:
@@ -635,34 +818,14 @@ class ChatApp(App):
         if kind == "user_input" and self._pending_user_echoes > 0:
             self._pending_user_echoes -= 1
             return
-        # Thinking / usage events drive the status row at the bottom
-        # of the pane rather than rendering inline as chat blocks.
-        if kind in ("thinking_start", "thinking_end", "usage"):
-            self._apply_thinking_event(event)
-            return
+        # thinking / usage / chunk / stream_end all flow into ChatView's
+        # apply_event — the in-flow TurnHeader block handles its own
+        # lifecycle from those events, so nothing routes here anymore.
         view = self.query_one(ChatView)
         try:
             view.apply_event(self.agent_label, event)
         except Exception as exc:
             view.write_error(f"render error: {exc}")
-
-    def _apply_thinking_event(self, event: dict[str, Any]) -> None:
-        widget = self.query_one("#thinking-status", ThinkingStatus)
-        kind = event.get("kind")
-        if kind == "thinking_start":
-            ts = event.get("ts")
-            if not isinstance(ts, (int, float)):
-                import time as _t
-
-                ts = _t.time()
-            widget.start(float(ts))
-        elif kind == "usage":
-            widget.update_tokens(
-                int(event.get("tokens_in", 0) or 0),
-                int(event.get("tokens_out", 0) or 0),
-            )
-        elif kind == "thinking_end":
-            widget.stop()
 
 
 # ---------------------------------------------------------------- helpers
