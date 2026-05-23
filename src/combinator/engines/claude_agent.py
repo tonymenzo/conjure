@@ -262,12 +262,37 @@ class ClaudeAgentEngine:
         if self._uses_subscription and os.environ.get("ANTHROPIC_API_KEY"):
             sdk_env["ANTHROPIC_API_KEY"] = ""
 
+        # Split the spec's tool list into "pre-approve at the CLI"
+        # vs "route through can_use_tool". The CLI's ``--allowedTools``
+        # is a *pre-approval* list — anything on it never reaches
+        # our callback, even if the spec says ``"ask"``. So we hold
+        # back any tool whose effective decision isn't ``allow``:
+        # tools that should ask the user, tools that should be
+        # denied, and tools in the default-ask set (Bash / Edit /
+        # Write / MultiEdit / NotebookEdit) unless the spec
+        # explicitly overrides to ``allow``. Built-in tools remain
+        # reachable to the model even when absent from
+        # ``--allowedTools``; their permission prompt routes through
+        # ``--permission-prompt-tool stdio`` → our ``can_use_tool``
+        # callback → the perm-modal in the UI. Bridged MCP tools
+        # must stay on the list (they're only callable when listed).
+        explicit_perms = dict(record.spec.permissions or {})
+        preapproved: list[str] = []
+        for tool_name in (allowed_tools or []):
+            explicit = explicit_perms.get(tool_name)
+            effective = explicit or (
+                "ask" if tool_name in _ASK_BY_DEFAULT else "allow"
+            )
+            if effective == "allow":
+                preapproved.append(tool_name)
+
         opts = ClaudeAgentOptions(
             system_prompt=system_prompt or self._build_system_prompt(record, runtime),
             cwd=str(sandbox_dir) if sandbox_dir is not None else None,
-            allowed_tools=list(allowed_tools or []) + bridged_tools,
+            allowed_tools=preapproved + bridged_tools,
             can_use_tool=can_use_tool,
-            # ``default`` consults can_use_tool for every tool call.
+            # ``default`` consults can_use_tool for every tool call
+            # that isn't pre-approved via ``allowed_tools``.
             permission_mode="default",
             mcp_servers=mcp_servers if mcp_servers else {},
             env=sdk_env,

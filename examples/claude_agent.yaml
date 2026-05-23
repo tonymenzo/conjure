@@ -51,15 +51,19 @@ root:
     - Grep
     - Glob
 
-  # Per-tool permission decisions. "allow" (default) runs without
-  # asking; "deny" hard-blocks; "ask" (when the UI prompt lands)
-  # will surface an interactive approval. Today "ask" maps to deny.
+  # Per-tool permission decisions. "allow" runs without asking;
+  # "deny" hard-blocks; "ask" pops a centered approval modal in the
+  # main window — F3 / Enter / a / y allows, F4 / Esc / d / n denies.
+  # Read-only tools default to "allow"; environment-mutating tools
+  # (Bash / Edit / Write / MultiEdit / NotebookEdit) default to "ask"
+  # so a typo in the agent's plan can't silently rewrite the sandbox
+  # — set them to "allow" explicitly if you trust this agent.
   permissions:
     Read: allow
     Grep: allow
     Glob: allow
-    Write: allow
-    Edit: allow
+    Write: ask
+    Edit: ask
     Bash: ask
 
   # Optional: pin the sandbox path explicitly. When omitted the

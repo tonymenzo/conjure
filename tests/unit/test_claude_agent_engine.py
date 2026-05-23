@@ -131,6 +131,111 @@ def test_default_system_frame_loads_and_templates():
     assert "{addr_id}" not in rendered  # placeholder substituted
 
 
+def test_preapproved_tools_excludes_ask_and_deny(tmp_path):
+    """Tools whose effective decision isn't ``allow`` must NOT land
+    in the SDK's ``allowed_tools`` (= CLI's ``--allowedTools``).
+    Otherwise the CLI pre-approves them at the wire level and our
+    ``can_use_tool`` callback never sees the request — which is the
+    bug that kept the perm-modal from ever popping for Bash even
+    when the spec said ``Bash: ask``."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from combinator.address import Address
+    from combinator.capability import CapabilitySet
+    from combinator.engines.claude_agent import ClaudeAgentEngine
+    from combinator.mailbox import Mailbox
+    from combinator.record import AgentRecord, AgentSpec
+    from combinator.runtime import Runtime
+
+    rt = Runtime(store_dir=tmp_path)
+
+    addr = Address(id="ag-test", label="root")
+    record = AgentRecord(
+        addr=addr,
+        spec=AgentSpec(
+            role_prompt="x",
+            tools=["Read", "Write", "Edit", "Bash", "Grep"],
+            permissions={
+                "Read": "allow",
+                "Write": "ask",
+                "Edit": "ask",
+                "Bash": "ask",
+                "Grep": "allow",
+            },
+        ),
+        inbox=Mailbox(),
+        capabilities=CapabilitySet(self_addr=addr),
+        token="t",
+        depth=0,
+    )
+
+    # ClaudeSDKClient(opts) shells out to the CLI on construction in
+    # some SDK paths — patch the client so this test stays offline.
+    with patch("claude_agent_sdk.ClaudeSDKClient") as MockClient:
+        engine = ClaudeAgentEngine(
+            record=record,
+            runtime=rt,
+            sandbox_dir=tmp_path,
+            allowed_tools=record.spec.tools,
+        )
+        allowed = list(engine._options.allowed_tools)
+
+    # Tools whose spec says "ask" must not be in the CLI's allow list.
+    assert "Write" not in allowed
+    assert "Edit" not in allowed
+    assert "Bash" not in allowed
+    # Explicitly-allowed tools stay (no point routing through the
+    # callback just to return allow).
+    assert "Read" in allowed
+    assert "Grep" in allowed
+    # Bridged MCP tools must stay (they're only callable when listed).
+    assert any(t.startswith("mcp__combinator__") for t in allowed)
+
+
+def test_preapproved_tools_default_ask_set_held_back(tmp_path):
+    """With no spec-level permissions, tools in ``_ASK_BY_DEFAULT``
+    (Bash / Edit / Write / MultiEdit / NotebookEdit) still get held
+    back from ``--allowedTools`` — the engine's safety default."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from combinator.address import Address
+    from combinator.capability import CapabilitySet
+    from combinator.engines.claude_agent import ClaudeAgentEngine
+    from combinator.mailbox import Mailbox
+    from combinator.record import AgentRecord, AgentSpec
+    from combinator.runtime import Runtime
+
+    rt = Runtime(store_dir=tmp_path)
+    addr = Address(id="ag-test", label="root")
+    record = AgentRecord(
+        addr=addr,
+        spec=AgentSpec(
+            role_prompt="x",
+            tools=["Read", "Write", "Edit", "Bash"],
+            permissions={},  # no explicit decisions
+        ),
+        inbox=Mailbox(),
+        capabilities=CapabilitySet(self_addr=addr),
+        token="t",
+        depth=0,
+    )
+    with patch("claude_agent_sdk.ClaudeSDKClient"):
+        engine = ClaudeAgentEngine(
+            record=record,
+            runtime=rt,
+            sandbox_dir=tmp_path,
+            allowed_tools=record.spec.tools,
+        )
+        allowed = list(engine._options.allowed_tools)
+
+    assert "Read" in allowed
+    assert "Write" not in allowed
+    assert "Edit" not in allowed
+    assert "Bash" not in allowed
+
+
 def test_dispatch_rejects_unknown_engine(tmp_path):
     """``build_runtime`` dispatcher refuses unknown engine names with
     a clear error pointing at the supported set."""
