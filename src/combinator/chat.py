@@ -345,8 +345,12 @@ class ChatApp(App):
     }
     Input {
         dock: bottom;
-        border: round $accent;
+        border: round green;
+        background: ansi_default;
         margin: 0;
+    }
+    Input:focus {
+        border: round white;
     }
     Header {
         background: $primary;

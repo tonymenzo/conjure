@@ -148,9 +148,13 @@ class FilesApp(App):
     /* Search input docked at the bottom, hidden until ``/`` opens it. */
     #search-input {
         dock: bottom;
-        border: round $accent;
+        border: round green;
+        background: ansi_default;
         margin: 0;
         display: none;
+    }
+    #search-input:focus {
+        border: round white;
     }
     #search-input.active { display: block; }
     Header { background: $primary; }

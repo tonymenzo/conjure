@@ -237,6 +237,7 @@ class MainApp(App):
     #chat-input {
         dock: bottom;
         border: round green;
+        background: ansi_default;
         margin: 0;
     }
     #chat-input:focus {
