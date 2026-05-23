@@ -245,7 +245,6 @@ class MainApp(App):
     }
     Header {
         background: #1B4D3E;
-        color: white;
     }
     """
 
@@ -259,7 +258,11 @@ class MainApp(App):
         Binding("escape", "focus_tree", "Focus tree"),
         Binding("o", "open_in_window", "Open in window"),
         Binding("r", "refresh", "Refresh", show=False),
-        Binding("f6", "toggle_auto_mode", "Auto-mode"),
+        # Both F6 and Ctrl+G map to the same auto-mode toggle. Some
+        # terminals / tmux configs intercept F6, so the Ctrl+G fallback
+        # ensures the toggle is always reachable.
+        Binding("f6", "toggle_auto_mode", "Auto", show=True),
+        Binding("ctrl+g", "toggle_auto_mode", "Auto", show=False),
     ]
 
     def __init__(
@@ -416,18 +419,36 @@ class MainApp(App):
         """Flip the daemon's ``auto_mode`` flag. When on, ``ask``
         tool decisions are auto-allowed without surfacing the perm-
         banner — the "trust me, just go" mode for fast iteration.
-        Status is reflected in the bottom gutter so it's not invisible.
+        Status is reflected in the bottom gutter (``AUTO``) and a
+        transient toast confirms the toggle so the user knows the
+        keybinding actually fired (some tmux configs intercept F6;
+        if the toast doesn't appear, try ``Ctrl+G``).
         """
         new_state = not bool(getattr(self, "_auto_mode", False))
         try:
             reply = self.client.call("set_auto_mode", on=new_state)
-        except Exception:
+        except Exception as exc:
+            self.notify(
+                f"auto-mode toggle failed: {exc}",
+                severity="error",
+            )
             return
-        if reply.get("ok"):
-            self._auto_mode = bool(reply.get("on"))
-            # Force the gutter to repaint with the new flag.
-            self._context_signature = None
-            self._refresh_context_bar()
+        if not reply.get("ok"):
+            self.notify(
+                f"daemon rejected set_auto_mode: {reply.get('error', '?')} "
+                "— restart the daemon to pick up the new RPC.",
+                severity="warning",
+            )
+            return
+        self._auto_mode = bool(reply.get("on"))
+        # Force the gutter to repaint with the new flag.
+        self._context_signature = None
+        self._refresh_context_bar()
+        self.notify(
+            f"auto-mode {'ON' if self._auto_mode else 'OFF'}",
+            severity="information",
+            timeout=2,
+        )
 
     def action_open_in_window(self) -> None:
         """Open the selected agent in a dedicated fullscreen chat window.

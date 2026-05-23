@@ -627,7 +627,6 @@ class ChatApp(App):
     }
     Header {
         background: #1B4D3E;
-        color: white;
     }
     """
 
