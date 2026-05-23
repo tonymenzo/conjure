@@ -120,6 +120,95 @@ _TOOL_RESULT_PREFIX = "⎿ "
 _GUTTER = 1  # column between bar and content
 
 
+class ThinkingStatus(Static):
+    """Transient status row mounted just above the chat input while
+    an agent's turn is active. Shows a spinner glyph, "Thinking…",
+    elapsed seconds, and a cumulative token counter that fills in
+    once the SDK reports usage on the first ``AssistantMessage``.
+
+    The widget owns its own ~10Hz redraw timer so the spinner +
+    elapsed counter tick smoothly without involving the App's
+    snapshot loop. Hidden via ``display: none`` when inactive — when
+    no agent is turning, this row takes zero rows of layout space.
+    """
+
+    DEFAULT_CSS = """
+    ThinkingStatus {
+        height: 1;
+        padding: 0 1;
+        background: ansi_default;
+        display: none;
+    }
+    ThinkingStatus.active { display: block; }
+    """
+
+    _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    _TICK = 0.1
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(" ", **kwargs)
+        self._frame = 0
+        self._started_at: float | None = None
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self.can_focus = False
+
+    def on_mount(self) -> None:
+        self.set_interval(self._TICK, self._tick)
+
+    def start(self, started_at: float) -> None:
+        """Begin a turn. ``started_at`` is the engine-reported start
+        ts (wall-clock seconds) so the elapsed counter is anchored
+        to when the agent actually began, not when the event reached
+        the UI."""
+        self._started_at = started_at
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self._frame = 0
+        self.add_class("active")
+        self._redraw()
+
+    def update_tokens(self, tokens_in: int, tokens_out: int) -> None:
+        self._tokens_in = tokens_in
+        self._tokens_out = tokens_out
+        self._redraw()
+
+    def stop(self) -> None:
+        self._started_at = None
+        self.remove_class("active")
+
+    def _tick(self) -> None:
+        if self._started_at is None:
+            return
+        self._frame = (self._frame + 1) % len(self._SPINNER)
+        self._redraw()
+
+    def _redraw(self) -> None:
+        if self._started_at is None:
+            return
+        import time as _time
+
+        spin = self._SPINNER[self._frame]
+        elapsed = max(0, int(_time.time() - self._started_at))
+        line = Text()
+        line.append(spin, style="#00FF41")
+        line.append(" Thinking…")
+        if elapsed >= 1:
+            line.append(f"  {elapsed}s", style="dim")
+        total = self._tokens_in + self._tokens_out
+        if total > 0:
+            line.append(f"  · {_format_tokens(total)} tokens", style="dim")
+        self.update(line)
+
+
+def _format_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
 class ChatView(VerticalScroll):
     """Scrollable container of per-event chat blocks.
 
@@ -394,6 +483,7 @@ class ChatApp(App):
         yield Header(show_clock=True)
         with Vertical():
             yield ChatView(id="history")
+        yield ThinkingStatus(id="thinking-status")
         yield Input(placeholder="type a message — Enter to send", id="input")
 
     def on_mount(self) -> None:
@@ -541,14 +631,38 @@ class ChatApp(App):
         self._tail_thread.start()
 
     def _on_event(self, event: dict[str, Any]) -> None:
-        if event.get("kind") == "user_input" and self._pending_user_echoes > 0:
+        kind = event.get("kind")
+        if kind == "user_input" and self._pending_user_echoes > 0:
             self._pending_user_echoes -= 1
+            return
+        # Thinking / usage events drive the status row at the bottom
+        # of the pane rather than rendering inline as chat blocks.
+        if kind in ("thinking_start", "thinking_end", "usage"):
+            self._apply_thinking_event(event)
             return
         view = self.query_one(ChatView)
         try:
             view.apply_event(self.agent_label, event)
         except Exception as exc:
             view.write_error(f"render error: {exc}")
+
+    def _apply_thinking_event(self, event: dict[str, Any]) -> None:
+        widget = self.query_one("#thinking-status", ThinkingStatus)
+        kind = event.get("kind")
+        if kind == "thinking_start":
+            ts = event.get("ts")
+            if not isinstance(ts, (int, float)):
+                import time as _t
+
+                ts = _t.time()
+            widget.start(float(ts))
+        elif kind == "usage":
+            widget.update_tokens(
+                int(event.get("tokens_in", 0) or 0),
+                int(event.get("tokens_out", 0) or 0),
+            )
+        elif kind == "thinking_end":
+            widget.stop()
 
 
 # ---------------------------------------------------------------- helpers
@@ -764,6 +878,11 @@ def _format_event(
 
     if kind == "user_input":
         return (_user_block(event.get("text", "") or ""), ("user-block",))
+
+    if kind in ("thinking_start", "thinking_end", "usage"):
+        # Handled by the app's ThinkingStatus widget at the bottom of
+        # the chat pane — not rendered inline as a block.
+        return (None, ())
 
     if kind == "system_prompt":
         return (

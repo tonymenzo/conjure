@@ -369,6 +369,14 @@ class ClaudeAgentEngine:
         accumulated = ""
         pending_tool_calls: list[dict[str, Any]] = []
         stream_open = False  # text/tool_calls emitted since last stream_end
+        # Powers the chat pane's "thinking…" status line. ``thinking_start``
+        # carries the turn's start ts (so the widget can show elapsed
+        # time); ``usage`` events update the cumulative token meter as
+        # AssistantMessages stream in; ``thinking_end`` removes the
+        # status widget when the turn finishes (success or failure).
+        self._emit_event({"kind": "thinking_start"})
+        turn_tokens_in = 0
+        turn_tokens_out = 0
         try:
             await self._client.query(prompt)
             async for msg in self._client.receive_response():
@@ -376,6 +384,18 @@ class ClaudeAgentEngine:
                     observed = getattr(msg, "model", None)
                     if isinstance(observed, str) and observed:
                         self._observed_model = observed
+                    usage = getattr(msg, "usage", None) or {}
+                    delta_in, delta_out = _extract_usage(usage)
+                    if delta_in or delta_out:
+                        turn_tokens_in += delta_in
+                        turn_tokens_out += delta_out
+                        self._emit_event(
+                            {
+                                "kind": "usage",
+                                "tokens_in": turn_tokens_in,
+                                "tokens_out": turn_tokens_out,
+                            }
+                        )
                     text = _extract_text(msg)
                     if text:
                         self._emit_chunk(text)
@@ -405,7 +425,16 @@ class ClaudeAgentEngine:
             # final assistant message we never saw the close of.
             if stream_open or pending_tool_calls:
                 self._emit_stream_end(pending_tool_calls)
+            self._emit_event({"kind": "thinking_end"})
         return accumulated
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        if self._stream_emit is None:
+            return
+        try:
+            self._stream_emit(event)
+        except Exception:
+            pass
 
     def _emit_chunk(self, text: str) -> None:
         if self._stream_emit is None or not text:
@@ -491,6 +520,26 @@ def _claude_auth_status() -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return info if isinstance(info, dict) else None
+
+
+def _extract_usage(usage: dict[str, Any] | None) -> tuple[int, int]:
+    """``AssistantMessage.usage`` is a free-form dict; the SDK uses
+    Anthropic-API key names. Read the standard slots, fall back to
+    zeros when absent. Returns ``(input_tokens, output_tokens)`` —
+    counts that have *just* been billed against this AssistantMessage
+    (the caller accumulates across the turn)."""
+    if not isinstance(usage, dict):
+        return (0, 0)
+    inp = usage.get("input_tokens", 0) or 0
+    out = usage.get("output_tokens", 0) or 0
+    # Cache reads, when present, also count as input tokens that the
+    # model "saw" for this turn.
+    cache_read = usage.get("cache_read_input_tokens", 0) or 0
+    cache_create = usage.get("cache_creation_input_tokens", 0) or 0
+    try:
+        return (int(inp) + int(cache_read) + int(cache_create), int(out))
+    except (TypeError, ValueError):
+        return (0, 0)
 
 
 def _extract_text(msg: Any) -> str:
