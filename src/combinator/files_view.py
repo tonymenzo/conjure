@@ -609,13 +609,17 @@ def _build_preview_body(
     underline so the cursor position is unmistakable."""
     if not query:
         try:
+            # ``ansi_dark`` is a transparent rich theme that uses the
+            # terminal's ANSI palette without painting its own
+            # background — so syntax colors layer on the existing
+            # ``$surface`` instead of carving out a monokai-colored
+            # box inside the preview pane.
             return Syntax(
                 content,
                 _guess_lexer(path),
-                theme="monokai",
+                theme="ansi_dark",
                 line_numbers=True,
                 word_wrap=False,
-                background_color="default",
             )
         except Exception:
             return Text(content)
