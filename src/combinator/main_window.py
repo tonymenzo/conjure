@@ -243,6 +243,16 @@ class MainApp(App):
     #chat-input:focus {
         border: round white;
     }
+    /* select-mode indicator — hidden when ``height: 0``; F5 toggles
+       the ``active`` class which gives it a row of yellow text. */
+    #select-indicator {
+        height: 0;
+        background: ansi_default;
+        padding: 0 1;
+    }
+    #select-indicator.active {
+        height: 1;
+    }
     Header {
         background: #1B4D3E;
     }
@@ -356,6 +366,11 @@ class MainApp(App):
                 with activity_pane:
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
+                # Mode indicator: visible while select-mode (F5) is on
+                # so the user knows clicks pass through to the terminal.
+                # Hidden (height: 0) otherwise. Lives docked-top of
+                # the chat column so it doesn't displace the gutter.
+                yield Static("", id="select-indicator")
                 yield ChatView(id="chat-history")
                 yield Static("", id="perm-banner")
                 yield Input(
@@ -667,8 +682,10 @@ class MainApp(App):
 
     def _update_subtitle(self) -> None:
         """Header subtitle reflects the selected agent + its model.
-        When select mode is on, append a yellow indicator so the user
-        knows clicks won't be intercepted."""
+        Plain text only — textual 8.x Header renders sub_title as
+        a literal string (no markup parsing), so the select-mode
+        indicator lives in its own ``#select-indicator`` widget
+        and ``sub_title`` stays clean."""
         base = f"session: {self.socket_path.stem}"
         if self.selected_addr:
             label = self.selected_label or self.selected_addr
@@ -678,10 +695,21 @@ class MainApp(App):
             else:
                 base = f"{base}  ·  {label}"
         self._base_sub_title = base
+        self.sub_title = base
+        # Sync the dedicated select-indicator widget with the current
+        # mode so its visibility tracks ``self._select_mode``.
+        try:
+            indicator = self.query_one("#select-indicator", Static)
+        except Exception:
+            return
         if getattr(self, "_select_mode", False):
-            self.sub_title = f"{base}  [bold yellow][select — F5 to exit][/]"
+            indicator.update(
+                Text("[select — F5 to exit]", style="bold yellow")
+            )
+            indicator.add_class("active")
         else:
-            self.sub_title = base
+            indicator.update("")
+            indicator.remove_class("active")
 
     def _cache_extras(self, addr_id: str, node: dict[str, Any]) -> None:
         """Pluck the per-agent ``model`` off a tree node. Context
