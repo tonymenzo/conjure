@@ -628,6 +628,16 @@ class ChatApp(App):
     Header {
         background: #1B4D3E;
     }
+    /* select-mode indicator — hidden when ``height: 0``; F5 toggles
+       the ``active`` class which gives it a row of yellow text. */
+    #select-indicator {
+        height: 0;
+        background: ansi_default;
+        padding: 0 1;
+    }
+    #select-indicator.active {
+        height: 1;
+    }
     """
 
     BINDINGS = [
@@ -664,6 +674,8 @@ class ChatApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        # Select-mode indicator — visible only while F5 is on.
+        yield Static("", id="select-indicator")
         with Vertical():
             yield ChatView(id="history")
         yield Input(placeholder="type a message — Enter to send", id="input")
@@ -709,22 +721,13 @@ class ChatApp(App):
             pass
 
     def _apply_status(self, my_status: str) -> None:
-        # Same legend as the main tree: filled circle, colored by
-        # lifecycle. The Header subtitle renders rich markup, so the
-        # style tags here take effect.
-        circle = {
-            "lazy": "[bold green]●[/]",
-            "running": "[bold yellow]●[/]",
-            "idle": "[green]●[/]",
-            "terminated": "[dim]●[/]",
-            "error": "[bold red]●[/]",
-        }.get(my_status, "[dim]●[/]")
-        base = f"({self.addr})  {circle} {my_status}"
+        # textual 8.x Header renders ``sub_title`` as a literal string
+        # (no markup, no ANSI), so the lifecycle glyph is plain text
+        # — the color signal lives in the main-window tree instead.
+        base = f"({self.addr})  ● {my_status}"
         self._base_sub_title = base
-        if getattr(self, "_select_mode", False):
-            self.sub_title = f"{base}  [bold yellow][select — F5 to exit][/]"
-        else:
-            self.sub_title = base
+        self.sub_title = base
+        self._sync_select_indicator()
 
     # ---- key actions ----
 
@@ -733,18 +736,27 @@ class ChatApp(App):
 
     def action_toggle_select_mode(self) -> None:
         """Release / re-acquire textual's mouse capture so the user
-        can click-drag-select text natively."""
+        can click-drag-select text natively. The select-mode banner
+        lives in a dedicated ``#select-indicator`` widget because
+        textual 8.x Header renders ``sub_title`` without parsing
+        rich markup."""
         self._select_mode = not getattr(self, "_select_mode", False)
         set_mouse_tracking(self, on=not self._select_mode)
-        base = getattr(self, "_base_sub_title", None)
-        if base is None:
-            base = self.sub_title
-            self._base_sub_title = base
-        self.sub_title = (
-            f"{base}  [bold yellow][select — F5 to exit][/]"
-            if self._select_mode
-            else base
-        )
+        self._sync_select_indicator()
+
+    def _sync_select_indicator(self) -> None:
+        try:
+            indicator = self.query_one("#select-indicator", Static)
+        except Exception:
+            return
+        if getattr(self, "_select_mode", False):
+            indicator.update(
+                Text("[select — F5 to exit]", style="bold yellow")
+            )
+            indicator.add_class("active")
+        else:
+            indicator.update("")
+            indicator.remove_class("active")
 
     def action_focus_input(self) -> None:
         self.query_one(Input).focus()
