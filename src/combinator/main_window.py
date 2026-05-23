@@ -174,17 +174,17 @@ class MainApp(App):
         display: none;
     }
     #tree-pane, #activity-pane {
-        border: round ansi_default;
+        border: round green;
         background: ansi_default;
         padding: 0 1;
     }
-    /* Focused pane gets a brighter border so the active panel is
-       visible at a glance regardless of which widget kind sits in
-       it (Tree has its own cursor underline; VerticalScroll has
-       no built-in indicator, so without this Shift+Tab onto the
-       activity feed looked like a no-op). */
-    #tree-pane:focus, #activity-pane:focus {
+    /* Focused pane: white border + a translucent overlay so the
+       active panel is unmistakable. The activity feed is
+       informational only (not focusable, see below) so only the
+       tree pane actually goes white in practice. */
+    #tree-pane:focus {
         border: round white;
+        background: $boost;
     }
     #tree-pane     { height: 45%; }
     #activity-pane {
@@ -236,8 +236,11 @@ class MainApp(App):
     }
     #chat-input {
         dock: bottom;
-        border: round $accent;
+        border: round green;
         margin: 0;
+    }
+    #chat-input:focus {
+        border: round white;
     }
     Header {
         background: $primary;
@@ -338,8 +341,13 @@ class MainApp(App):
                 yield StatusTree("spawn tree", id="tree-pane")
                 # Activity-pane is a scrollable container so the feed
                 # can hold more rows than fit on screen; the actual
-                # content widget lives one level deeper.
-                with VerticalScroll(id="activity-pane"):
+                # content widget lives one level deeper. Set
+                # ``can_focus = False`` so Tab/Shift+Tab skip it —
+                # this pane is read-only ambient information, not
+                # something the user navigates into.
+                activity_pane = VerticalScroll(id="activity-pane")
+                activity_pane.can_focus = False
+                with activity_pane:
                     yield Static("(no activity yet)", id="activity-content")
             with Vertical(id="main"):
                 yield ChatView(id="chat-history")
