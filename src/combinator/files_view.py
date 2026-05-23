@@ -117,6 +117,13 @@ class FilesApp(App):
         background: $surface;
         padding: 0 1;
     }
+    /* Focused pane gets an accent-colored border so the active panel
+       is unmistakable — VerticalScroll has no built-in cursor, so
+       without this the focus is invisible when it lands on preview. */
+    #agents-pane:focus, #files-pane:focus,
+    #recent-pane:focus, #preview-pane:focus {
+        border: round $accent;
+    }
     /* Three stacked panels on the left; preview fills the right. */
     #agents-pane  { height: 18%; }
     #files-pane   { height: 50%; }
@@ -302,9 +309,18 @@ class FilesApp(App):
             tree.root.add("(empty sandbox)", allow_expand=False)
             return
         for entry in entries:
-            icon = "📁 " if entry.get("is_dir") else "📄 "
+            is_dir = bool(entry.get("is_dir"))
+            icon = "📁 " if is_dir else "📄 "
             label = f"{icon}{entry.get('name', '?')}"
-            tree.root.add(label, data=entry.get("path"), allow_expand=False)
+            # Store ``(path, is_dir)`` so highlight handlers can tell
+            # them apart without round-tripping to the daemon. The
+            # tuple is opaque to the Tree widget — it just hands it
+            # back via event.node.data.
+            tree.root.add(
+                label,
+                data=(entry.get("path"), is_dir),
+                allow_expand=False,
+            )
 
     def _populate_recent(self, entries: list[dict[str, Any]]) -> None:
         tree = self.query_one("#recent-pane", StatusTree)
@@ -460,12 +476,38 @@ class FilesApp(App):
 
     @on(Tree.NodeSelected, "#files-pane")
     def _on_file_selected(self, event: Tree.NodeSelected) -> None:
+        """Enter on a files-pane node. Files: load into preview.
+        Directories: descend (replace the tree with the subdir's
+        listing). The split between Selected (Enter) and Highlighted
+        (arrows/click) below keeps directories from descending on
+        every cursor move."""
+        data = event.node.data
+        path, _ = _split_file_data(data)
+        if not (path and self._selected_addr):
+            return
+        self._refresh_files(self._selected_addr, path)
+
+    @on(Tree.NodeHighlighted, "#files-pane")
+    def _on_file_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Arrow / click on a files-pane node: live-preview if it's a
+        file, no-op if it's a directory (waiting for Enter to descend
+        so navigation past a directory doesn't reshape the tree)."""
+        data = event.node.data
+        path, is_dir = _split_file_data(data)
+        if not (path and self._selected_addr) or is_dir:
+            return
+        self._refresh_files(self._selected_addr, path)
+
+    @on(Tree.NodeSelected, "#recent-pane")
+    def _on_recent_selected(self, event: Tree.NodeSelected) -> None:
         path = event.node.data
         if isinstance(path, str) and self._selected_addr:
             self._refresh_files(self._selected_addr, path)
 
-    @on(Tree.NodeSelected, "#recent-pane")
-    def _on_recent_selected(self, event: Tree.NodeSelected) -> None:
+    @on(Tree.NodeHighlighted, "#recent-pane")
+    def _on_recent_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Recent-pane only ever contains files (the daemon's recent
+        RPC filters dirs), so arrow / click always previews."""
         path = event.node.data
         if isinstance(path, str) and self._selected_addr:
             self._refresh_files(self._selected_addr, path)
@@ -520,6 +562,18 @@ class FilesApp(App):
         if self._search_matches:
             self._rerender_preview()
         self.query_one("#preview-pane", VerticalScroll).focus()
+
+
+def _split_file_data(data: Any) -> tuple[str | None, bool]:
+    """Files-pane node data was historically a bare path string; now
+    it's a ``(path, is_dir)`` tuple. Tolerate both so a stale node
+    (e.g. mid-refresh) doesn't crash the handler."""
+    if isinstance(data, tuple) and len(data) == 2:
+        path, is_dir = data
+        return (path if isinstance(path, str) else None, bool(is_dir))
+    if isinstance(data, str):
+        return (data, False)
+    return (None, False)
 
 
 def _agent_label(agent: dict[str, Any]) -> str:
