@@ -236,6 +236,91 @@ def test_preapproved_tools_default_ask_set_held_back(tmp_path):
     assert "Bash" not in allowed
 
 
+def test_toolbase_profile_adds_second_mcp_server(tmp_path):
+    """When ``spec.toolbase_profile`` is set, the engine wires a second
+    MCP server entry (``toolbase``) alongside the existing ``spawn``
+    one — so the child sees the toolbase profile's tools in its tool
+    list. ``--no-tui`` is required: serving with the TUI breaks stdio.
+    """
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from spawn.address import Address
+    from spawn.capability import CapabilitySet
+    from spawn.engines.claude_agent import ClaudeAgentEngine
+    from spawn.mailbox import Mailbox
+    from spawn.record import AgentRecord, AgentSpec
+    from spawn.runtime import Runtime
+
+    rt = Runtime(store_dir=tmp_path)
+    addr = Address(id="ag-tb", label="root")
+    record = AgentRecord(
+        addr=addr,
+        spec=AgentSpec(
+            role_prompt="x",
+            tools=["Read"],
+            toolbase_profile="research",
+        ),
+        inbox=Mailbox(),
+        capabilities=CapabilitySet(self_addr=addr),
+        token="t",
+        depth=0,
+    )
+    with patch("claude_agent_sdk.ClaudeSDKClient"):
+        engine = ClaudeAgentEngine(
+            record=record,
+            runtime=rt,
+            sandbox_dir=tmp_path,
+            allowed_tools=record.spec.tools,
+        )
+        servers = dict(engine._options.mcp_servers or {})
+
+    assert "toolbase" in servers
+    tb_cfg = servers["toolbase"]
+    # The SDK's McpStdioServerConfig is a typed dict; accept either
+    # the .args attribute or ["args"] indexing.
+    args = getattr(tb_cfg, "args", None) or tb_cfg["args"]
+    assert "serve" in args
+    assert "--profile" in args
+    assert "research" in args
+    assert "--no-tui" in args
+
+
+def test_toolbase_profile_absent_means_no_toolbase_server(tmp_path):
+    """No ``toolbase_profile`` ⇒ no toolbase MCP server (default
+    behavior; toolbase is strictly opt-in)."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from spawn.address import Address
+    from spawn.capability import CapabilitySet
+    from spawn.engines.claude_agent import ClaudeAgentEngine
+    from spawn.mailbox import Mailbox
+    from spawn.record import AgentRecord, AgentSpec
+    from spawn.runtime import Runtime
+
+    rt = Runtime(store_dir=tmp_path)
+    addr = Address(id="ag-no-tb", label="root")
+    record = AgentRecord(
+        addr=addr,
+        spec=AgentSpec(role_prompt="x", tools=["Read"]),
+        inbox=Mailbox(),
+        capabilities=CapabilitySet(self_addr=addr),
+        token="t",
+        depth=0,
+    )
+    with patch("claude_agent_sdk.ClaudeSDKClient"):
+        engine = ClaudeAgentEngine(
+            record=record,
+            runtime=rt,
+            sandbox_dir=tmp_path,
+            allowed_tools=record.spec.tools,
+        )
+        servers = dict(engine._options.mcp_servers or {})
+
+    assert "toolbase" not in servers
+
+
 def test_dispatch_rejects_unknown_engine(tmp_path):
     """``build_runtime`` dispatcher refuses unknown engine names with
     a clear error pointing at the supported set."""

@@ -246,6 +246,31 @@ class ClaudeAgentEngine:
                     "PATH": os.environ.get("PATH", ""),
                 },
             )
+        # Optional toolbase profile: add a second MCP server that
+        # serves a curated set of toolkits (per the named profile).
+        # Lets a parent agent hand its child a different tool slate
+        # than its own — "agent curates tools for subagents." The
+        # profile must already exist (created via ``tb activate``);
+        # this just connects to it. Toolbase tools are NOT
+        # pre-approved here — they flow through ``can_use_tool``
+        # so the user gets a permission prompt per call (or
+        # auto-allow when the agent is in auto mode).
+        if record.spec.toolbase_profile:
+            import shutil
+
+            from claude_agent_sdk.types import McpStdioServerConfig
+            tb_bin = shutil.which("toolbase") or "toolbase"
+            mcp_servers["toolbase"] = McpStdioServerConfig(
+                command=tb_bin,
+                args=[
+                    "serve",
+                    "--profile",
+                    record.spec.toolbase_profile,
+                    "--no-tui",
+                ],
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+
         if mcp_servers:
             # Whitelist every bridged tool with the SDK-mandated
             # mcp__<server>__<name> prefix. Names are PascalCase
@@ -257,6 +282,7 @@ class ClaudeAgentEngine:
                 "Peek", "Call",
                 "AgentMap", "AgentFold", "AgentFilter",
                 "AgentFixedPoint",
+                "AgentRace", "AgentEnsemble", "AgentCritic",
             ):
                 bridged_tools.append(f"mcp__spawn__{short}")
 

@@ -32,6 +32,7 @@ def test_bridge_tools_expose_pascalcase_display_names():
         "Spawn", "Send", "Recv", "WaitFor",
         "Terminate", "Introduce", "ListInbox", "Peek", "Call",
         "AgentMap", "AgentFold", "AgentFilter", "AgentFixedPoint",
+        "AgentRace", "AgentEnsemble", "AgentCritic",
     ]
 
 

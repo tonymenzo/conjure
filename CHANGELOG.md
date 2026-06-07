@@ -34,6 +34,17 @@ capability passing, and FP-style combinators on top.
   ensemble for best-of-N synthesis via an aggregator agent, critic for
   generator/critic refinement loops).
 
+### Integrations
+
+- **Toolbase consumer**: ``AgentSpec`` gains ``toolbase_profile: str |
+  None``. When set, the ``claude_agent`` engine wires a second MCP
+  server (``toolbase serve --profile <name> --no-tui``) into the
+  child's ``mcp_servers`` alongside spawn's own surface. Lets a parent
+  agent curate which toolbase profile (and therefore which toolkits /
+  tools) each subagent sees — agent-curates-tools-for-subagents.
+  Strictly opt-in; ``None`` (default) means no toolbase wiring.
+  Requires ``toolbase`` on ``PATH``.
+
 ### Tests
 
 - **121 tests** total, all offline (no LLM, no network).

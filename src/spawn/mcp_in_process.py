@@ -25,10 +25,13 @@ import json
 from typing import Any
 
 from spawn.tools.combinators import (
+    AgentCriticTool,
+    AgentEnsembleTool,
     AgentFilterTool,
     AgentFixedPointTool,
     AgentFoldTool,
     AgentMapTool,
+    AgentRaceTool,
 )
 from spawn.tools.primitives import (
     CallTool,
@@ -61,6 +64,9 @@ _TOOL_TARGETS: list[tuple[str, type]] = [
     ("AgentFold", AgentFoldTool),
     ("AgentFilter", AgentFilterTool),
     ("AgentFixedPoint", AgentFixedPointTool),
+    ("AgentRace", AgentRaceTool),
+    ("AgentEnsemble", AgentEnsembleTool),
+    ("AgentCritic", AgentCriticTool),
 ]
 
 

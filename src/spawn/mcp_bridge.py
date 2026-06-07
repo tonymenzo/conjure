@@ -41,10 +41,13 @@ from orchestral.tools.base.field_utils import is_state_field
 from spawn.control import ControlClient
 from spawn.tools._base import StateField
 from spawn.tools.combinators import (
+    AgentCriticTool,
+    AgentEnsembleTool,
     AgentFilterTool,
     AgentFixedPointTool,
     AgentFoldTool,
     AgentMapTool,
+    AgentRaceTool,
 )
 from spawn.tools.primitives import (
     CallTool,
@@ -83,6 +86,9 @@ _BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
     "agent_fold": (AgentFoldTool, "AgentFold"),
     "agent_filter": (AgentFilterTool, "AgentFilter"),
     "agent_fixed_point": (AgentFixedPointTool, "AgentFixedPoint"),
+    "agent_race": (AgentRaceTool, "AgentRace"),
+    "agent_ensemble": (AgentEnsembleTool, "AgentEnsemble"),
+    "agent_critic": (AgentCriticTool, "AgentCritic"),
 }
 
 

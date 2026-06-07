@@ -85,6 +85,14 @@ class AgentSpec(BaseModel):
     # UI surfaces (tree pane, transcripts) hide these by default; they
     # remain inspectable via ``Peek`` and addressable like any agent.
     internal: bool = False
+    # Name of a ``toolbase`` profile to expose to this agent as a second
+    # MCP server. When set, the ``claude_agent`` engine spawns
+    # ``toolbase serve --profile <name> --no-tui`` and wires its tools
+    # in alongside spawn's own ``mcp__spawn__*`` surface. The parent
+    # gets to curate which toolbase profile (and therefore which
+    # toolkits/tools) each child sees — "agent-curates-tools-for-
+    # subagents". ``None`` (default) means no toolbase wiring.
+    toolbase_profile: str | None = None
 
 
 @dataclass
