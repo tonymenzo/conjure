@@ -11,10 +11,10 @@ composite numbers, longer chains for primes-times-small-factors.
 
 from __future__ import annotations
 
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
-from combinator.tools.primitives import send_impl, spawn_impl
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
+from spawn.tools.primitives import send_impl, spawn_impl
 
 
 def _smallest_divisor(n: int) -> int | None:

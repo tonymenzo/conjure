@@ -1,4 +1,4 @@
-"""Tests for combinator.tmux_session.
+"""Tests for spawn.tmux_session.
 
 Each test creates a uniquely-named ephemeral session and tears it down
 in a finalizer, so test runs don't collide with each other or with a
@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from combinator.tmux_session import TmuxSession, TmuxSessionError, tmux_available
+from spawn.tmux_session import TmuxSession, TmuxSessionError, tmux_available
 
 
 pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed")
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed
 
 @pytest.fixture
 def session_name() -> str:
-    return f"combinator-test-{uuid.uuid4().hex[:8]}"
+    return f"spawn-test-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -89,6 +89,6 @@ def test_kill_session_is_idempotent(session_name: str):
 
 def test_init_raises_without_tmux(monkeypatch):
     """If tmux is missing, the constructor raises a clean error."""
-    monkeypatch.setattr("combinator.tmux_session.tmux_available", lambda: False)
+    monkeypatch.setattr("spawn.tmux_session.tmux_available", lambda: False)
     with pytest.raises(TmuxSessionError, match="tmux binary"):
         TmuxSession("anything")

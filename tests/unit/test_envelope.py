@@ -1,4 +1,4 @@
-"""Tests for combinator.envelope."""
+"""Tests for spawn.envelope."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from combinator.address import Address
-from combinator.envelope import Envelope
+from spawn.address import Address
+from spawn.envelope import Envelope
 
 
 def _make(

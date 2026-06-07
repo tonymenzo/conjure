@@ -1,10 +1,10 @@
-"""Tests for combinator.llm's provider registry."""
+"""Tests for spawn.llm's provider registry."""
 
 from __future__ import annotations
 
 import pytest
 
-from combinator.llm import (
+from spawn.llm import (
     SUPPORTED_PROVIDERS,
     api_key_present,
     key_env_for,

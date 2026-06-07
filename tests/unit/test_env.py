@@ -1,4 +1,4 @@
-"""Tests for combinator.env — .env file loading and user-env editing."""
+"""Tests for spawn.env — .env file loading and user-env editing."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from combinator import env as env_mod
+from spawn import env as env_mod
 
 
 def test_redact_passes_through_non_secret_keys():

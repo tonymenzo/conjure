@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
 
 
 def test_scripted_engine_reports_zero_cost():

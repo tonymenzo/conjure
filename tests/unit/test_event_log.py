@@ -1,4 +1,4 @@
-"""Tests for combinator.event_log."""
+"""Tests for spawn.event_log."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from combinator.event_log import EventLog, tail
+from spawn.event_log import EventLog, tail
 
 
 def test_emit_appends_jsonl_line(tmp_path: Path):

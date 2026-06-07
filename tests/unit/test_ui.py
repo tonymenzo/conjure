@@ -1,4 +1,4 @@
-"""Tests for combinator._ui — display hook renderer."""
+"""Tests for spawn._ui — display hook renderer."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from orchestral.llm.base.response import Response
 from orchestral.llm.base.tool_call import ToolCall
 from rich.console import Console
 
-from combinator._ui import make_display_hook_builder
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn._ui import make_display_hook_builder
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 class _Ctx:

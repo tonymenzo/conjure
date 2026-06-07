@@ -1,7 +1,7 @@
 """In-process MCP bridge: schema generation + handler invocation.
 
 The engine relies on ``build_in_process_mcp_server`` to replace the
-``combinator-mcp`` subprocess with direct Python calls. These tests
+``spawn-mcp`` subprocess with direct Python calls. These tests
 exercise the schema-shaping (state fields excluded, runtime fields
 preserved) and the handler path (Spawn / Send round-trip through the
 runtime) without booting the SDK.
@@ -21,15 +21,15 @@ pytest.importorskip(
     reason="claude-agent-sdk required for the in-process MCP bridge",
 )
 
-from combinator.mcp_in_process import (
+from spawn.mcp_in_process import (
     _HIDDEN_FIELDS,
     _build_input_schema,
     _make_handler,
     build_in_process_mcp_server,
 )
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.tools.primitives import (
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.tools.primitives import (
     CallTool,
     SendTool,
     SpawnTool,
@@ -106,7 +106,7 @@ def test_build_in_process_server_returns_config():
     cfg = build_in_process_mcp_server("test-token")
     assert cfg is not None
     assert isinstance(cfg, dict)
-    assert cfg.get("name") == "combinator"
+    assert cfg.get("name") == "spawn"
     assert "instance" in cfg
 
 

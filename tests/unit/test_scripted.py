@@ -1,12 +1,12 @@
-"""Tests for combinator.scripted — ScriptedEngine + BehaviorRegistry."""
+"""Tests for spawn.scripted — ScriptedEngine + BehaviorRegistry."""
 
 from __future__ import annotations
 
-from combinator.envelope import Envelope
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry, ScriptedEngine
-from combinator.tools.primitives import send_impl
+from spawn.envelope import Envelope
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry, ScriptedEngine
+from spawn.tools.primitives import send_impl
 
 
 def test_behavior_registry_dispatches_by_role():

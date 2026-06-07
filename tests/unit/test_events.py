@@ -1,4 +1,4 @@
-"""Tests for combinator.events — orchestral-message serializer."""
+"""Tests for spawn.events — orchestral-message serializer."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from orchestral.context.message import Message
 from orchestral.llm.base.response import Response
 from orchestral.llm.base.tool_call import ToolCall
 
-from combinator.events import (
+from spawn.events import (
     make_spawned_event,
     make_system_prompt_event,
     make_terminated_event,

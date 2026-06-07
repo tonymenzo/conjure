@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from combinator.address import Address
-from combinator.runtime import Runtime
+from spawn.address import Address
+from spawn.runtime import Runtime
 
 
 @pytest.fixture

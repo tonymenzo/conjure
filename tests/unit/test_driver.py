@@ -1,4 +1,4 @@
-"""Tests for combinator.driver — uses an inline mock engine so the
+"""Tests for spawn.driver — uses an inline mock engine so the
 driver loop can be exercised without orchestral.
 """
 
@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from combinator.agent import Agent
-from combinator.record import AgentRecord, AgentSpec
-from combinator.runtime import Runtime
+from spawn.agent import Agent
+from spawn.record import AgentRecord, AgentSpec
+from spawn.runtime import Runtime
 
 
 class MockEngine:

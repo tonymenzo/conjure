@@ -1,4 +1,4 @@
-"""Smoke tests for the combinator CLI.
+"""Smoke tests for the spawn CLI.
 
 These tests exercise the command-line layer using a FakeLLM injected
 in-process; they do not invoke the binary as a subprocess.
@@ -16,15 +16,15 @@ from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 from rich.console import Console
 
-from combinator.cli import (
+from spawn.cli import (
     _handle_command,
     _print_tree,
     _run_one_shot,
 )
-from combinator.config import load_config_from_mapping
-from combinator.engines.orchestral import make_orchestral_engine_factory
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.config import load_config_from_mapping
+from spawn.engines.orchestral import make_orchestral_engine_factory
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 class _FakeLLM(LLM):

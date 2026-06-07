@@ -1,11 +1,11 @@
-"""Tests for combinator.address and combinator.capability."""
+"""Tests for spawn.address and spawn.capability."""
 
 from __future__ import annotations
 
 import pytest
 
-from combinator.address import SYSTEM, USER, Address
-from combinator.capability import CapabilitySet
+from spawn.address import SYSTEM, USER, Address
+from spawn.capability import CapabilitySet
 
 
 def test_address_is_frozen():

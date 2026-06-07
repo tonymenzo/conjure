@@ -1,5 +1,5 @@
 """End-to-end tests for the ``tool_call`` control RPC — the bridge
-the combinator-mcp subprocess uses to forward claude_agent's MCP
+the spawn-mcp subprocess uses to forward claude_agent's MCP
 calls into the daemon's tool surface."""
 
 from __future__ import annotations
@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from combinator.control import ControlClient, ControlServer
-from combinator.mcp_bridge import _build_bridge_tools
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.control import ControlClient, ControlServer
+from spawn.mcp_bridge import _build_bridge_tools
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 def test_bridge_tools_expose_pascalcase_display_names():
-    """The MCP bridge serves combinator tools under PascalCase display
+    """The MCP bridge serves spawn tools under PascalCase display
     names so they read the same as Claude Code's built-in tools (Read,
     Write, Bash) in the SDK's tool list and the chat pane. Locks in
     the explicit name map in mcp_bridge._BRIDGE_TARGETS — orchestral's

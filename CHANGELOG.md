@@ -28,7 +28,7 @@ capability passing, and FP-style combinators on top.
   Capability enforcement lives in the tool layer.
 - **Combinator tools**: ``agent_map``, ``agent_fold``, ``agent_filter``,
   ``agent_fixed_point``. LLM-callable wrappers around the
-  Python combinators in ``combinator.combinators``.
+  Python combinators in ``spawn.combinators``.
 
 ### Tests
 

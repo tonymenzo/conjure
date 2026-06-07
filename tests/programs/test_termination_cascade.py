@@ -4,9 +4,9 @@ root and any non-descendants untouched.
 
 from __future__ import annotations
 
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.tools.primitives import spawn_impl, terminate_impl
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.tools.primitives import spawn_impl, terminate_impl
 
 
 def test_terminate_middle_cascades_to_grandchild():

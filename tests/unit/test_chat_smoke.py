@@ -1,4 +1,4 @@
-"""Smoke tests for combinator.chat — verify the module imports and
+"""Smoke tests for spawn.chat — verify the module imports and
 constructs an app without launching the TUI event loop.
 
 The textual runtime needs a TTY and an event loop, so we can't really
@@ -13,7 +13,7 @@ from pathlib import Path
 
 def test_chat_app_constructs(tmp_path: Path):
     """``ChatApp(...)`` should construct cleanly given valid args."""
-    from combinator.chat import ChatApp
+    from spawn.chat import ChatApp
 
     app = ChatApp(
         log_path=tmp_path / "log.jsonl",
@@ -26,10 +26,10 @@ def test_chat_app_constructs(tmp_path: Path):
 
 
 def test_chat_main_help_does_not_raise():
-    """``combinator-chat --help`` exits cleanly with usage info."""
+    """``spawn-chat --help`` exits cleanly with usage info."""
     import sys
 
-    from combinator import chat
+    from spawn import chat
 
     with __import__("contextlib").suppress(SystemExit):
         chat.main(["--help"])
@@ -41,7 +41,7 @@ def test_format_event_system_prompt_renders_panel():
     initialization context as the first message."""
     from rich.panel import Panel
 
-    from combinator.chat import _format_event
+    from spawn.chat import _format_event
 
     block, classes = _format_event(
         {"kind": "system_prompt", "text": "you are a worker", "label": "alpha"}
@@ -64,7 +64,7 @@ def test_format_event_send_uses_response_body_layout():
     """A ``Send`` tool call should render its body as visible text
     rows (rather than only the compact ``● Send(args)`` line) so the
     user sees what the agent sent without going to the meta view."""
-    from combinator.chat import _format_event
+    from spawn.chat import _format_event
 
     block, _ = _format_event(
         {
@@ -88,7 +88,7 @@ def test_format_event_send_uses_response_body_layout():
 def test_format_event_non_send_tool_call_keeps_compact_form():
     """Non-``Send`` tool calls retain the existing compact form so
     we don't accidentally explode every tool's args into the chat."""
-    from combinator.chat import _format_event
+    from spawn.chat import _format_event
 
     block, _ = _format_event(
         {

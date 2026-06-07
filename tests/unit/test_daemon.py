@@ -1,4 +1,4 @@
-"""Tests for combinator.daemon — pure file/PID logic.
+"""Tests for spawn.daemon — pure file/PID logic.
 
 ``daemonize`` itself forks; we don't exercise the fork path in tests
 (it would orphan a process). Instead we test the helpers that operate
@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from combinator.daemon import is_daemon_running, stop_daemon
+from spawn.daemon import is_daemon_running, stop_daemon
 
 
 def test_is_daemon_running_missing_file(tmp_path: Path):

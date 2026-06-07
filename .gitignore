@@ -23,6 +23,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+.spawn/
+spawn-store/
+# Legacy pre-rename artifact dirs — kept ignored so stale ``.combinator/``
+# data on existing machines doesn't show up after the spawn rename.
 .combinator/
 combinator-store/
 

@@ -1,4 +1,4 @@
-# Combinator
+# Spawn
 
 A multi-agent harness built on [`orchestral`](https://pypi.org/project/orchestral-ai/).
 Organized around three primitives — recursive agent spawning, addressable

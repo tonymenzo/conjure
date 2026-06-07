@@ -14,9 +14,9 @@ from orchestral.context.message import Message
 from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 
-from combinator.engines.orchestral import make_orchestral_engine_factory
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.engines.orchestral import make_orchestral_engine_factory
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 class _CountingFakeLLM(LLM):

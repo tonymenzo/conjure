@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import re
 
-from combinator.combinators import agent_fixed_point
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
-from combinator.tools.primitives import send_impl
+from spawn.combinators import agent_fixed_point
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
+from spawn.tools.primitives import send_impl
 
 
 def normalize_step(engine, prompt, envelopes):

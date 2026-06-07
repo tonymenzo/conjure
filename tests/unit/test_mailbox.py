@@ -1,13 +1,13 @@
-"""Tests for combinator.mailbox.Mailbox."""
+"""Tests for spawn.mailbox.Mailbox."""
 
 from __future__ import annotations
 
 import threading
 import time
 
-from combinator.address import SYSTEM, USER, Address
-from combinator.envelope import Envelope
-from combinator.mailbox import Mailbox
+from spawn.address import SYSTEM, USER, Address
+from spawn.envelope import Envelope
+from spawn.mailbox import Mailbox
 
 
 def _env(*, msg_id: str, from_: Address, to: Address, body=None,

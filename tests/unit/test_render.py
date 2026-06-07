@@ -1,4 +1,4 @@
-"""Tests for combinator.render.
+"""Tests for spawn.render.
 
 The renderer is a tail-and-render loop. We test by writing a synthetic
 event log to disk and running ``render.main`` in a thread with a
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from combinator._ui import render_event
+from spawn._ui import render_event
 
 
 def test_render_event_response_with_tool_calls_uses_panel():
@@ -91,7 +91,7 @@ def test_render_event_terminated():
 def test_render_main_loop_processes_log(tmp_path: Path, monkeypatch, capsys):
     """End-to-end: write events to a file, run render.main in a thread,
     stop it, verify the rich-rendered output contains our events."""
-    from combinator import render
+    from spawn import render
 
     log_path = tmp_path / "events.jsonl"
     log_path.write_text(

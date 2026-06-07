@@ -11,10 +11,10 @@ from orchestral.context.message import Message
 from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 
-from combinator.engines.orchestral import make_orchestral_engine_factory
-from combinator.event_log import EventLog
-from combinator.record import AgentRecord, AgentSpec
-from combinator.runtime import Runtime
+from spawn.engines.orchestral import make_orchestral_engine_factory
+from spawn.event_log import EventLog
+from spawn.record import AgentRecord, AgentSpec
+from spawn.runtime import Runtime
 
 
 class _FakeLLM(LLM):

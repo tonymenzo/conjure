@@ -1,4 +1,4 @@
-"""Tests for combinator.persistence and Runtime.replay."""
+"""Tests for spawn.persistence and Runtime.replay."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from combinator.address import Address
-from combinator.persistence import Journal
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.address import Address
+from spawn.persistence import Journal
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 def test_journal_writes_and_reads_back(tmp_path: Path):

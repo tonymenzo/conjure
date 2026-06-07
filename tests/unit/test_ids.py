@@ -1,10 +1,10 @@
-"""Tests for combinator.ids."""
+"""Tests for spawn.ids."""
 
 from __future__ import annotations
 
 import re
 
-from combinator.ids import new_agent_id, new_message_id, new_runtime_token
+from spawn.ids import new_agent_id, new_message_id, new_runtime_token
 
 
 def test_agent_id_format():

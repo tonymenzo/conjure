@@ -1,7 +1,7 @@
 # Agentic higher-order functions
 
 > Living design doc. Tracks the space of higher-order functions over
-> agents that the combinator substrate enables. Companion to
+> agents that the spawn substrate enables. Companion to
 > `DESIGN.md`, which covers the underlying philosophy.
 
 ## 0. Why this doc
@@ -285,7 +285,7 @@ A few invariants every new HOF should preserve:
 ## 7. Cross-references
 
 - `DESIGN.md` — the substrate's philosophy.
-- `src/combinator/combinators.py` — Python impl of the existing four FP combinators.
-- `src/combinator/tools/combinators.py` — LLM-callable wrappers.
-- `src/combinator/system_prompts/claude_agent.md` — the LLM's view of the tool surface.
-- Agent self-test report at `examples/.combinator/store/sandboxes/ag-2vwouvcfit6o4/combinator-mcp-test-results.md` — concrete UX feedback that surfaced several of these ideas.
+- `src/spawn/combinators.py` — Python impl of the existing four FP combinators.
+- `src/spawn/tools/combinators.py` — LLM-callable wrappers.
+- `src/spawn/system_prompts/claude_agent.md` — the LLM's view of the tool surface.
+- Agent self-test report at `examples/.spawn/store/sandboxes/ag-2vwouvcfit6o4/spawn-mcp-test-results.md` — concrete UX feedback that surfaced several of these ideas.

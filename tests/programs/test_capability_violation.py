@@ -8,9 +8,9 @@ Two siblings ``A`` and ``B`` are spawned under the same root. Without
 
 from __future__ import annotations
 
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.tools.primitives import introduce_impl, send_impl, spawn_impl
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.tools.primitives import introduce_impl, send_impl, spawn_impl
 
 
 def test_siblings_cannot_send_without_introduction():

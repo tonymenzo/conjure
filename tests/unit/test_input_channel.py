@@ -1,7 +1,7 @@
 """Tests for the input channel + input reader loop.
 
 The CLI's ``_start_input_reader`` tails a JSONL file appended by the
-``combinator-input`` window and dispatches each line. We test it
+``spawn-input`` window and dispatches each line. We test it
 in-process by writing lines manually and verifying the reader's
 behavior.
 """
@@ -13,9 +13,9 @@ import threading
 import time
 from pathlib import Path
 
-from combinator.cli import _start_input_reader
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.cli import _start_input_reader
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 def _append(path: Path, payload: dict) -> None:

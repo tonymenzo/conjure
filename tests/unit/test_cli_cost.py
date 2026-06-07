@@ -6,10 +6,10 @@ import io
 
 from rich.console import Console
 
-from combinator.cli import _handle_command, _print_cost
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
+from spawn.cli import _handle_command, _print_cost
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
 
 
 def _captured_console() -> Console:

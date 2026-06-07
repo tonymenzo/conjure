@@ -1,18 +1,18 @@
-"""Tests for combinator.runtime — spawn/terminate/shutdown lifecycle."""
+"""Tests for spawn.runtime — spawn/terminate/shutdown lifecycle."""
 
 from __future__ import annotations
 
 import pytest
 
-from combinator.address import USER
-from combinator.errors import (
-    CombinatorError,
+from spawn.address import USER
+from spawn.errors import (
+    SpawnError,
     MaxDepthExceeded,
     NoSuchAddress,
     Terminated,
 )
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
 
 
 def test_root_creates_addressable_agent():
@@ -28,7 +28,7 @@ def test_root_creates_addressable_agent():
 def test_root_can_only_be_spawned_once():
     rt = Runtime()
     rt.root(AgentSpec(role_prompt="root"))
-    with pytest.raises(CombinatorError):
+    with pytest.raises(SpawnError):
         rt.root(AgentSpec(role_prompt="second-root"))
 
 
@@ -68,7 +68,7 @@ def test_send_external_to_root():
 
 
 def test_send_external_to_unknown_address_raises():
-    from combinator.address import Address
+    from spawn.address import Address
     rt = Runtime()
     with pytest.raises(NoSuchAddress):
         rt.send_external(to=Address(id="ag-bogus"), body="x")
@@ -214,7 +214,7 @@ def test_operations_after_shutdown_raise():
     rt = Runtime()
     rt.root(AgentSpec(role_prompt="root"))
     rt.shutdown()
-    with pytest.raises(CombinatorError):
+    with pytest.raises(SpawnError):
         rt.root(AgentSpec(role_prompt="another"))
 
 

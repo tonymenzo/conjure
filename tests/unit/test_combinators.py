@@ -1,4 +1,4 @@
-"""Tests for combinator.combinators — agent_map / fold / filter / fixed_point.
+"""Tests for spawn.combinators — agent_map / fold / filter / fixed_point.
 
 Each test wires up a BehaviorRegistry with worker behaviors that read
 their inbox, compute a result, and send it to the ``reply_to`` address
@@ -17,17 +17,17 @@ import time
 
 import pytest
 
-from combinator.combinators import (
+from spawn.combinators import (
     agent_filter,
     agent_fixed_point,
     agent_fold,
     agent_map,
 )
-from combinator.errors import Timeout
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
-from combinator.tools.primitives import call_impl, send_impl
+from spawn.errors import Timeout
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
+from spawn.tools.primitives import call_impl, send_impl
 
 
 def _idle_root(prompt, envelopes):

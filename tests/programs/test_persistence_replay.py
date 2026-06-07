@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from combinator.combinators import agent_map
-from combinator.record import AgentSpec
-from combinator.runtime import Runtime
-from combinator.scripted import BehaviorRegistry
-from combinator.tools.primitives import send_impl
+from spawn.combinators import agent_map
+from spawn.record import AgentSpec
+from spawn.runtime import Runtime
+from spawn.scripted import BehaviorRegistry
+from spawn.tools.primitives import send_impl
 
 
 def squarer(engine, prompt, envelopes):
