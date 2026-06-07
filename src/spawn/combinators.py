@@ -1,5 +1,5 @@
 """Python combinators: ``agent_map``, ``agent_fold``, ``agent_filter``,
-``agent_fixed_point``.
+``agent_fixed_point``, ``agent_race``, ``agent_ensemble``, ``agent_critic``.
 
 Each combinator builds on the primitive operations (spawn, send via
 mailbox, recv via mailbox, terminate) without re-implementing them.
@@ -258,6 +258,297 @@ def agent_filter(
         runtime, parent, spec_factory, items_list, timeout_s=timeout_s
     )
     return [item for item, keep in zip(items_list, verdicts) if keep]
+
+
+def _collect_first(
+    *,
+    runtime: Runtime,
+    collector: Address,
+    expected_senders: list[Address],
+    timeout_s: float,
+) -> tuple[int, Any]:
+    """Block until ANY ``expected_senders`` replies; return ``(idx, body)``.
+
+    Companion to ``_collect`` (which waits for all). Used by races and
+    other first-wins fan-outs.
+    """
+    record = runtime.record_for(collector)
+    sender_to_idx = {sender: idx for idx, sender in enumerate(expected_senders)}
+    deadline = time.monotonic() + timeout_s
+    cursor = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise Timeout(
+                "no reply received before timeout",
+                workers=[s.id for s in expected_senders],
+                received=0,
+                expected=len(expected_senders),
+                partial=[],
+            )
+        envelopes = record.inbox.read(
+            since_seq=cursor,
+            max_n=len(expected_senders),
+            timeout_s=min(remaining, 5.0),
+        )
+        if not envelopes:
+            continue
+        for env in envelopes:
+            cursor = max(cursor, env.seq)
+            idx = sender_to_idx.get(env.from_)
+            if idx is None:
+                continue
+            return idx, env.body
+
+
+def agent_race(
+    runtime: Runtime,
+    parent: Address,
+    specs: Sequence[AgentSpec],
+    body: Any,
+    *,
+    timeout_s: float = 60.0,
+) -> tuple[int, Any]:
+    """Spawn one worker per spec, dispatch the same ``body`` to each, return
+    the **first** reply. Losing workers are terminated.
+
+    Returns ``(winner_idx, winner_body)`` so the caller can attribute the
+    answer to the spec that produced it (e.g. "the haiku racer won at
+    index 0"). The losers do not get a chance to reply; their work is
+    discarded.
+
+    Use this when you don't know which spec will give the best answer
+    quickly — race haiku/sonnet/opus on a hard question, race three
+    retrieval strategies, race three reasoning approaches.
+    """
+    specs_list = list(specs)
+    if not specs_list:
+        raise ValueError("agent_race requires at least one spec")
+    collector = _spawn_collector(runtime, parent, label="race-collector")
+    workers: list[Address] = []
+    try:
+        augmented = [
+            s.model_copy(
+                update={"capabilities": list(s.capabilities) + [collector]}
+            )
+            for s in specs_list
+        ]
+        workers = runtime._spawn_batch(parent=parent, specs=augmented)
+        runtime.dispatch_batch(
+            [
+                (parent, worker, {"item": body, "reply_to": collector.id})
+                for worker in workers
+            ]
+        )
+        return _collect_first(
+            runtime=runtime,
+            collector=collector,
+            expected_senders=workers,
+            timeout_s=timeout_s,
+        )
+    finally:
+        if workers:
+            runtime.terminate_batch(
+                workers, requested_by="race-cleanup", cascade=True
+            )
+        runtime.terminate(collector, requested_by="oneshot")
+
+
+def agent_ensemble(
+    runtime: Runtime,
+    parent: Address,
+    specs: Sequence[AgentSpec],
+    body: Any,
+    aggregator_spec: AgentSpec,
+    *,
+    timeout_s: float = 120.0,
+) -> Any:
+    """Best-of-N synthesis: fan out N workers on the same ``body``, gather
+    all replies, hand them to ``aggregator_spec``, return its synthesis.
+
+    Differs from a bare ``agent_map`` because the gather phase IS an
+    agent — the aggregator can vote, synthesize, or pick. The aggregator
+    receives ``{"item": [worker1_reply, ..., workerN_reply], "reply_to":
+    collector_id}`` so it can read its inbox directly and decide.
+    """
+    specs_list = list(specs)
+    if not specs_list:
+        raise ValueError("agent_ensemble requires at least one worker spec")
+    collector = _spawn_collector(runtime, parent, label="ensemble-collector")
+    workers: list[Address] = []
+    aggregator: Address | None = None
+    try:
+        augmented = [
+            s.model_copy(
+                update={"capabilities": list(s.capabilities) + [collector]}
+            )
+            for s in specs_list
+        ]
+        workers = runtime._spawn_batch(parent=parent, specs=augmented)
+        runtime.dispatch_batch(
+            [
+                (parent, worker, {"item": body, "reply_to": collector.id})
+                for worker in workers
+            ]
+        )
+        worker_replies = _collect(
+            runtime=runtime,
+            collector=collector,
+            expected_senders=workers,
+            timeout_s=timeout_s,
+        )
+        # Aggregator runs after the fan-in: spawning it earlier would
+        # just sit idle. Same collector so we don't allocate two.
+        aggregator_with_cap = aggregator_spec.model_copy(
+            update={
+                "capabilities": list(aggregator_spec.capabilities) + [collector]
+            }
+        )
+        aggregator = runtime._spawn(parent=parent, spec=aggregator_with_cap)
+        _dispatch(
+            runtime=runtime,
+            sender=parent,
+            recipient=aggregator,
+            body={"item": worker_replies, "reply_to": collector.id},
+        )
+        [aggregated] = _collect(
+            runtime=runtime,
+            collector=collector,
+            expected_senders=[aggregator],
+            timeout_s=timeout_s,
+        )
+        return aggregated
+    finally:
+        if workers:
+            runtime.terminate_batch(
+                workers, requested_by="ensemble-cleanup", cascade=True
+            )
+        if aggregator is not None:
+            runtime.terminate(aggregator, requested_by="oneshot")
+        runtime.terminate(collector, requested_by="oneshot")
+
+
+def _parse_critic_verdict(verdict: Any) -> tuple[bool, str]:
+    """Tolerantly extract ``(ok, notes)`` from a critic's reply.
+
+    Accepts a dict (``{"ok": bool, "notes": str}``), a JSON string of
+    the same shape, or plain text starting with ``ok`` / ``approved`` /
+    ``lgtm`` (case-insensitive). Anything else is treated as a
+    not-yet-approved verdict whose notes are the raw text.
+    """
+    if isinstance(verdict, dict):
+        return bool(verdict.get("ok", False)), str(verdict.get("notes", ""))
+    if isinstance(verdict, str):
+        import json as _json
+        try:
+            parsed = _json.loads(verdict)
+            if isinstance(parsed, dict):
+                return (
+                    bool(parsed.get("ok", False)),
+                    str(parsed.get("notes", "")),
+                )
+        except (ValueError, TypeError):
+            pass
+        stripped = verdict.strip().lower()
+        if stripped.startswith(("ok", "approved", "lgtm")):
+            return True, verdict
+        return False, verdict
+    return False, str(verdict)
+
+
+def agent_critic(
+    runtime: Runtime,
+    parent: Address,
+    generator_spec: AgentSpec,
+    critic_spec: AgentSpec,
+    body: Any,
+    *,
+    max_iters: int = 5,
+    timeout_s: float = 600.0,
+) -> tuple[Any, bool, int]:
+    """Generator + critic refinement loop. Each iteration spawns a fresh
+    generator (it sees the accumulated critique as ``feedback``) and a
+    fresh critic. Stops when the critic returns ``{"ok": true, ...}`` or
+    after ``max_iters`` iterations.
+
+    Returns ``(last_output, converged, iters_used)``. ``converged`` is
+    True only if the critic actually approved before the iteration cap.
+
+    Generator receives ``{"item": <body>, "feedback": [notes...],
+    "reply_to": collector_id}``. Critic receives ``{"item":
+    <generator_output>, "reply_to": collector_id}`` and is expected to
+    reply with a dict ``{"ok": bool, "notes": "<text>"}`` or a JSON
+    string of the same shape. ``_parse_critic_verdict`` accepts plain
+    text starting with ``ok``/``approved``/``lgtm`` as an approval.
+
+    The proper shape ``agent_fixed_point`` was reaching for — strict
+    equality almost never fires on agent output; a critic that says
+    "this is good enough" does.
+    """
+    if max_iters < 1:
+        raise ValueError("agent_critic requires max_iters >= 1")
+    collector = _spawn_collector(runtime, parent, label="critic-collector")
+    feedback: list[str] = []
+    last_output: Any = None
+    converged = False
+    iters_used = 0
+    try:
+        for i in range(max_iters):
+            iters_used = i + 1
+
+            gen_with_cap = generator_spec.model_copy(
+                update={
+                    "capabilities": list(generator_spec.capabilities) + [collector]
+                }
+            )
+            gen = runtime._spawn(parent=parent, spec=gen_with_cap)
+            _dispatch(
+                runtime=runtime,
+                sender=parent,
+                recipient=gen,
+                body={
+                    "item": body,
+                    "feedback": list(feedback),
+                    "reply_to": collector.id,
+                },
+            )
+            [output] = _collect(
+                runtime=runtime,
+                collector=collector,
+                expected_senders=[gen],
+                timeout_s=timeout_s,
+            )
+            runtime.terminate(gen, requested_by="oneshot", cascade=True)
+            last_output = output
+
+            crit_with_cap = critic_spec.model_copy(
+                update={
+                    "capabilities": list(critic_spec.capabilities) + [collector]
+                }
+            )
+            crit = runtime._spawn(parent=parent, spec=crit_with_cap)
+            _dispatch(
+                runtime=runtime,
+                sender=parent,
+                recipient=crit,
+                body={"item": output, "reply_to": collector.id},
+            )
+            [verdict] = _collect(
+                runtime=runtime,
+                collector=collector,
+                expected_senders=[crit],
+                timeout_s=timeout_s,
+            )
+            runtime.terminate(crit, requested_by="oneshot", cascade=True)
+
+            ok, notes = _parse_critic_verdict(verdict)
+            if ok:
+                converged = True
+                break
+            feedback.append(notes)
+        return last_output, converged, iters_used
+    finally:
+        runtime.terminate(collector, requested_by="oneshot")
 
 
 def agent_fixed_point(

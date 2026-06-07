@@ -18,10 +18,13 @@ import time
 import pytest
 
 from spawn.combinators import (
+    agent_critic,
+    agent_ensemble,
     agent_filter,
     agent_fixed_point,
     agent_fold,
     agent_map,
+    agent_race,
 )
 from spawn.errors import Timeout
 from spawn.record import AgentSpec
@@ -426,6 +429,332 @@ def test_fixed_point_does_not_spam_parent_per_iteration():
     )
     rt.shutdown()
 
+
+# ----- agent_race -----
+
+def test_agent_race_returns_first_reply():
+    """Two workers with very different reply delays — the fast one wins,
+    and the slow one's work is discarded."""
+
+    def fast_reply(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(token=engine.token, to=env.body["reply_to"], body="fast")
+        return "ok"
+
+    def slow_reply(engine, prompt, envelopes):
+        for env in envelopes:
+            time.sleep(1.0)
+            send_impl(token=engine.token, to=env.body["reply_to"], body="slow")
+        return "ok"
+
+    rt = _make_runtime({"fast": fast_reply, "slow": slow_reply})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    idx, body = agent_race(
+        rt, root,
+        [AgentSpec(role_prompt="slow"), AgentSpec(role_prompt="fast")],
+        body={"task": "x"},
+        timeout_s=5.0,
+    )
+    assert idx == 1
+    assert body == "fast"
+    rt.shutdown()
+
+
+def test_agent_race_terminates_losers():
+    """Workers that didn't win the race must be terminated by the time
+    ``agent_race`` returns — otherwise they keep burning tokens."""
+
+    def quick(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(token=engine.token, to=env.body["reply_to"], body=42)
+        return "ok"
+
+    def slow(engine, prompt, envelopes):
+        for env in envelopes:
+            time.sleep(2.0)
+            send_impl(token=engine.token, to=env.body["reply_to"], body=99)
+        return "ok"
+
+    rt = _make_runtime({"quick": quick, "slow": slow})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    agent_race(
+        rt, root,
+        [AgentSpec(role_prompt="quick"), AgentSpec(role_prompt="slow")],
+        body={"task": "x"},
+        timeout_s=5.0,
+    )
+    record = rt.record_for(root)
+    for child in record.children:
+        assert rt.record_for(child).status == "terminated"
+    rt.shutdown()
+
+
+def test_agent_race_timeout_when_all_silent():
+    def silent(engine, prompt, envelopes):
+        return "ok"
+
+    rt = _make_runtime({"silent": silent})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    with pytest.raises(Timeout):
+        agent_race(
+            rt, root,
+            [AgentSpec(role_prompt="silent"), AgentSpec(role_prompt="silent")],
+            body={"task": "x"},
+            timeout_s=0.3,
+        )
+    rt.shutdown()
+
+
+# ----- agent_ensemble -----
+
+def test_agent_ensemble_aggregates_worker_replies():
+    """Three workers each return their index; the aggregator returns the
+    sum. Verifies all worker replies reach the aggregator and the
+    aggregator's reply is what comes back."""
+
+    def constant(value):
+        def behavior(engine, prompt, envelopes):
+            for env in envelopes:
+                send_impl(
+                    token=engine.token,
+                    to=env.body["reply_to"],
+                    body=value,
+                )
+            return "ok"
+        return behavior
+
+    def summer(engine, prompt, envelopes):
+        for env in envelopes:
+            answers = env.body["item"]
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body=sum(answers),
+            )
+        return "ok"
+
+    rt = _make_runtime({
+        "one": constant(1),
+        "two": constant(2),
+        "three": constant(3),
+        "summer": summer,
+    })
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out = agent_ensemble(
+        rt, root,
+        [
+            AgentSpec(role_prompt="one"),
+            AgentSpec(role_prompt="two"),
+            AgentSpec(role_prompt="three"),
+        ],
+        body={"task": "count"},
+        aggregator_spec=AgentSpec(role_prompt="summer"),
+        timeout_s=5.0,
+    )
+    assert out == 6
+    rt.shutdown()
+
+
+def test_agent_ensemble_cleans_up_workers_and_aggregator():
+    def echo(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(token=engine.token, to=env.body["reply_to"], body="x")
+        return "ok"
+
+    def picker(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(token=engine.token, to=env.body["reply_to"], body="picked")
+        return "ok"
+
+    rt = _make_runtime({"echo": echo, "picker": picker})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    agent_ensemble(
+        rt, root,
+        [AgentSpec(role_prompt="echo"), AgentSpec(role_prompt="echo")],
+        body={},
+        aggregator_spec=AgentSpec(role_prompt="picker"),
+        timeout_s=5.0,
+    )
+    record = rt.record_for(root)
+    for child in record.children:
+        assert rt.record_for(child).status == "terminated"
+    rt.shutdown()
+
+
+# ----- agent_critic -----
+
+def test_agent_critic_converges_when_critic_approves():
+    """Generator returns the body unchanged; critic approves on iter 1.
+    Result: (body, True, 1)."""
+
+    def echoer(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body=env.body["item"],
+            )
+        return "ok"
+
+    def approver(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body={"ok": True, "notes": "lgtm"},
+            )
+        return "ok"
+
+    rt = _make_runtime({"echo": echoer, "approve": approver})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out, converged, iters = agent_critic(
+        rt, root,
+        generator_spec=AgentSpec(role_prompt="echo"),
+        critic_spec=AgentSpec(role_prompt="approve"),
+        body="hello",
+        max_iters=5,
+        timeout_s=5.0,
+    )
+    assert out == "hello"
+    assert converged is True
+    assert iters == 1
+    rt.shutdown()
+
+
+def test_agent_critic_passes_feedback_to_next_generator():
+    """The critic's notes from iter k must reach the generator on iter
+    k+1 as ``feedback``. The generator records how many feedback items
+    it saw so we can verify the accumulation."""
+
+    seen_feedback_lengths: list[int] = []
+
+    def feedback_aware_gen(engine, prompt, envelopes):
+        for env in envelopes:
+            fb = env.body.get("feedback") or []
+            seen_feedback_lengths.append(len(fb))
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body=f"attempt-{len(fb)}",
+            )
+        return "ok"
+
+    iteration = {"n": 0}
+
+    def reject_then_approve(engine, prompt, envelopes):
+        for env in envelopes:
+            iteration["n"] += 1
+            if iteration["n"] < 3:
+                send_impl(
+                    token=engine.token,
+                    to=env.body["reply_to"],
+                    body={"ok": False, "notes": f"note-{iteration['n']}"},
+                )
+            else:
+                send_impl(
+                    token=engine.token,
+                    to=env.body["reply_to"],
+                    body={"ok": True, "notes": ""},
+                )
+        return "ok"
+
+    rt = _make_runtime({
+        "gen": feedback_aware_gen,
+        "crit": reject_then_approve,
+    })
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out, converged, iters = agent_critic(
+        rt, root,
+        generator_spec=AgentSpec(role_prompt="gen"),
+        critic_spec=AgentSpec(role_prompt="crit"),
+        body="task",
+        max_iters=5,
+        timeout_s=5.0,
+    )
+    assert converged is True
+    assert iters == 3
+    assert out == "attempt-2"  # third iter, two prior feedbacks seen
+    assert seen_feedback_lengths == [0, 1, 2]
+    rt.shutdown()
+
+
+def test_agent_critic_max_iters_when_never_approved():
+    """A critic that always rejects must hit ``max_iters`` and return
+    ``converged=False`` with the last generator output."""
+
+    def echo(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body=env.body["item"],
+            )
+        return "ok"
+
+    def reject(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body={"ok": False, "notes": "still bad"},
+            )
+        return "ok"
+
+    rt = _make_runtime({"echo": echo, "reject": reject})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out, converged, iters = agent_critic(
+        rt, root,
+        generator_spec=AgentSpec(role_prompt="echo"),
+        critic_spec=AgentSpec(role_prompt="reject"),
+        body="draft",
+        max_iters=3,
+        timeout_s=5.0,
+    )
+    assert out == "draft"
+    assert converged is False
+    assert iters == 3
+    rt.shutdown()
+
+
+def test_agent_critic_accepts_string_verdict():
+    """The critic might be an LLM that returns plain text 'OK'/'approved'
+    rather than a JSON dict. ``_parse_critic_verdict`` accepts that as
+    approval — pin it here so the loop doesn't run forever on a critic
+    that doesn't produce JSON."""
+
+    def echo(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body=env.body["item"],
+            )
+        return "ok"
+
+    def stringly_ok(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(
+                token=engine.token,
+                to=env.body["reply_to"],
+                body="OK looks good to me",
+            )
+        return "ok"
+
+    rt = _make_runtime({"echo": echo, "ok_str": stringly_ok})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    out, converged, iters = agent_critic(
+        rt, root,
+        generator_spec=AgentSpec(role_prompt="echo"),
+        critic_spec=AgentSpec(role_prompt="ok_str"),
+        body="x",
+        max_iters=5,
+    )
+    assert converged is True
+    assert iters == 1
+    rt.shutdown()
+
+
+# ----- call_impl -----
 
 def test_call_timeout_returns_structured_error():
     """If the worker never replies, ``call_impl`` returns

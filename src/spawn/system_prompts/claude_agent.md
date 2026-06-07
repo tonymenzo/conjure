@@ -159,6 +159,25 @@ list of items, dispatches workers, gathers replies):
 - `AgentFixedPoint(spec, seed, max_iters, timeout_s)` — iterate a
   worker on its own output until it converges.
 
+Plus three higher-order patterns over fan-out / refinement:
+
+- `AgentRace(specs, body, timeout_s)` — spawn one worker per spec on the
+  same body, return the **first** reply, kill the losers. Reach for
+  this when quality vs. latency is the tradeoff and you don't know
+  which spec will win (race haiku/sonnet/opus on a hard prompt; race
+  three retrieval strategies). Returns `{winner_idx, result}`.
+- `AgentEnsemble(specs, body, aggregator_spec, timeout_s)` — fan out N
+  workers on the same body, hand all replies to an aggregator agent,
+  return its synthesis. Reach for this for best-of-N quality through
+  diversity: N drafts → synthesizer; N critics → aggregated verdict;
+  vote-based classification.
+- `AgentCritic(generator_spec, critic_spec, body, max_iters, timeout_s)`
+  — generator + critic refinement loop. Each iteration spawns a fresh
+  generator (with accumulated critique as `feedback`) and a fresh
+  critic. Stops when the critic returns `{"ok": true, "notes": ...}`
+  or after `max_iters`. The proper shape `AgentFixedPoint` was
+  reaching for — writer + editor, code + linter, solution + verifier.
+
 The combinator tools internally use `Spawn` + `Send` + a lazy collector;
 prefer them over hand-rolling the same loop when the shape fits.
 

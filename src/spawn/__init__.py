@@ -3,8 +3,9 @@
 A multi-agent harness built around three primitives — recursive
 spawning, addressable mailboxes, and capability passing — with FP-style
 combinators (``agent_map``, ``agent_fold``, ``agent_filter``,
-``agent_fixed_point``) layered on top. See ``DESIGN.md`` at the repo
-root for the design philosophy.
+``agent_fixed_point``) and higher-order patterns (``agent_race``,
+``agent_ensemble``, ``agent_critic``) layered on top. See
+``DESIGN.md`` at the repo root for the design philosophy.
 """
 
 from __future__ import annotations
@@ -13,10 +14,13 @@ from spawn.address import SYSTEM, USER, Address
 from spawn.agent import Agent, Engine
 from spawn.capability import CapabilitySet
 from spawn.combinators import (
+    agent_critic,
+    agent_ensemble,
     agent_filter,
     agent_fixed_point,
     agent_fold,
     agent_map,
+    agent_race,
 )
 from spawn.envelope import Envelope
 from spawn.errors import (
@@ -67,6 +71,9 @@ __all__ = [
     "agent_fold",
     "agent_filter",
     "agent_fixed_point",
+    "agent_race",
+    "agent_ensemble",
+    "agent_critic",
     # Tools
     "build_primitive_tools",
     "build_combinator_tools",

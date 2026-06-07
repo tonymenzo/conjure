@@ -27,8 +27,12 @@ capability passing, and FP-style combinators on top.
   Python ``*_impl`` and an orchestral ``@define_tool``-wrapped class.
   Capability enforcement lives in the tool layer.
 - **Combinator tools**: ``agent_map``, ``agent_fold``, ``agent_filter``,
-  ``agent_fixed_point``. LLM-callable wrappers around the
-  Python combinators in ``spawn.combinators``.
+  ``agent_fixed_point``, ``agent_race``, ``agent_ensemble``,
+  ``agent_critic``. LLM-callable wrappers around the Python combinators
+  in ``spawn.combinators``. The first four are the FP-style core; the
+  last three are higher-order patterns (race for quality-vs-latency,
+  ensemble for best-of-N synthesis via an aggregator agent, critic for
+  generator/critic refinement loops).
 
 ### Tests
 
