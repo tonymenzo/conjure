@@ -13,8 +13,10 @@ per-write ``flush()`` was a measurable serial bottleneck. The bounded
 loss window is ~100ms of journal events on a hard process crash; a
 clean ``close()`` flushes synchronously.
 
-When the runtime is constructed without a ``store_dir``, the journal is
-a no-op — useful for tests that don't care about persistence.
+The journal lives at ``{journal_dir}/journal.jsonl`` where
+``journal_dir`` is per-session (``store_dir/sessions/{session_id}/``).
+When the runtime is constructed without persistence (no store_dir),
+the journal is a no-op — useful for tests that don't care.
 """
 
 from __future__ import annotations
@@ -46,8 +48,8 @@ def _json_default(obj: Any) -> Any:
 
 class Journal:
 
-    def __init__(self, store_dir: Path | None) -> None:
-        self.store_dir = store_dir
+    def __init__(self, journal_dir: Path | None) -> None:
+        self.journal_dir = journal_dir
         self._path: Path | None = None
         self._file = None
         # Serializes append + close vs the background flusher. The
@@ -57,9 +59,9 @@ class Journal:
         self._lock = threading.Lock()
         self._flusher_stop = threading.Event()
         self._flusher: threading.Thread | None = None
-        if store_dir is not None:
-            store_dir.mkdir(parents=True, exist_ok=True)
-            self._path = store_dir / JOURNAL_FILENAME
+        if journal_dir is not None:
+            journal_dir.mkdir(parents=True, exist_ok=True)
+            self._path = journal_dir / JOURNAL_FILENAME
             self._file = self._path.open("a", encoding="utf-8")
             self._start_flusher()
 
@@ -119,12 +121,14 @@ class Journal:
         thread.start()
 
     @staticmethod
-    def read_all(store_dir: Path) -> Iterator[dict[str, Any]]:
-        """Yield every entry in the journal at ``store_dir``, in order.
+    def read_all(journal_dir: Path) -> Iterator[dict[str, Any]]:
+        """Yield every entry in the journal at ``journal_dir``, in order.
 
         Returns an empty iterator if no journal exists at that location.
+        ``journal_dir`` is the per-session dir (e.g.
+        ``store_dir/sessions/{session_id}/``), not the store root.
         """
-        path = store_dir / JOURNAL_FILENAME
+        path = journal_dir / JOURNAL_FILENAME
         if not path.exists():
             return
         with path.open("r", encoding="utf-8") as fh:

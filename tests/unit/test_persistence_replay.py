@@ -32,13 +32,15 @@ def test_no_journal_when_store_dir_none():
 
 def test_replay_reconstructs_spawn_tree(tmp_path: Path):
     rt = Runtime(store_dir=tmp_path)
+    session_dir = rt.session_dir
     root = rt.root(AgentSpec(role_prompt="root", label="root"))
     child_a = rt._spawn(parent=root, spec=AgentSpec(role_prompt="a", label="a"))
     child_b = rt._spawn(parent=root, spec=AgentSpec(role_prompt="b", label="b"))
     grand = rt._spawn(parent=child_a, spec=AgentSpec(role_prompt="g", label="g"))
     rt.shutdown()
 
-    rt2 = Runtime.replay(tmp_path)
+    assert session_dir is not None
+    rt2 = Runtime.replay(session_dir)
     # All four addresses are restored
     assert rt2.root_addr == root
     rec_root = rt2.record_for(root)
@@ -49,6 +51,7 @@ def test_replay_reconstructs_spawn_tree(tmp_path: Path):
 
 def test_replay_preserves_inbox_contents(tmp_path: Path):
     rt = Runtime(store_dir=tmp_path)
+    session_dir = rt.session_dir
     root = rt.root(AgentSpec(role_prompt="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="c"))
     rt.send_external(to=child, body={"task": "alpha"})
@@ -56,7 +59,8 @@ def test_replay_preserves_inbox_contents(tmp_path: Path):
     rt.send_external(to=root, body={"task": "gamma"})
     rt.shutdown()
 
-    rt2 = Runtime.replay(tmp_path)
+    assert session_dir is not None
+    rt2 = Runtime.replay(session_dir)
     child_inbox = rt2.read_inbox(child)
     root_inbox = rt2.read_inbox(root)
     assert [e.body for e in child_inbox] == [{"task": "alpha"}, {"task": "beta"}]
@@ -68,13 +72,15 @@ def test_replay_preserves_inbox_contents(tmp_path: Path):
 
 def test_replay_preserves_termination(tmp_path: Path):
     rt = Runtime(store_dir=tmp_path)
+    session_dir = rt.session_dir
     root = rt.root(AgentSpec(role_prompt="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="c"))
     grand = rt._spawn(parent=child, spec=AgentSpec(role_prompt="g"))
     rt.terminate(child, cascade=True)
     rt.shutdown()
 
-    rt2 = Runtime.replay(tmp_path)
+    assert session_dir is not None
+    rt2 = Runtime.replay(session_dir)
     assert rt2.record_for(child).status == "terminated"
     assert rt2.record_for(grand).status == "terminated"
     assert rt2.record_for(root).status != "terminated"
@@ -82,14 +88,16 @@ def test_replay_preserves_termination(tmp_path: Path):
 
 def test_replay_runtime_has_no_journal(tmp_path: Path):
     rt = Runtime(store_dir=tmp_path)
+    session_dir = rt.session_dir
     rt.root(AgentSpec(role_prompt="root"))
     rt.shutdown()
 
-    rt2 = Runtime.replay(tmp_path)
+    assert session_dir is not None
+    rt2 = Runtime.replay(session_dir)
     # Replay runtime should not be writing to the original journal —
     # additional ops must not append to the on-disk file.
     rt2.send_external(to=rt2.root_addr, body="post-replay")  # type: ignore[arg-type]
-    entries_after = list(Journal.read_all(tmp_path))
+    entries_after = list(Journal.read_all(session_dir))
     # We had one spawn + one terminate (from shutdown? no, shutdown
     # itself doesn't journal — only explicit terminate does).
     kinds = [e["kind"] for e in entries_after]

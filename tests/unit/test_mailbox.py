@@ -67,6 +67,29 @@ def test_read_caps_at_max_n():
     assert [e.seq for e in result] == [1, 2, 3]
 
 
+def test_read_recent_returns_tail_in_fifo_order():
+    mb = Mailbox()
+    a, b = Address(id="ag-a"), Address(id="ag-b")
+    for i in range(10):
+        mb.put(_env(msg_id=f"m{i}", from_=a, to=b, body=i))
+
+    result = mb.read_recent(max_n=3)
+    assert [e.body for e in result] == [7, 8, 9]
+    assert [e.seq for e in result] == [8, 9, 10]
+
+
+def test_read_recent_respects_filters():
+    mb = Mailbox()
+    a, b, c = Address(id="ag-a"), Address(id="ag-b"), Address(id="ag-c")
+    mb.put(_env(msg_id="m1", from_=a, to=c, thread_id="t1"))
+    mb.put(_env(msg_id="m2", from_=b, to=c, thread_id="t1"))
+    mb.put(_env(msg_id="m3", from_=a, to=c, thread_id="t2"))
+    mb.put(_env(msg_id="m4", from_=a, to=c, thread_id="t1"))
+
+    result = mb.read_recent(max_n=2, thread_id="t1", from_id="ag-a")
+    assert [e.msg_id for e in result] == ["m1", "m4"]
+
+
 def test_read_filter_by_thread_id():
     mb = Mailbox()
     a, b = Address(id="ag-a"), Address(id="ag-b")

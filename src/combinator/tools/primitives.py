@@ -266,7 +266,7 @@ def _find_recent_duplicate(
     now = time.time()
     # Last 10 envelopes is plenty — the duplicate, if any, is among
     # the most recent few.
-    recent = inbox.read(since_seq=0, max_n=10)
+    recent = inbox.read_recent(max_n=10)
     for env in reversed(recent):
         if (now - env.ts) > _DEDUP_WINDOW_S:
             return None  # older than the window — done scanning
@@ -442,9 +442,7 @@ def peek_impl(
 
     record = runtime.record_for(target)
     cap = max(1, int(max_envelopes))
-    envelopes = record.inbox.read(since_seq=0, max_n=cap, timeout_s=0.0)
-    # Keep the most recent ``cap`` envelopes when the inbox is fuller.
-    recent = envelopes[-cap:] if len(envelopes) > cap else envelopes
+    recent = record.inbox.read_recent(max_n=cap)
     return {
         "ok": True,
         "address": target.id,
@@ -550,14 +548,19 @@ def call_impl(
     finally:
         # ``oneshot=True`` auto-terminates the worker once it replies,
         # but on timeout (or a worker that errored before replying)
-        # we may need to clean up explicitly.
+        # we may need to clean up explicitly. ``requested_by="oneshot"``
+        # suppresses the supervision envelope — the caller already has
+        # the reply (or the timeout result), so a tail ``child_event
+        # terminated`` adds no signal and just wakes the caller again.
         if worker is not None:
             try:
-                runtime.terminate(worker, cascade=True)
+                runtime.terminate(
+                    worker, requested_by="oneshot", cascade=True
+                )
             except Exception:
                 pass
         try:
-            runtime.terminate(collector)
+            runtime.terminate(collector, requested_by="oneshot")
         except Exception:
             pass
 

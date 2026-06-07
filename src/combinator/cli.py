@@ -229,8 +229,14 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
+    # Per-session scoping: every daemon invocation gets its own
+    # ``store_dir/sessions/{session_name}/`` so two runs from the same
+    # CWD never concatenate into one ambiguous journal. The tmux
+    # session_name doubles as the on-disk session id so a user looking
+    # at the tmux pane and a user looking at disk see the same name.
     store_dir = Path(cfg.runtime.store_dir or "./.combinator/store")
-    agents_dir = store_dir / "agents"
+    session_dir = store_dir / "sessions" / session_name
+    agents_dir = session_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve absolute path to combinator-main so tmux's shell finds it
@@ -273,6 +279,7 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     try:
         runtime, root = build_runtime(
             cfg,
+            session_id=session_name,
             event_log_router=event_log_router,
             spawn_listener=spawn_listener,
             stream=True,  # tmux mode: agent text streams into chat panes

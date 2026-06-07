@@ -357,6 +357,76 @@ def test_call_returns_worker_reply_via_caller_shortcut():
     rt.shutdown()
 
 
+def test_call_cleanup_does_not_spam_parent_supervision():
+    """``Call``'s finally-block tears down both the worker and its
+    private collector. Both teardowns must be tagged
+    ``requested_by="oneshot"`` so the parent doesn't wake to a tail of
+    ``child_event terminated`` envelopes right after consuming the
+    reply — the reply itself is the only signal the caller needs."""
+
+    def echo_caller(engine, prompt, envelopes):
+        for env in envelopes:
+            send_impl(token=engine.token, to="caller", body=env.body)
+        return "ok"
+
+    rt = _make_runtime({"echoer": echo_caller})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    root_token = rt.record_for(root).token
+    root_inbox = rt.record_for(root).inbox
+    base_seq = root_inbox.latest_seq()
+
+    out = call_impl(
+        token=root_token,
+        spec={"role_prompt": "echoer"},
+        body="ping",
+        timeout_s=5.0,
+    )
+    assert out["ok"] is True
+    # Give the driver a beat to run the oneshot auto-terminate too.
+    time.sleep(0.1)
+    new = root_inbox.read(since_seq=base_seq, max_n=50)
+    events = [
+        e for e in new
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert events == [], (
+        f"Call cleanup should not produce supervision events for the "
+        f"parent; saw: {[e.body for e in events]}"
+    )
+    rt.shutdown()
+
+
+def test_fixed_point_does_not_spam_parent_per_iteration():
+    """Each loop turn in ``agent_fixed_point`` terminates that turn's
+    worker. With ``requested_by="oneshot"`` the parent should see no
+    supervision envelopes — without the tag, the parent would receive
+    one ``child_event terminated`` per iteration, flooding the inbox
+    on long-running convergence loops."""
+    rt = _make_runtime({"halver": _reply_with(lambda b: b["value"] // 2)})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    root_inbox = rt.record_for(root).inbox
+    base_seq = root_inbox.latest_seq()
+
+    value, converged = agent_fixed_point(
+        rt, root,
+        lambda v: AgentSpec(role_prompt="halver"),
+        seed=64,  # 64 → 32 → 16 → 8 → 4 → 2 → 1 → 0 → 0 (8 iters)
+        max_iters=20,
+    )
+    assert converged is True
+    assert value == 0
+    new = root_inbox.read(since_seq=base_seq, max_n=50)
+    events = [
+        e for e in new
+        if isinstance(e.body, dict) and e.body.get("kind") == "child_event"
+    ]
+    assert events == [], (
+        f"agent_fixed_point per-iteration teardown should not produce "
+        f"supervision events; saw: {[e.body for e in events]}"
+    )
+    rt.shutdown()
+
+
 def test_call_timeout_returns_structured_error():
     """If the worker never replies, ``call_impl`` returns
     ``code=timeout`` with the dead worker's address for inspection."""

@@ -28,6 +28,7 @@ from combinator.runtime import Runtime
 def build_runtime(
     config: Config,
     *,
+    session_id: str | None = None,
     display_hook_builder: Callable[[AgentRecord], Callable[[Any], None]] | None = None,
     event_log_router: Callable[[AgentRecord], Any] | None = None,
     spawn_listener: Callable[[AgentRecord], None] | None = None,
@@ -82,6 +83,7 @@ def build_runtime(
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
     runtime = Runtime(
         store_dir=store_dir,
+        session_id=session_id,
         engine_factory=dispatch,
         max_workers=config.runtime.max_workers,
         max_depth=config.runtime.max_depth,

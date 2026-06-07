@@ -128,6 +128,7 @@ class Runtime:
         self,
         *,
         store_dir: Path | None = None,
+        session_id: str | None = None,
         engine_factory: EngineFactory | None = None,
         max_workers: int = 32,
         max_depth: int = 3,
@@ -144,8 +145,20 @@ class Runtime:
         # ``_records`` is written so the two never drift.
         self._addr_index: dict[str, Address] = {}
         self._root_addr: Address | None = None
-        self._journal = Journal(store_dir)
+        # Per-session scoping: every runtime gets its own subdir under
+        # ``store_dir/sessions/{session_id}/`` so journals from
+        # different ``combinator run`` invocations don't concatenate
+        # into one ambiguous file. When the caller doesn't supply a
+        # session_id but does supply a store_dir (tests, REPL), we
+        # auto-mint one so the file-per-runtime invariant always holds.
         self._store_dir = store_dir
+        if store_dir is not None:
+            self._session_id = session_id or f"auto-{uuid.uuid4().hex[:8]}"
+            self._session_dir: Path | None = store_dir / "sessions" / self._session_id
+        else:
+            self._session_id = session_id  # may be None — journal will no-op anyway
+            self._session_dir = None
+        self._journal = Journal(self._session_dir)
         self._shutdown = False
         self._max_workers = max_workers
         self._max_depth = max_depth
@@ -181,8 +194,25 @@ class Runtime:
 
     @property
     def store_dir(self) -> Path | None:
-        """Root of on-disk runtime state (journal, sandboxes, ...)."""
+        """Root of on-disk runtime state. Sandboxes live directly under
+        here (shared across sessions); journals + per-agent event logs
+        live under ``session_dir`` (one subdir per runtime)."""
         return self._store_dir
+
+    @property
+    def session_id(self) -> str | None:
+        """Stable id for this runtime's session — used as the on-disk
+        scope for journal + agent logs. ``None`` only when the runtime
+        was built without persistence (``store_dir=None``)."""
+        return self._session_id
+
+    @property
+    def session_dir(self) -> Path | None:
+        """``store_dir/sessions/{session_id}/`` — the per-session
+        subtree owning journal.jsonl and agents/{agent_id}.jsonl. The
+        CLI uses this to place per-agent event logs alongside the
+        journal so one session is self-contained on disk."""
+        return self._session_dir
 
     # ----- Permission request queue (for ``ask``-mode tools) -----
 
@@ -658,15 +688,19 @@ class Runtime:
     # ----- Replay -----
 
     @classmethod
-    def replay(cls, store_dir: Path) -> "Runtime":
+    def replay(cls, session_dir: Path) -> "Runtime":
         """Reconstruct a runtime from a persisted journal.
 
-        The returned runtime is *not* attached to the same journal —
-        replay is intended for inspection and offline analysis, not for
+        ``session_dir`` is the per-session directory containing
+        ``journal.jsonl`` — typically ``store_dir/sessions/{session_id}/``.
+        Pass the directory itself, not the store root.
+
+        The returned runtime is *not* attached to any journal — replay
+        is intended for inspection and offline analysis, not for
         seamless resume. Driver threads are not started.
         """
         rt = cls(store_dir=None)
-        for entry in Journal.read_all(store_dir):
+        for entry in Journal.read_all(session_dir):
             kind = entry["kind"]
             payload = entry["payload"]
             if kind == "spawn":
@@ -676,6 +710,24 @@ class Runtime:
             elif kind == "terminate":
                 rt._replay_terminate(payload)
         return rt
+
+    @staticmethod
+    def list_sessions(store_dir: Path) -> list[str]:
+        """Enumerate session ids that have a journal under ``store_dir``.
+
+        Returned in lexicographic order (which, for the
+        ``combinator-<hex>`` and ``auto-<hex>`` naming used at
+        construction time, has no temporal meaning — sort by mtime if
+        you need recency).
+        """
+        sessions_root = store_dir / "sessions"
+        if not sessions_root.is_dir():
+            return []
+        out: list[str] = []
+        for child in sorted(sessions_root.iterdir()):
+            if child.is_dir() and (child / "journal.jsonl").exists():
+                out.append(child.name)
+        return out
 
     # ----- Internals -----
 

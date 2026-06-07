@@ -32,6 +32,7 @@ def test_sum_of_squares_then_replay(tmp_path: Path):
 
     rt = Runtime(store_dir=tmp_path, engine_factory=reg.factory())
     root = rt.root(AgentSpec(role_prompt="idle", label="root"))
+    session_dir = rt.session_dir  # capture before shutdown
 
     result = agent_map(
         rt, root,
@@ -42,7 +43,12 @@ def test_sum_of_squares_then_replay(tmp_path: Path):
     assert result == [1, 4, 9, 16]
     rt.shutdown(driver_join_timeout=2.0)
 
-    rt2 = Runtime.replay(tmp_path)
+    # Per-session scoping: each Runtime gets its own subdir under
+    # store_dir/sessions/, so replay() takes the session dir, not the
+    # store root.
+    assert session_dir is not None
+    assert session_dir.parent == tmp_path / "sessions"
+    rt2 = Runtime.replay(session_dir)
     assert rt2.root_addr == root
     # The spawn tree should be restored: root + 4 workers + 1 collector.
     assert len(rt2.record_for(root).children) == 5

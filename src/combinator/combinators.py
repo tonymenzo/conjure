@@ -71,12 +71,14 @@ def _collect(
     record = runtime.record_for(collector)
     results: list[Any] = [None] * len(expected_senders)
     received: list[bool] = [False] * len(expected_senders)
+    sender_to_idx = {sender: idx for idx, sender in enumerate(expected_senders)}
+    remaining_count = len(expected_senders)
     deadline = time.monotonic() + timeout_s
     cursor = 0
-    while not all(received):
+    while remaining_count:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            got = sum(1 for r in received if r)
+            got = len(expected_senders) - remaining_count
             raise Timeout(
                 f"only {got}/{len(received)} replies received before timeout",
                 workers=[s.id for s in expected_senders],
@@ -93,11 +95,12 @@ def _collect(
             continue
         for env in envelopes:
             cursor = max(cursor, env.seq)
-            for idx, sender in enumerate(expected_senders):
-                if env.from_ == sender and not received[idx]:
-                    results[idx] = env.body
-                    received[idx] = True
-                    break
+            idx = sender_to_idx.get(env.from_)
+            if idx is None or received[idx]:
+                continue
+            results[idx] = env.body
+            received[idx] = True
+            remaining_count -= 1
     return results
 
 
@@ -296,7 +299,13 @@ def agent_fixed_point(
                 expected_senders=[worker],
                 timeout_s=timeout_s,
             )
-            runtime.terminate(worker, cascade=True)
+            # ``requested_by="oneshot"`` suppresses the per-iteration
+            # ``child_event terminated`` envelope; the parent already
+            # consumed the reply via the collector, so the supervision
+            # event would just flood the inbox once per loop turn.
+            runtime.terminate(
+                worker, requested_by="oneshot", cascade=True
+            )
             if eq(reply, current):
                 current = reply
                 converged = True

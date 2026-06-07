@@ -154,6 +154,20 @@ def test_send_different_body_not_deduped(rt, root_token):
     assert len(inbox) == 2
 
 
+def test_send_dedup_checks_recent_tail(rt, root_token):
+    child = spawn_impl(token=root_token, role_prompt="c")
+    first = send_impl(token=root_token, to=child["address"], body="first")
+    for i in range(12):
+        send_impl(token=root_token, to=child["address"], body=f"body-{i}")
+
+    duplicate = send_impl(token=root_token, to=child["address"], body="body-11")
+    late_repeat = send_impl(token=root_token, to=child["address"], body="first")
+
+    assert duplicate.get("deduplicated") is True
+    assert duplicate["msg_id"] != first["msg_id"]
+    assert late_repeat.get("deduplicated") is not True
+
+
 # ----- recv_impl & wait_for_impl -----
 
 def test_recv_empty_returns_no_envelopes(rt, root_token):

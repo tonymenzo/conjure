@@ -370,7 +370,6 @@ class ControlServer:
              "kind": "tool_call" | "tool_result",
              "tool": tool_name, "failed": bool (results only)}
         """
-        from collections import deque
         import json as _json
 
         out: list[dict[str, Any]] = []
@@ -381,15 +380,11 @@ class ControlServer:
             log_path = getattr(event_log, "path", None) if event_log else None
             if log_path is None:
                 continue
-            # Tail the log without reading the whole file: keep the
-            # last ``window`` lines in a deque. ``window`` is generous
-            # so streamy text/chunk events don't push tool events out.
+            # Read from the file tail instead of scanning historical
+            # stream chunks on every UI snapshot.
             window = max(40, limit_per_agent * 8)
-            tail_lines: deque[str] = deque(maxlen=window)
             try:
-                with open(log_path, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        tail_lines.append(line)
+                tail_lines = _tail_text_lines(log_path, window)
             except OSError:
                 continue
             collected: list[dict[str, Any]] = []
@@ -498,15 +493,16 @@ class ControlServer:
         label_of: dict[str, str] = {
             r.addr.id: (r.addr.label or r.addr.id) for r in records
         }
-        # Walk every envelope across every inbox to derive per-agent
-        # peer summaries (who they've recently exchanged with, in which
-        # direction). Keys: addr_id -> {peer_id -> {"in": ts, "out": ts}}.
+        # Walk a recent envelope window across every inbox to derive
+        # per-agent peer summaries (who they've recently exchanged
+        # with, in which direction). Keys: addr_id -> {peer_id ->
+        # {"in": ts, "out": ts}}.
         peers: dict[str, dict[str, dict[str, float]]] = {}
         out: list[dict[str, Any]] = []
         for rec in records:
             if rec.addr.id in ("@user", "@system"):
                 continue
-            envs = rec.inbox.read(since_seq=0, max_n=max(limit, 50))
+            envs = rec.inbox.read_recent(max_n=max(limit, 50))
             for e in envs:
                 me, peer = rec.addr.id, e.from_.id
                 # Incoming from `peer` to `me`.
@@ -574,8 +570,8 @@ class ControlServer:
         for rec in records:
             if rec.addr.id in ("@user", "@system"):
                 continue
-            envs = rec.inbox.read(since_seq=0, max_n=limit)
-            for e in envs[-limit:]:
+            envs = rec.inbox.read_recent(max_n=limit)
+            for e in envs:
                 rows.append(
                     {
                         "ts": e.ts,
@@ -803,6 +799,31 @@ def _read_line(conn: socket.socket, *, timeout: float | None = None) -> str | No
 def _write_line(conn: socket.socket, payload: dict[str, Any]) -> None:
     line = json.dumps(payload, default=str) + "\n"
     conn.sendall(line.encode("utf-8"))
+
+
+def _tail_text_lines(
+    path: Path,
+    max_lines: int,
+    *,
+    chunk_size: int = 8192,
+) -> list[str]:
+    """Read up to ``max_lines`` lines from the end of a UTF-8 text file."""
+    if max_lines <= 0:
+        return []
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        pos = fh.tell()
+        chunks: list[bytes] = []
+        newline_count = 0
+        while pos > 0 and newline_count <= max_lines:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            fh.seek(pos)
+            chunk = fh.read(read_size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    data = b"".join(reversed(chunks))
+    return data.decode("utf-8", errors="replace").splitlines()[-max_lines:]
 
 
 # ---- tool class registry (for the MCP bridge's tool_call RPC) ----

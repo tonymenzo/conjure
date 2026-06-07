@@ -104,6 +104,35 @@ class Mailbox:
         with self._cond:
             return self._next_seq - 1
 
+    def read_recent(
+        self,
+        *,
+        max_n: int,
+        thread_id: str = "",
+        from_id: str = "",
+    ) -> list[Envelope]:
+        """Return the most recent matching envelopes, oldest first.
+
+        ``read`` is cursor-oriented and intentionally starts at the
+        beginning when ``since_seq=0``. UI/status paths and duplicate
+        checks usually want the tail instead; scanning backward avoids
+        walking a long inbox only to discard its older entries.
+        """
+        if max_n <= 0:
+            return []
+        with self._cond:
+            out: list[Envelope] = []
+            for env in reversed(self._items):
+                if thread_id and env.thread_id != thread_id:
+                    continue
+                if from_id and _sender_id(env.from_) != from_id:
+                    continue
+                out.append(env)
+                if len(out) >= max_n:
+                    break
+            out.reverse()
+            return out
+
     def __len__(self) -> int:
         with self._cond:
             return len(self._items)
