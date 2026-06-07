@@ -2,30 +2,30 @@
 #
 # Tmux mode (the default, daemonized):
 #
-#   spawn run examples/iota.yaml
+#   conjure run examples/iota.yaml
 #     - Daemonizes a runtime.
 #     - tmux session with window 0 = an interactive prompt to iota,
 #       window 1+ = one window per spawned agent (live rich panels).
 #     - Ctrl+B M opens the meta-view popup (spawn tree + inbox + cost).
 #     - Ctrl+B d detaches; the daemon keeps running.
-#     - Reattach: spawn run --attach
-#     - Stop the daemon: spawn quit
+#     - Reattach: conjure run --attach
+#     - Stop the daemon: conjure quit
 #
 # REPL mode (single pane, no tmux):
 #
-#   spawn repl examples/iota.yaml
+#   conjure repl examples/iota.yaml
 #
 # Verify keys + config first:
-#   spawn check examples/iota.yaml
+#   conjure check examples/iota.yaml
 #
-# Set API keys via shell, ~/.config/spawn/.env, or:
-#   spawn config set ANTHROPIC_API_KEY sk-...
+# Set API keys via shell, ~/.config/conjure/.env, or:
+#   conjure config set ANTHROPIC_API_KEY sk-...
 #
 # Provider defaults: anthropic → ANTHROPIC_API_KEY, openai → OPENAI_API_KEY,
 # google → GOOGLE_API_KEY, groq → GROQ_API_KEY, ollama → (none).
 
 runtime:
-  store_dir: ./.spawn/store
+  store_dir: ./.conjure/store
   max_workers: 32
 
 llms:
@@ -37,7 +37,7 @@ llms:
 
 root:
   role_prompt: |
-    You are the root orchestrator of a Spawn session.
+    You are the root orchestrator of a Conjure session.
 
     You have tools to:
       - spawn child agents (with chosen role prompts and tools),

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry
 
 
 def test_scripted_engine_reports_zero_cost():

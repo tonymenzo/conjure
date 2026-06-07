@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from spawn.control import ControlClient, ControlServer
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
+from conjure.control import ControlClient, ControlServer
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spawn"
+name = "conjure"
 version = "0.1.0"
 description = "Agentic functional programming: a multi-agent harness over orchestral with recursive spawn, addressable mailboxes, and FP-style combinators."
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
     "textual>=0.40",
     # uvloop powers the runtime's shared sync-from-async bridge — 2-4×
     # faster than stock asyncio for the SDK's IO-heavy workload. POSIX
-    # only; spawn already won't run on Windows (daemonize forks).
+    # only; conjure already won't run on Windows (daemonize forks).
     "uvloop>=0.19; sys_platform != 'win32'",
 ]
 
@@ -38,19 +38,19 @@ test = [
 ]
 
 [project.scripts]
-spawn = "spawn.cli:main"
-spawn-main = "spawn.main_window:main"
-spawn-chat = "spawn.chat:main"
-spawn-files = "spawn.files_view:main"
-spawn-mcp = "spawn.mcp_bridge:main"
-spawn-render = "spawn.render:main"
-spawn-input = "spawn.cli_input:main"
+conjure = "conjure.cli:main"
+conjure-main = "conjure.main_window:main"
+conjure-chat = "conjure.chat:main"
+conjure-files = "conjure.files_view:main"
+conjure-mcp = "conjure.mcp_bridge:main"
+conjure-render = "conjure.render:main"
+conjure-input = "conjure.cli_input:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-spawn = ["system_prompts/*.md"]
+conjure = ["system_prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

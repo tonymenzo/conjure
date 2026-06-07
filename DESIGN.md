@@ -1,4 +1,4 @@
-# Spawn — Design
+# Conjure — Design
 
 > A multi-agent harness built around recursive spawning, mailbox-based
 > communication, and a small set of FP-style combinators. "Agentic
@@ -11,7 +11,7 @@ worker, DAG orchestration — and define a vocabulary alongside it. The
 result is a framework that's hard to bend to new shapes without rewriting
 the substrate.
 
-Spawn takes the opposite move. Two primitives — **recursive agent
+Conjure takes the opposite move. Two primitives — **recursive agent
 spawning** and a **mailbox** — are treated as the substrate. Topology is
 *expressible code*, not a baked-in pattern. The vocabulary used to compose
 agents is borrowed from functional programming, where the relevant
@@ -119,7 +119,7 @@ patterns that solve real coordination problems.
 **FP:** Functions are first-class values. You can pass a function as an
 argument, return one, store one.
 
-**Spawn:** Agent *specs* (their role prompt, capabilities, allowed
+**Conjure:** Agent *specs* (their role prompt, capabilities, allowed
 tools) are values. A generic supervisor agent takes specs as arguments and
 orchestrates them without knowing what they do. A `retry(agent, n)`
 wrapper. A `with_critic(agent, critic)` wrapper.
@@ -133,7 +133,7 @@ over agents, not bespoke orchestrator code.
 `f` to each element. `fold(f, init, xs)` threads state sequentially.
 `filter(pred, xs)` keeps elements that pass a test.
 
-**Spawn:**
+**Conjure:**
 
 - `agent_map(spec, items)` — spawn N children in parallel; each handles
   one item; gather results in order.
@@ -149,7 +149,7 @@ with a costume on. Naming them keeps the design honest.
 **FP:** A closure is a function bundled with a snapshot of its enclosing
 environment — captured variables, references, partial state.
 
-**Spawn:** A spawn prompt is exactly this — the task description plus
+**Conjure:** A spawn prompt is exactly this — the task description plus
 the context, addresses, and capabilities the child carries. Thinking of
 spawning as "constructing a closure" sharpens the question to: *what is
 the minimum environment this child needs to carry?*
@@ -162,7 +162,7 @@ Smaller, sharper spawn prompts.
 **FP:** Instead of *returning* a value, a function takes a "where to send
 the result" parameter — a continuation — and calls it.
 
-**Spawn:** This is literally the mailbox. "Don't return to me — send
+**Conjure:** This is literally the mailbox. "Don't return to me — send
 your result to this address." Async messaging is CPS with extra steps.
 The FP world worked out the patterns and pitfalls (avoiding callback
 hell, composing continuations) decades ago.
@@ -176,7 +176,7 @@ known one with known shapes.
 runtime can drop the current stack frame — no work remains on the way
 back. Tail-call optimization.
 
-**Spawn:** If a child's reply doesn't need to come back to its
+**Conjure:** If a child's reply doesn't need to come back to its
 parent (the parent would only forward it), the parent tells the child to
 reply *directly* to the original requester. Saves a hop, shortens chains,
 reduces parent context pressure.
@@ -189,7 +189,7 @@ reduces parent context pressure.
 Persistent data structures (and version control like git) make cheap
 history.
 
-**Spawn:** When agents share a document or plan, every edit produces
+**Conjure:** When agents share a document or plan, every edit produces
 a new version. No agent can clobber another's work. You can branch ("two
 agents explore alternative drafts"), merge, fork, and roll back.
 
@@ -200,7 +200,7 @@ of multi-agent chaos. Immutability removes a category of failure.
 
 **FP:** Don't compute a value until something demands it.
 
-**Spawn:** Spawn an agent but don't actually start it until someone
+**Conjure:** Spawn an agent but don't actually start it until someone
 reads from its inbox. Lets you set up hypothetical branches cheaply: "if
 the review fails, this fixer will activate" — declared up front, paid for
 on demand.
@@ -214,7 +214,7 @@ committing to running them all.
 A principled stopping rule, not a hand-tuned bound. Closely related to the
 Y combinator (anonymous recursion).
 
-**Spawn:** "Run the editor agent on its own output until it makes no
+**Conjure:** "Run the editor agent on its own output until it makes no
 further changes." Iterative refinement loops with a structural termination
 condition.
 
@@ -348,7 +348,7 @@ The framework is not for every workload. Cases it fits poorly:
   reputation) than this framework provides.
 - **Tasks where the model's own context window is the right coordination
   medium.** Sometimes the cleanest "multi-agent" pattern is one agent
-  with a well-structured prompt — no spawn needed. Spawn does not
+  with a well-structured prompt — no spawn needed. Conjure does not
   preclude this (the root agent can solve things alone), but if every
   task fits this shape, the substrate is overkill.
 - **Workloads with strict ordering or transactional guarantees** across

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from spawn._ui import render_event
+from conjure._ui import render_event
 
 
 def test_render_event_response_with_tool_calls_uses_panel():
@@ -91,7 +91,7 @@ def test_render_event_terminated():
 def test_render_main_loop_processes_log(tmp_path: Path, monkeypatch, capsys):
     """End-to-end: write events to a file, run render.main in a thread,
     stop it, verify the rich-rendered output contains our events."""
-    from spawn import render
+    from conjure import render
 
     log_path = tmp_path / "events.jsonl"
     log_path.write_text(

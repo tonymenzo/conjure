@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from spawn.ids import new_agent_id, new_message_id, new_runtime_token
+from conjure.ids import new_agent_id, new_message_id, new_runtime_token
 
 
 def test_agent_id_format():

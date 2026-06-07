@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from spawn.address import SYSTEM, USER, Address
-from spawn.capability import CapabilitySet
+from conjure.address import SYSTEM, USER, Address
+from conjure.capability import CapabilitySet
 
 
 def test_address_is_frozen():

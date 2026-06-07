@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from spawn.address import Address
-from spawn.envelope import Envelope
+from conjure.address import Address
+from conjure.envelope import Envelope
 
 
 def _make(

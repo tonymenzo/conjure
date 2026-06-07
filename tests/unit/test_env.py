@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from spawn import env as env_mod
+from conjure import env as env_mod
 
 
 def test_redact_passes_through_non_secret_keys():

@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from spawn.combinators import agent_map
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry
-from spawn.tools.primitives import send_impl
+from conjure.combinators import agent_map
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry
+from conjure.tools.primitives import send_impl
 
 
 def squarer(engine, prompt, envelopes):

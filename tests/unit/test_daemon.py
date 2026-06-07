@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from spawn.daemon import is_daemon_running, stop_daemon
+from conjure.daemon import is_daemon_running, stop_daemon
 
 
 def test_is_daemon_running_missing_file(tmp_path: Path):

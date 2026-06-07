@@ -6,10 +6,10 @@ import io
 
 from rich.console import Console
 
-from spawn.cli import _handle_command, _print_cost
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry
+from conjure.cli import _handle_command, _print_cost
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry
 
 
 def _captured_console() -> Console:

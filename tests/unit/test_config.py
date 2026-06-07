@@ -1,4 +1,4 @@
-"""Tests for spawn.config — YAML loader."""
+"""Tests for conjure.config — YAML loader."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from spawn.config import Config, load_config, load_config_from_mapping
+from conjure.config import Config, load_config, load_config_from_mapping
 
 
 _MINIMAL = {

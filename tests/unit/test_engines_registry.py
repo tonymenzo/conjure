@@ -1,15 +1,15 @@
-"""Tests for spawn.engines.registry — tool group resolution."""
+"""Tests for conjure.engines.registry — tool group resolution."""
 
 from __future__ import annotations
 
 import pytest
 
-from spawn.engines.registry import (
+from conjure.engines.registry import (
     DEFAULT_TOOL_GROUPS,
     build_tools,
 )
-from spawn.tools.combinators import COMBINATOR_TOOL_CLASSES
-from spawn.tools.primitives import PRIMITIVE_TOOL_CLASSES
+from conjure.tools.combinators import COMBINATOR_TOOL_CLASSES
+from conjure.tools.primitives import PRIMITIVE_TOOL_CLASSES
 
 
 def test_primitive_group_resolves_to_primitive_tool_set():
@@ -26,7 +26,7 @@ def test_combinator_group_resolves_to_combinator_tool_set():
 
 def test_all_group_combines_both():
     """``all`` is the union of primitive + combinator + filesystem."""
-    from spawn.tools.filesystem import FILESYSTEM_TOOL_CLASSES
+    from conjure.tools.filesystem import FILESYSTEM_TOOL_CLASSES
     tools = build_tools("token-abc", ["all"])
     expected = (
         len(PRIMITIVE_TOOL_CLASSES)

@@ -21,13 +21,13 @@ def test_claude_agent_sdk_importable_or_skip():
     """If the SDK is installed in this env, importing the engine
     module shouldn't crash."""
     pytest.importorskip("claude_agent_sdk")
-    from spawn.engines import claude_agent
+    from conjure.engines import claude_agent
     assert hasattr(claude_agent, "ClaudeAgentEngine")
 
 
 def test_extract_tool_calls_strips_mcp_prefix():
     """Tool calls bridged through MCP show up as
-    ``mcp__spawn__<name>`` on the wire. The chat pane expects the
+    ``mcp__conjure__<name>`` on the wire. The chat pane expects the
     user-friendly bare name."""
     pytest.importorskip("claude_agent_sdk")
     from claude_agent_sdk.types import (
@@ -35,7 +35,7 @@ def test_extract_tool_calls_strips_mcp_prefix():
         TextBlock,
         ToolUseBlock,
     )
-    from spawn.engines.claude_agent import (
+    from conjure.engines.claude_agent import (
         _extract_text,
         _extract_tool_calls,
     )
@@ -45,7 +45,7 @@ def test_extract_tool_calls_strips_mcp_prefix():
             TextBlock(text="spawning"),
             ToolUseBlock(
                 id="t1",
-                name="mcp__spawn__spawn",
+                name="mcp__conjure__spawn",
                 input={"role_prompt": "x", "label": "y"},
             ),
             ToolUseBlock(
@@ -68,7 +68,7 @@ def test_extract_tool_results_handles_str_and_list_bodies():
     content-block dicts. Both should reduce to a single text string."""
     pytest.importorskip("claude_agent_sdk")
     from claude_agent_sdk.types import ToolResultBlock, UserMessage
-    from spawn.engines.claude_agent import _extract_tool_results
+    from conjure.engines.claude_agent import _extract_tool_results
 
     msg = UserMessage(
         content=[
@@ -95,14 +95,14 @@ def test_default_system_frame_loads_and_templates():
     """The bundled system prompt loads as a ``string.Template`` whose
     ``safe_substitute`` doesn't choke on the JSON examples (literal
     ``{...}``) in the markdown."""
-    from spawn.engines.claude_agent import (
+    from conjure.engines.claude_agent import (
         ClaudeAgentEngine,
         _load_default_system_template,
     )
-    from spawn.address import Address
-    from spawn.capability import CapabilitySet
-    from spawn.mailbox import Mailbox
-    from spawn.record import AgentRecord, AgentSpec
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
 
     template = _load_default_system_template()
     frame = template.template
@@ -141,12 +141,12 @@ def test_preapproved_tools_excludes_ask_and_deny(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from spawn.address import Address
-    from spawn.capability import CapabilitySet
-    from spawn.engines.claude_agent import ClaudeAgentEngine
-    from spawn.mailbox import Mailbox
-    from spawn.record import AgentRecord, AgentSpec
-    from spawn.runtime import Runtime
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
 
@@ -190,7 +190,7 @@ def test_preapproved_tools_excludes_ask_and_deny(tmp_path):
     assert "Read" in allowed
     assert "Grep" in allowed
     # Bridged MCP tools must stay (they're only callable when listed).
-    assert any(t.startswith("mcp__spawn__") for t in allowed)
+    assert any(t.startswith("mcp__conjure__") for t in allowed)
 
 
 def test_preapproved_tools_default_ask_set_held_back(tmp_path):
@@ -200,12 +200,12 @@ def test_preapproved_tools_default_ask_set_held_back(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from spawn.address import Address
-    from spawn.capability import CapabilitySet
-    from spawn.engines.claude_agent import ClaudeAgentEngine
-    from spawn.mailbox import Mailbox
-    from spawn.record import AgentRecord, AgentSpec
-    from spawn.runtime import Runtime
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-test", label="root")
@@ -245,12 +245,12 @@ def test_toolbase_profile_adds_second_mcp_server(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from spawn.address import Address
-    from spawn.capability import CapabilitySet
-    from spawn.engines.claude_agent import ClaudeAgentEngine
-    from spawn.mailbox import Mailbox
-    from spawn.record import AgentRecord, AgentSpec
-    from spawn.runtime import Runtime
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-tb", label="root")
@@ -292,12 +292,12 @@ def test_toolbase_profile_absent_means_no_toolbase_server(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from spawn.address import Address
-    from spawn.capability import CapabilitySet
-    from spawn.engines.claude_agent import ClaudeAgentEngine
-    from spawn.mailbox import Mailbox
-    from spawn.record import AgentRecord, AgentSpec
-    from spawn.runtime import Runtime
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-no-tb", label="root")
@@ -324,8 +324,8 @@ def test_toolbase_profile_absent_means_no_toolbase_server(tmp_path):
 def test_dispatch_rejects_unknown_engine(tmp_path):
     """``build_runtime`` dispatcher refuses unknown engine names with
     a clear error pointing at the supported set."""
-    from spawn.config import load_config_from_mapping
-    from spawn.runner import build_runtime
+    from conjure.config import load_config_from_mapping
+    from conjure.runner import build_runtime
 
     cfg = load_config_from_mapping(
         {

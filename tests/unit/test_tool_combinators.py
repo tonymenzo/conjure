@@ -1,4 +1,4 @@
-"""Smoke tests for spawn.tools.combinators — LLM-callable wrappers.
+"""Smoke tests for conjure.tools.combinators — LLM-callable wrappers.
 
 Heavy combinator behavior is covered in ``test_combinators.py``; here
 we just verify the tools construct correctly and delegate.
@@ -6,10 +6,10 @@ we just verify the tools construct correctly and delegate.
 
 from __future__ import annotations
 
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry
-from spawn.tools.combinators import (
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry
+from conjure.tools.combinators import (
     AgentCriticTool,
     AgentEnsembleTool,
     AgentFilterTool,
@@ -20,7 +20,7 @@ from spawn.tools.combinators import (
     COMBINATOR_TOOL_CLASSES,
     build_combinator_tools,
 )
-from spawn.tools.primitives import send_impl
+from conjure.tools.primitives import send_impl
 
 
 def _reply_with(transform):

@@ -1,7 +1,7 @@
 """Tests for the input channel + input reader loop.
 
 The CLI's ``_start_input_reader`` tails a JSONL file appended by the
-``spawn-input`` window and dispatches each line. We test it
+``conjure-input`` window and dispatches each line. We test it
 in-process by writing lines manually and verifying the reader's
 behavior.
 """
@@ -13,9 +13,9 @@ import threading
 import time
 from pathlib import Path
 
-from spawn.cli import _start_input_reader
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
+from conjure.cli import _start_input_reader
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
 
 
 def _append(path: Path, payload: dict) -> None:

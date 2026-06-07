@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from spawn.agent import Agent
-from spawn.record import AgentRecord, AgentSpec
-from spawn.runtime import Runtime
+from conjure.agent import Agent
+from conjure.record import AgentRecord, AgentSpec
+from conjure.runtime import Runtime
 
 
 class MockEngine:

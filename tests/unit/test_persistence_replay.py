@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from spawn.address import Address
-from spawn.persistence import Journal
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
+from conjure.address import Address
+from conjure.persistence import Journal
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
 
 
 def test_journal_writes_and_reads_back(tmp_path: Path):

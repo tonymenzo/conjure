@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from spawn.tmux_session import TmuxSession, TmuxSessionError, tmux_available
+from conjure.tmux_session import TmuxSession, TmuxSessionError, tmux_available
 
 
 pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed")
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed
 
 @pytest.fixture
 def session_name() -> str:
-    return f"spawn-test-{uuid.uuid4().hex[:8]}"
+    return f"conjure-test-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture

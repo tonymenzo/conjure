@@ -1,5 +1,5 @@
 """End-to-end tests for the ``tool_call`` control RPC — the bridge
-the spawn-mcp subprocess uses to forward claude_agent's MCP
+the conjure-mcp subprocess uses to forward claude_agent's MCP
 calls into the daemon's tool surface."""
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from spawn.control import ControlClient, ControlServer
-from spawn.mcp_bridge import _build_bridge_tools
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
+from conjure.control import ControlClient, ControlServer
+from conjure.mcp_bridge import _build_bridge_tools
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
 
 
 def test_bridge_tools_expose_pascalcase_display_names():

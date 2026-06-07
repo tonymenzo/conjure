@@ -1,4 +1,4 @@
-"""Smoke tests for the spawn CLI.
+"""Smoke tests for the conjure CLI.
 
 These tests exercise the command-line layer using a FakeLLM injected
 in-process; they do not invoke the binary as a subprocess.
@@ -16,15 +16,15 @@ from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 from rich.console import Console
 
-from spawn.cli import (
+from conjure.cli import (
     _handle_command,
     _print_tree,
     _run_one_shot,
 )
-from spawn.config import load_config_from_mapping
-from spawn.engines.orchestral import make_orchestral_engine_factory
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
+from conjure.config import load_config_from_mapping
+from conjure.engines.orchestral import make_orchestral_engine_factory
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
 
 
 class _FakeLLM(LLM):

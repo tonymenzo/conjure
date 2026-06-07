@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.tools.primitives import (
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.tools.primitives import (
     PRIMITIVE_TOOL_CLASSES,
     SendTool,
     SpawnTool,
@@ -291,7 +291,7 @@ def test_send_to_caller_shortcut_resolves_to_last_sender(rt, root_token):
     """``"caller"`` resolves to the sender of the most-recent envelope
     the agent received. The right tool for "reply to whoever just
     messaged me" — no body-field plumbing needed."""
-    from spawn.address import USER
+    from conjure.address import USER
 
     # Simulate a delivered envelope by hand — the driver normally sets
     # ``last_received_from`` before calling step.

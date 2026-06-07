@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.tools._base import register_token, unregister_token
-from spawn.tools.filesystem import (
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.tools._base import register_token, unregister_token
+from conjure.tools.filesystem import (
     bash_impl,
     edit_impl,
     glob_impl,

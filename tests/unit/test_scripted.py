@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from spawn.envelope import Envelope
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry, ScriptedEngine
-from spawn.tools.primitives import send_impl
+from conjure.envelope import Envelope
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry, ScriptedEngine
+from conjure.tools.primitives import send_impl
 
 
 def test_behavior_registry_dispatches_by_role():

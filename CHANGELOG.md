@@ -29,7 +29,7 @@ capability passing, and FP-style combinators on top.
 - **Combinator tools**: ``agent_map``, ``agent_fold``, ``agent_filter``,
   ``agent_fixed_point``, ``agent_race``, ``agent_ensemble``,
   ``agent_critic``. LLM-callable wrappers around the Python combinators
-  in ``spawn.combinators``. The first four are the FP-style core; the
+  in ``conjure.combinators``. The first four are the FP-style core; the
   last three are higher-order patterns (race for quality-vs-latency,
   ensemble for best-of-N synthesis via an aggregator agent, critic for
   generator/critic refinement loops).

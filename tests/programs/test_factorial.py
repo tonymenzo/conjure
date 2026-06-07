@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import math
 
-from spawn.record import AgentSpec
-from spawn.runtime import Runtime
-from spawn.scripted import BehaviorRegistry
-from spawn.tools.primitives import send_impl, spawn_impl
+from conjure.record import AgentSpec
+from conjure.runtime import Runtime
+from conjure.scripted import BehaviorRegistry
+from conjure.tools.primitives import send_impl, spawn_impl
 
 
 def fact_behavior(engine, prompt, envelopes):
