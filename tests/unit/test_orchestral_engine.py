@@ -62,6 +62,9 @@ class FakeLLM(LLM):
     def _convert_tools_to_provider_format(self):
         return []
 
+    def _format_tool_choice(self, tool_choice):
+        return None
+
 
 def test_orchestral_engine_returns_llm_text():
     rt = Runtime()

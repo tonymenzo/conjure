@@ -89,6 +89,6 @@ def test_kill_session_is_idempotent(session_name: str):
 
 def test_init_raises_without_tmux(monkeypatch):
     """If tmux is missing, the constructor raises a clean error."""
-    monkeypatch.setattr("spawn.tmux_session.tmux_available", lambda: False)
+    monkeypatch.setattr("conjure.tmux_session.tmux_available", lambda: False)
     with pytest.raises(TmuxSessionError, match="tmux binary"):
         TmuxSession("anything")

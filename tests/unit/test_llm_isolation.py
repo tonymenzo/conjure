@@ -60,6 +60,9 @@ class _CountingFakeLLM(LLM):
     def _convert_tools_to_provider_format(self):
         return []
 
+    def _format_tool_choice(self, tool_choice):
+        return None
+
 
 def test_each_agent_gets_a_fresh_llm_via_factory():
     """With llm_factories, each spawned agent gets a brand-new client

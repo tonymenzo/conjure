@@ -64,6 +64,9 @@ class _FakeLLM(LLM):
     def _convert_tools_to_provider_format(self):
         return []
 
+    def _format_tool_choice(self, tool_choice):
+        return None
+
 
 def _captured_console() -> Console:
     return Console(file=io.StringIO(), force_terminal=False, no_color=True, width=200)

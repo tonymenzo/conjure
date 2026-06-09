@@ -31,6 +31,7 @@ from conjure.errors import MaxDepthExceeded, NoSuchAddress, Terminated, Timeout
 from conjure.ids import new_message_id
 from conjure.record import AgentSpec
 from conjure.tools._base import (
+    OptionalRuntimeField,
     RuntimeField,
     StateField,
     StatelessRuntimeTool,
@@ -619,14 +620,14 @@ class SpawnTool(StatelessRuntimeTool):
         default="",
         description="Human-readable hint for the child's address.",
     )
-    tools: list[str] | None = RuntimeField(
+    tools: list[str] | None = OptionalRuntimeField(
         description="Names of tools the child should be granted.",
     )
     llm: str = RuntimeField(
         default="default",
         description="Named LLM client for the child (from runtime config).",
     )
-    capabilities: list[str] | None = RuntimeField(
+    capabilities: list[str] | None = OptionalRuntimeField(
         description="Address ids to hand the child as capabilities.",
     )
     initial_message: str = RuntimeField(
@@ -646,23 +647,20 @@ class SpawnTool(StatelessRuntimeTool):
             "``claude_agent`` explicitly."
         ),
     )
-    sandbox_dir: str | None = RuntimeField(
-        default=None,
+    sandbox_dir: str | None = OptionalRuntimeField(
         description=(
             "Filesystem sandbox path for the child. None auto-allocates "
             "under the runtime's store_dir. Required for any agent that "
             "should use the filesystem tool group."
         ),
     )
-    permissions: dict[str, str] | None = RuntimeField(
-        default=None,
+    permissions: dict[str, str] | None = OptionalRuntimeField(
         description=(
             "Per-tool permission decisions for the child, e.g. "
             "``{'Bash': 'ask', 'Write': 'allow'}``."
         ),
     )
-    model: str | None = RuntimeField(
-        default=None,
+    model: str | None = OptionalRuntimeField(
         description=(
             "Model for the child's claude_agent session — alias "
             "(``haiku``, ``sonnet``, ``opus``) or full name "

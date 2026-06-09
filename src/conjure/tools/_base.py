@@ -26,6 +26,7 @@ from orchestral.tools.base.field_utils import (
     is_state_field,
 )
 from orchestral.tools.base.tool import BaseTool
+from pydantic import Field
 from pydantic_core import PydanticUndefined
 
 from conjure.address import Address
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BaseTool",
+    "OptionalRuntimeField",
     "RuntimeField",
     "StateField",
     "StatelessRuntimeTool",
@@ -43,6 +45,24 @@ __all__ = [
     "unregister_token",
     "resolve_token",
 ]
+
+
+def OptionalRuntimeField(**kwargs):
+    """``RuntimeField`` variant for optional parameters that default to
+    ``None``.
+
+    orchestral's schema generator treats a plain ``default=None`` as "no
+    meaningful default" and marks the field required, so this uses
+    ``default_factory`` instead (which the generator counts as a real
+    default). ``RuntimeField`` itself can't express this — it injects
+    ``default=None`` whenever ``default`` is absent, which conflicts
+    with ``default_factory``.
+    """
+    return Field(
+        json_schema_extra={"runtime": True},
+        default_factory=lambda: None,
+        **kwargs,
+    )
 
 
 _TOKEN_REGISTRY: dict[str, "tuple[Runtime, Address]"] = {}
@@ -82,6 +102,8 @@ class StatelessRuntimeTool(BaseTool):
                 continue
             default = field_info.default
             if default is PydanticUndefined:
+                if field_info.default_factory is not None:
+                    setattr(self, field_name, field_info.default_factory())
                 continue
             setattr(self, field_name, default)
         return super().execute(stream_callback=stream_callback, **kwargs)
