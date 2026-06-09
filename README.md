@@ -40,10 +40,13 @@ the user) terminates it.
 ## Install
 
 ```bash
-pip install conjure                 # core library + headless CLI (repl)
-pip install "conjure[ui]"           # + the tmux/textual cockpit (conjure run)
-pip install "conjure[claude_agent]" # + claude-agent-sdk engine
+pip install conjure-agents                 # core library + headless CLI (repl)
+pip install "conjure-agents[ui]"           # + the tmux/textual cockpit (conjure run)
+pip install "conjure-agents[claude_agent]" # + claude-agent-sdk engine
 ```
+
+The distribution is named `conjure-agents`; the import package and CLI are
+plain `conjure`.
 
 Requires Python ≥ 3.10 on POSIX (the daemon forks; Windows is unsupported).
 

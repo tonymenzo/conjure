@@ -167,7 +167,7 @@ def _cmd_run_tmux(config_path: Path) -> int:
         _ui.print_error(
             console,
             "tmux mode unavailable. Install tmux >=3.4 and the UI extra "
-            "(`pip install conjure[ui]`), or use `conjure repl`.",
+            "(`pip install conjure-agents[ui]`), or use `conjure repl`.",
         )
         return 2
 
@@ -477,7 +477,7 @@ def _cmd_run_attach(session: str) -> int:
     if not tmux_available():
         print(
             "tmux mode unavailable. Install tmux >=3.4 and the UI extra "
-            "(`pip install conjure[ui]`).",
+            "(`pip install conjure-agents[ui]`).",
             file=sys.stderr,
         )
         return 2

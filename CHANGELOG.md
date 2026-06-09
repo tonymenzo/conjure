@@ -9,7 +9,7 @@
   checkers.
 - ``textual`` and ``libtmux`` moved to the ``[ui]`` extra; the core
   install is library + ``conjure repl``. ``conjure run`` degrades with
-  a pointer to ``pip install conjure[ui]`` when the extra is absent.
+  a pointer to ``pip install conjure-agents[ui]`` when the extra is absent.
 - ``mcp`` declared directly (``orchestral.mcp.server`` imports it but
   orchestral-ai ≤1.6.2 doesn't declare it).
 - ``SpawnTool``'s optional fields (``tools``, ``capabilities``,
