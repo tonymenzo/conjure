@@ -17,9 +17,7 @@ a different shape. Conjure inverts that: the primitives are the substrate,
 and topology is ordinary code. The composition vocabulary is borrowed from
 functional programming, where these problems have decades of prior art.
 
-See [`DESIGN.md`](DESIGN.md) for the design philosophy and
-[`AGENTIC_HIGHER_ORDER_FUNCTIONS.md`](AGENTIC_HIGHER_ORDER_FUNCTIONS.md)
-for the combinator roadmap.
+See [`DESIGN.md`](DESIGN.md) for the design philosophy and architecture.
 
 ## The three primitives
 
