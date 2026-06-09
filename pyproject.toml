@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # (Bare ``conjure`` is on PyPI's prohibited-names list — release request
 # pending at pypi/support.)
 name = "conjure-agents"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agentic functional programming: a multi-agent harness over orchestral with recursive spawn, addressable mailboxes, and FP-style combinators."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,6 +73,10 @@ test = [
     "libtmux>=0.39",
     "textual>=0.40",
 ]
+
+[project.urls]
+Repository = "https://github.com/tonymenzo/conjure"
+Changelog = "https://github.com/tonymenzo/conjure/blob/main/CHANGELOG.md"
 
 [project.scripts]
 conjure = "conjure.cli:main"

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/conjure-hero.svg" alt="conjure — a wizard conjuring a tree of smaller wizards" width="100%"/>
+  <img src="https://raw.githubusercontent.com/tonymenzo/conjure/main/assets/conjure-hero.svg" alt="conjure — a wizard conjuring a tree of smaller wizards" width="100%"/>
 </p>
 
 # conjure

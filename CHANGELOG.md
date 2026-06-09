@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 — PyPI page fix
+
+- README hero image references the absolute GitHub raw URL so the PyPI
+  project page renders it (relative paths only resolve on GitHub).
+- Project URLs added to the package metadata (repository, changelog).
+
 ## v0.1.0 — substrate release
 
 ### Packaging (PyPI release prep)
