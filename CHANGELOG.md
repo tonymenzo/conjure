@@ -2,6 +2,25 @@
 
 ## v0.1.0 — substrate release
 
+### Packaging (PyPI release prep)
+
+- Licensed under **AGPL-3.0-only** (``LICENSE`` + PEP 639 metadata).
+- ``py.typed`` marker shipped — the package is typed for downstream
+  checkers.
+- ``textual`` and ``libtmux`` moved to the ``[ui]`` extra; the core
+  install is library + ``conjure repl``. ``conjure run`` degrades with
+  a pointer to ``pip install conjure[ui]`` when the extra is absent.
+- ``mcp`` declared directly (``orchestral.mcp.server`` imports it but
+  orchestral-ai ≤1.6.2 doesn't declare it).
+- ``SpawnTool``'s optional fields (``tools``, ``capabilities``,
+  ``sandbox_dir``, ``permissions``, ``model``) use a new
+  ``OptionalRuntimeField`` so orchestral's schema generator marks them
+  optional — a plain ``default=None`` is treated as "no default" and
+  made required, which forced every spawn call to pass every field.
+- Test fakes updated for orchestral-ai 1.6.x's ``LLM`` abstract surface
+  (``_format_tool_choice``); suite verified green against released
+  orchestral-ai 1.4.0 and 1.6.2 and the local orchestral-core HEAD.
+
 First tagged release. Ships the v0.1 substrate described in
 [`DESIGN.md`](DESIGN.md): recursive spawn, addressable mailboxes,
 capability passing, and FP-style combinators on top.

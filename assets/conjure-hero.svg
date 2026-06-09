@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-label="conjure — a wizard conjuring a tree of smaller wizards">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b0d1a"/>
+      <stop offset="0.6" stop-color="#141031"/>
+      <stop offset="1" stop-color="#1d1242"/>
+    </linearGradient>
+    <radialGradient id="orbGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f3e8ff"/>
+      <stop offset="0.35" stop-color="#c4b5fd"/>
+      <stop offset="1" stop-color="#7c3aed" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="robe" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b2d6e"/>
+      <stop offset="1" stop-color="#241b4a"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softglow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- hooded wizard silhouette, ~120w x 240h, staff in raised right arm -->
+    <g id="wizard">
+      <!-- staff -->
+      <rect x="116" y="28" width="5" height="190" rx="2.5" fill="#4c3a8c"/>
+      <!-- robe -->
+      <path d="M30,86 Q12,160 2,238 L122,238 Q110,160 94,86 Q62,100 30,86 Z" fill="url(#robe)"/>
+      <!-- arm reaching to staff -->
+      <path d="M84,108 Q106,96 118,72 L124,80 Q110,104 90,118 Z" fill="#32265c"/>
+      <!-- hat -->
+      <path d="M64,-6 Q52,34 26,80 Q64,66 100,80 Q76,34 70,-4 Z" fill="#32265c"/>
+      <path d="M18,80 Q64,62 108,80 Q110,90 104,90 Q64,74 22,90 Q16,90 18,80 Z" fill="#3b2d6e"/>
+      <!-- orb atop staff -->
+      <circle cx="118.5" cy="22" r="16" fill="url(#orbGlow)"/>
+      <circle cx="118.5" cy="22" r="6.5" fill="#ede9fe" filter="url(#glow)"/>
+    </g>
+  </defs>
+
+  <!-- background -->
+  <rect width="1280" height="440" fill="url(#sky)"/>
+  <g fill="#cdb9ff">
+    <circle cx="92" cy="52" r="1.6" opacity="0.8"/>
+    <circle cx="220" cy="118" r="1.1" opacity="0.5"/>
+    <circle cx="341" cy="38" r="1.3" opacity="0.6"/>
+    <circle cx="505" cy="84" r="1.0" opacity="0.4"/>
+    <circle cx="643" cy="30" r="1.5" opacity="0.7"/>
+    <circle cx="788" cy="96" r="1.1" opacity="0.5"/>
+    <circle cx="918" cy="44" r="1.4" opacity="0.7"/>
+    <circle cx="1042" cy="120" r="1.0" opacity="0.4"/>
+    <circle cx="1150" cy="60" r="1.6" opacity="0.8"/>
+    <circle cx="1238" cy="150" r="1.1" opacity="0.5"/>
+    <circle cx="430" cy="180" r="1.0" opacity="0.35"/>
+    <circle cx="1090" cy="240" r="1.0" opacity="0.35"/>
+  </g>
+  <!-- ground mist -->
+  <ellipse cx="640" cy="436" rx="720" ry="46" fill="#7c3aed" opacity="0.10"/>
+  <ellipse cx="300" cy="430" rx="420" ry="34" fill="#a78bfa" opacity="0.08"/>
+
+  <!-- root wizard -->
+  <use href="#wizard" x="120" y="150"/>
+
+  <!-- spawn arcs from the root's orb to the children -->
+  <g fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-dasharray="2 9" stroke-linecap="round" opacity="0.85">
+    <path d="M242,172 C330,90 430,120 506,196"/>
+    <path d="M242,172 C360,140 470,200 540,272"/>
+    <path d="M242,176 C330,230 420,290 492,330"/>
+  </g>
+  <!-- second-generation arcs -->
+  <g fill="none" stroke="#8b6ff0" stroke-width="1.8" stroke-dasharray="1.5 8" stroke-linecap="round" opacity="0.7">
+    <path d="M566,210 C620,180 660,190 696,224"/>
+    <path d="M566,210 C616,230 650,260 678,292"/>
+    <path d="M552,346 C600,340 630,352 658,372"/>
+  </g>
+
+  <!-- child wizards (scale 0.5) -->
+  <g transform="translate(500,196) scale(0.5)"><use href="#wizard"/></g>
+  <g transform="translate(534,272) scale(0.42)"><use href="#wizard"/></g>
+  <g transform="translate(486,330) scale(0.38)"><use href="#wizard"/></g>
+
+  <!-- grandchild wizards (scale ~0.22) -->
+  <g transform="translate(692,224) scale(0.24)"><use href="#wizard"/></g>
+  <g transform="translate(674,292) scale(0.20)"><use href="#wizard"/></g>
+  <g transform="translate(654,372) scale(0.20)"><use href="#wizard"/></g>
+
+  <!-- drifting sparks along the arcs -->
+  <g fill="#e9d5ff" filter="url(#softglow)">
+    <circle cx="330" cy="112" r="2.6"/>
+    <circle cx="420" cy="148" r="2.0"/>
+    <circle cx="386" cy="186" r="2.2"/>
+    <circle cx="360" cy="252" r="2.0"/>
+    <circle cx="446" cy="300" r="1.7"/>
+    <circle cx="636" cy="190" r="1.6"/>
+    <circle cx="630" cy="256" r="1.5"/>
+    <circle cx="612" cy="348" r="1.4"/>
+  </g>
+
+  <!-- wordmark -->
+  <g font-family="Georgia, 'Iowan Old Style', 'Times New Roman', serif">
+    <text x="800" y="216" font-size="92" letter-spacing="4" fill="#ede9fe" filter="url(#softglow)">conjure</text>
+    <text x="804" y="262" font-size="22" letter-spacing="3" fill="#b8a7e8">agentic functional programming</text>
+    <text x="804" y="300" font-size="17" letter-spacing="2" fill="#7e6bb5">spawn &#183; send &#183; map &#183; fold &#183; race &#183; ensemble</text>
+  </g>
+</svg>

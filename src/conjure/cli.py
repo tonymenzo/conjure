@@ -57,7 +57,13 @@ from conjure.profiling import profile_session
 from conjure.record import AgentRecord
 from conjure.runner import build_runtime
 from conjure.runtime import Runtime
-from conjure.tmux_session import TmuxSession, tmux_available
+try:
+    from conjure.tmux_session import TmuxSession, tmux_available
+except ImportError:  # core install without the [ui] extra (no libtmux)
+    TmuxSession = None  # type: ignore[assignment, misc]
+
+    def tmux_available() -> bool:
+        return False
 
 
 _AGENT_RESPONSE_TIMEOUT_S = 180.0
@@ -160,7 +166,8 @@ def _cmd_run_tmux(config_path: Path) -> int:
     if not tmux_available():
         _ui.print_error(
             console,
-            "tmux not found on PATH. Install tmux >=3.4 or use `conjure repl`.",
+            "tmux mode unavailable. Install tmux >=3.4 and the UI extra "
+            "(`pip install conjure[ui]`), or use `conjure repl`.",
         )
         return 2
 
@@ -468,7 +475,11 @@ def _bind_files_popup(session_name: str) -> None:
 def _cmd_run_attach(session: str) -> int:
     """Attach to an existing conjure tmux session."""
     if not tmux_available():
-        print("tmux not found on PATH.", file=sys.stderr)
+        print(
+            "tmux mode unavailable. Install tmux >=3.4 and the UI extra "
+            "(`pip install conjure[ui]`).",
+            file=sys.stderr,
+        )
         return 2
     if session == "__most_recent__":
         target = _find_most_recent_spawn_session()

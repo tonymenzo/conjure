@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,13 +9,36 @@ description = "Agentic functional programming: a multi-agent harness over orches
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tony Menzo" }]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+keywords = [
+    "agents",
+    "multi-agent",
+    "llm",
+    "actor-model",
+    "functional-programming",
+    "orchestration",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
     "orchestral-ai>=1.4",
+    # orchestral.mcp.server imports ``mcp`` but orchestral-ai 1.4.0
+    # doesn't declare it; conjure-mcp needs it, so declare it here.
+    "mcp>=1.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "rich>=13.0",
-    "libtmux>=0.39",
-    "textual>=0.40",
     # uvloop powers the runtime's shared sync-from-async bridge — 2-4×
     # faster than stock asyncio for the SDK's IO-heavy workload. POSIX
     # only; conjure already won't run on Windows (daemonize forks).
@@ -23,6 +46,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The interactive cockpit: ``conjure run`` (tmux session, one window
+# per agent) and the textual apps it launches (conjure-main,
+# conjure-chat, conjure-files). The core library and ``conjure repl``
+# work without it.
+ui = [
+    "libtmux>=0.39",
+    "textual>=0.40",
+]
 env = [
     "python-dotenv>=1.0",
 ]
@@ -35,6 +66,9 @@ test = [
     "pytest>=7",
     "sympy>=1.12",
     "python-dotenv>=1.0",
+    # The suite covers the UI layer too (test_tmux_session, test_ui).
+    "libtmux>=0.39",
+    "textual>=0.40",
 ]
 
 [project.scripts]
@@ -50,7 +84,7 @@ conjure-input = "conjure.cli_input:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-conjure = ["system_prompts/*.md"]
+conjure = ["system_prompts/*.md", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

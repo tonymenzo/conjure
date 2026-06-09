@@ -2,7 +2,7 @@
 #
 # Tmux mode (the default, daemonized):
 #
-#   conjure run examples/iota.yaml
+#   conjure run examples/anthropic_agent.yaml
 #     - Daemonizes a runtime.
 #     - tmux session with window 0 = an interactive prompt to iota,
 #       window 1+ = one window per spawned agent (live rich panels).
@@ -13,10 +13,10 @@
 #
 # REPL mode (single pane, no tmux):
 #
-#   conjure repl examples/iota.yaml
+#   conjure repl examples/anthropic_agent.yaml
 #
 # Verify keys + config first:
-#   conjure check examples/iota.yaml
+#   conjure check examples/anthropic_agent.yaml
 #
 # Set API keys via shell, ~/.config/conjure/.env, or:
 #   conjure config set ANTHROPIC_API_KEY sk-...
