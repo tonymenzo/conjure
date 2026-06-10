@@ -26,6 +26,7 @@ from typing import Any
 
 from conjure.tools.combinators import (
     AgentCriticTool,
+    AgentSupervisorTool,
     AgentEnsembleTool,
     AgentFilterTool,
     AgentFixedPointTool,
@@ -67,6 +68,7 @@ _TOOL_TARGETS: list[tuple[str, type]] = [
     ("AgentRace", AgentRaceTool),
     ("AgentEnsemble", AgentEnsembleTool),
     ("AgentCritic", AgentCriticTool),
+    ("AgentSupervisor", AgentSupervisorTool),
 ]
 
 

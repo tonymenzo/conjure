@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Reliability
+
+- **``agent_supervisor``** — supervised fan-out: ``agent_map`` with
+  one-for-one restarts. Errored workers are torn down and respawned on
+  the same item up to ``max_restarts`` times; items that exhaust the
+  budget come back in ``failed`` instead of sinking the whole fan-out.
+  Ships as the ``AgentSupervisor`` tool (registered in both MCP
+  bridges + the claude_agent allowlist + system prompt).
+- **Hierarchical cost ceilings** — ``AgentSpec.budget`` (USD) caps an
+  agent plus its entire subtree. Budgets attenuate like capabilities:
+  an agent is blocked when *any* ancestor's ceiling is spent. Spawns
+  under an exhausted subtree raise ``BudgetExceeded`` (tool code
+  ``budget_exceeded``); drivers skip further steps and emit a one-time
+  ``budget_exceeded`` child_event to the parent. Zero overhead while
+  no budgets are set (flag-gated fast path).
+- **Terminate interrupts in-flight steps** — ``Runtime.terminate`` /
+  ``terminate_batch`` now call ``engine.interrupt()`` (best-effort,
+  outside the registry lock) on every terminated agent.
+  ``ClaudeAgentEngine`` implements it via the SDK's ``interrupt()``,
+  so killing an agent aborts its in-flight LLM call instead of
+  draining it — races stop burning loser tokens. Engine errors on
+  already-terminated agents no longer emit spurious ``errored``
+  supervision events.
+
+### Performance
+
+- Control-plane snapshot (2 Hz UI tick): ``_tree`` walks the registry
+  under one lock acquisition instead of one per node; ``_cost`` builds
+  rows in a single pass (was 1 + N lock round-trips); ``_log_events``
+  caches each agent's parsed log tail behind an mtime + size stat —
+  idle agents cost a ``stat()`` instead of a read + JSON parse per
+  tick.
+
 ## v0.1.1 — PyPI page fix
 
 - README hero image references the absolute GitHub raw URL so the PyPI

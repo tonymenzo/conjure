@@ -4,7 +4,7 @@ A multi-agent harness built around three primitives — recursive
 spawning, addressable mailboxes, and capability passing — with FP-style
 combinators (``agent_map``, ``agent_fold``, ``agent_filter``,
 ``agent_fixed_point``) and higher-order patterns (``agent_race``,
-``agent_ensemble``, ``agent_critic``) layered on top. See
+``agent_ensemble``, ``agent_critic``, ``agent_supervisor``) layered on top. See
 ``DESIGN.md`` at the repo root for the design philosophy.
 """
 
@@ -21,6 +21,7 @@ from conjure.combinators import (
     agent_fold,
     agent_map,
     agent_race,
+    agent_supervisor,
 )
 from conjure.envelope import Envelope
 from conjure.errors import (
@@ -74,6 +75,7 @@ __all__ = [
     "agent_race",
     "agent_ensemble",
     "agent_critic",
+    "agent_supervisor",
     # Tools
     "build_primitive_tools",
     "build_combinator_tools",

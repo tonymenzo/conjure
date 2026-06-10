@@ -21,8 +21,9 @@ from conjure.combinators import (
     agent_fold,
     agent_map,
     agent_race,
+    agent_supervisor,
 )
-from conjure.errors import Timeout
+from conjure.errors import BudgetExceeded, Timeout
 from conjure.record import AgentSpec
 from conjure.tools._base import (
     RuntimeField,
@@ -164,6 +165,8 @@ class AgentMapTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {"ok": True, "result": result}
 
 
@@ -203,6 +206,8 @@ class AgentFoldTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         if isinstance(result, dict) and "trace" in result:
             return {"ok": True, "result": result["result"], "trace": result["trace"]}
         return {"ok": True, "result": result}
@@ -230,6 +235,8 @@ class AgentFilterTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {"ok": True, "result": result}
 
 
@@ -256,6 +263,8 @@ class AgentFixedPointTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _err("timeout", str(e))
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {"ok": True, "result": value, "converged": converged}
 
 
@@ -295,6 +304,8 @@ class AgentRaceTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="race")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {"ok": True, "winner_idx": winner_idx, "result": winner_body}
 
 
@@ -343,6 +354,8 @@ class AgentEnsembleTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="ensemble")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {"ok": True, "result": result}
 
 
@@ -396,11 +409,60 @@ class AgentCriticTool(StatelessRuntimeTool):
             )
         except Timeout as e:
             return _timeout_payload(e, stage="critic")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
         return {
             "ok": True,
             "result": output,
             "converged": converged,
             "iters": iters,
+        }
+
+
+class AgentSupervisorTool(StatelessRuntimeTool):
+    """Supervised parallel map: like ``AgentMap``, but a worker whose
+    engine errors is automatically torn down and respawned (same item,
+    fresh agent) up to ``max_restarts`` times. Items that exhaust their
+    restart budget come back in ``failed`` instead of sinking the whole
+    fan-out.
+
+    Use instead of ``AgentMap`` when workers are flaky (network tools,
+    long chains, rate-limit-prone models) and partial progress matters
+    more than fail-fast.
+    """
+
+    spec: dict = RuntimeField(description="Spec template for each worker.")
+    items: list = RuntimeField(description="List of items to dispatch.")
+    max_restarts: int = RuntimeField(
+        default=2,
+        description="Restart budget per item before it is marked failed.",
+    )
+    timeout_s: float = RuntimeField(
+        default=120.0, description="Maximum seconds to wait for all replies."
+    )
+    runtime_token: str = StateField(description="(internal) caller token.")
+
+    def _run(self) -> dict[str, Any]:
+        resolved = resolve_token(self.runtime_token)
+        if resolved is None:
+            return _err("no_runtime", "tool is not bound to a runtime")
+        runtime, caller_addr = resolved
+        factory = _build_factory(self.spec or {})
+        try:
+            out = agent_supervisor(
+                runtime, caller_addr, factory, list(self.items or []),
+                max_restarts=int(self.max_restarts or 0),
+                timeout_s=float(self.timeout_s or 120.0),
+            )
+        except Timeout as e:
+            return _timeout_payload(e, stage="supervise")
+        except BudgetExceeded as e:
+            return _err("budget_exceeded", str(e))
+        return {
+            "ok": True,
+            "result": out["results"],
+            "restarts": out["restarts"],
+            "failed": out["failed"],
         }
 
 
@@ -412,6 +474,7 @@ COMBINATOR_TOOL_CLASSES = (
     AgentRaceTool,
     AgentEnsembleTool,
     AgentCriticTool,
+    AgentSupervisorTool,
 )
 
 

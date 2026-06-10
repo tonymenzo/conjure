@@ -32,6 +32,7 @@ from conjure.address import SYSTEM, USER, Address
 from conjure.capability import CapabilitySet
 from conjure.envelope import Envelope
 from conjure.errors import (
+    BudgetExceeded,
     ConjureError,
     MaxDepthExceeded,
     NoSuchAddress,
@@ -190,6 +191,11 @@ class Runtime:
         self._async_loop: asyncio.AbstractEventLoop | None = None
         self._async_thread: threading.Thread | None = None
         self._async_lock = threading.Lock()
+        # Fast-path flag: stays False until the first spec carrying a
+        # ``budget`` is spawned. Drivers consult it before every step;
+        # when no budgets exist anywhere (the common case) the check
+        # is a single attribute read with no lock.
+        self._budgets_in_use = False
         self._install_sentinels()
 
     @property
@@ -382,6 +388,8 @@ class Runtime:
             self._addr_index[addr.id] = addr
             self._tokens[record.token] = addr
             self._root_addr = addr
+            if spec.budget is not None:
+                self._budgets_in_use = True
             register_token(record.token, self, addr)
             self._journal_spawn(record)
         # Notify externally-registered listener (e.g. the tmux
@@ -446,7 +454,8 @@ class Runtime:
                 cascade=cascade,
                 terminated=terminated,
             )
-            return terminated
+        self._interrupt_engines(terminated)
+        return terminated
 
     def shutdown(self, *, driver_join_timeout: float = 2.0) -> None:
         """Stop the runtime. All non-terminated agents become
@@ -539,6 +548,48 @@ class Runtime:
         agent_wrapper = record.agent
         return getattr(agent_wrapper, "engine", None) if agent_wrapper else None
 
+    # ----- Budget ceilings -----
+
+    def subtree_cost(self, addr: Address) -> float:
+        """Total engine cost (USD) of ``addr`` plus every descendant."""
+        with self._lock:
+            return self._subtree_cost_locked(addr)
+
+    def _subtree_cost_locked(self, addr: Address) -> float:
+        record = self._records.get(addr)
+        if record is None:
+            return 0.0
+        total = _engine_cost(self._engine_for(record))
+        for child in record.children:
+            total += self._subtree_cost_locked(child)
+        return total
+
+    def budget_exceeded(self, addr: Address) -> str | None:
+        """Return the id of the nearest exhausted budget holder on
+        ``addr``'s ancestor chain (including ``addr`` itself), or
+        ``None`` when every budget on the chain still has headroom.
+
+        A budget caps its holder's whole subtree, so an agent is
+        blocked the moment *any* ancestor's ceiling is spent — a
+        child's own (larger) budget can't buy headroom an ancestor
+        doesn't have. ``engine.cost()`` is a cached float on every
+        engine, so the walk is cheap; drivers additionally skip the
+        call entirely while no budgets exist (``_budgets_in_use``).
+        """
+        if not self._budgets_in_use:
+            return None
+        with self._lock:
+            node: Address | None = addr
+            while node is not None:
+                record = self._records.get(node)
+                if record is None:
+                    return None
+                ceiling = record.spec.budget
+                if ceiling is not None and self._subtree_cost_locked(node) >= ceiling:
+                    return node.id
+                node = record.parent
+        return None
+
     def wait_for_idle(
         self,
         addr: Address,
@@ -611,7 +662,14 @@ class Runtime:
                     f"spawn would create depth {child_depth} but "
                     f"max_depth is {self._max_depth}"
                 )
+            exhausted_at = self.budget_exceeded(parent)
+            if exhausted_at is not None:
+                raise BudgetExceeded(
+                    f"budget exhausted at {exhausted_at}; spawn refused"
+                )
             for spec in specs:
+                if spec.budget is not None:
+                    self._budgets_in_use = True
                 addr = self._mint_address(spec.label)
                 record = self._build_record(addr=addr, parent=parent, spec=spec)
                 record.depth = child_depth
@@ -864,7 +922,26 @@ class Runtime:
                 self._emit_batch_terminated(
                     terminated, requested_by=requested_by
                 )
-            return terminated
+        self._interrupt_engines(terminated)
+        return terminated
+
+    def _interrupt_engines(self, addrs: list[Address]) -> None:
+        """Best-effort: ask each terminated agent's engine to abort
+        its in-flight LLM call so termination takes effect now instead
+        of after the current step drains. Engines opt in by exposing
+        ``interrupt()`` (``ClaudeAgentEngine`` does; ``interrupt`` is
+        fire-and-forget there). Runs outside the registry lock — an
+        engine's interrupt path must never block spawns/sends."""
+        for addr in addrs:
+            with self._lock:
+                record = self._records.get(addr)
+            engine = self._engine_for(record) if record is not None else None
+            fn = getattr(engine, "interrupt", None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
 
     def _emit_batch_terminated(
         self,
@@ -920,13 +997,29 @@ class Runtime:
     ) -> None:
         """Public entrypoint for the driver to report a child engine
         failure to the parent. Lock-safe (RLock); no-op if the parent
-        is gone or the runtime is shutting down."""
+        is gone or the runtime is shutting down. Also a no-op when the
+        child itself is already terminated — an interrupt-induced
+        engine error is the expected tail of a terminate, and the
+        parent already received the ``terminated`` event."""
         with self._lock:
             record = self._records.get(addr)
-            if record is None:
+            if record is None or record.status == "terminated":
                 return
             self._notify_parent_of_child_event(
                 record, event="errored", reason=reason
+            )
+
+    def notify_budget_exceeded(self, addr: Address, exhausted_at: str) -> None:
+        """Driver entrypoint: tell ``addr``'s parent that the agent's
+        step was skipped because a budget on its chain is exhausted."""
+        with self._lock:
+            record = self._records.get(addr)
+            if record is None or record.status == "terminated":
+                return
+            self._notify_parent_of_child_event(
+                record,
+                event="budget_exceeded",
+                reason=f"budget exhausted at {exhausted_at}",
             )
 
     def _notify_parent_of_child_event(

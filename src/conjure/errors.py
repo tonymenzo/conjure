@@ -58,3 +58,11 @@ class Timeout(ConjureError):
 
 class MaxDepthExceeded(ConjureError):
     """Spawn would exceed the configured ``max_depth`` on the runtime."""
+
+
+class BudgetExceeded(ConjureError):
+    """An agent's (or ancestor's) cost ceiling is exhausted.
+
+    Raised on spawn attempts under an exhausted subtree. Drivers don't
+    raise it — they skip the step and emit a ``budget_exceeded``
+    supervision event to the parent instead."""

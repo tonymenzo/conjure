@@ -177,6 +177,12 @@ Plus three higher-order patterns over fan-out / refinement:
   critic. Stops when the critic returns `{"ok": true, "notes": ...}`
   or after `max_iters`. The proper shape `AgentFixedPoint` was
   reaching for — writer + editor, code + linter, solution + verifier.
+- `AgentSupervisor(spec, items, max_restarts, timeout_s)` — `AgentMap`
+  with one-for-one restarts: a worker whose engine errors is torn down
+  and respawned on the same item (up to `max_restarts` per item);
+  items that exhaust the budget come back in `failed` instead of
+  sinking the whole fan-out. Reach for this over `AgentMap` when
+  workers are flaky and partial progress beats fail-fast.
 
 The combinator tools internally use `Spawn` + `Send` + a lazy collector;
 prefer them over hand-rolling the same loop when the shape fits.

@@ -1,5 +1,6 @@
 """Python combinators: ``agent_map``, ``agent_fold``, ``agent_filter``,
-``agent_fixed_point``, ``agent_race``, ``agent_ensemble``, ``agent_critic``.
+``agent_fixed_point``, ``agent_race``, ``agent_ensemble``, ``agent_critic``,
+``agent_supervisor``.
 
 Each combinator builds on the primitive operations (spawn, send via
 mailbox, recv via mailbox, terminate) without re-implementing them.
@@ -22,7 +23,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from conjure.address import Address
 from conjure.envelope import Envelope
-from conjure.errors import Timeout
+from conjure.errors import NoSuchAddress, Terminated, Timeout
 from conjure.ids import new_message_id
 from conjure.record import AgentSpec
 from conjure.runtime import Runtime
@@ -548,6 +549,147 @@ def agent_critic(
             feedback.append(notes)
         return last_output, converged, iters_used
     finally:
+        runtime.terminate(collector, requested_by="oneshot")
+
+
+def agent_supervisor(
+    runtime: Runtime,
+    parent: Address,
+    spec_factory: Callable[[Any], AgentSpec],
+    items: Sequence[Any],
+    *,
+    max_restarts: int = 2,
+    timeout_s: float = 120.0,
+) -> dict[str, Any]:
+    """Supervised fan-out: ``agent_map`` with one-for-one restarts.
+
+    Spawns one worker per item and gathers replies like ``agent_map``,
+    but a worker whose engine errors (status ``"error"``) — or that is
+    terminated from outside before replying — is torn down and replaced
+    by a fresh spawn of ``spec_factory(item)``, up to ``max_restarts``
+    times per item. An item whose restart budget is exhausted is marked
+    failed rather than sinking the whole fan-out.
+
+    Returns ``{"results": [...], "restarts": <total>, "failed":
+    [idx, ...]}`` where ``results`` is in input order with ``None`` in
+    failed slots. Raises ``Timeout`` (with ``partial`` attached) only
+    if the deadline passes with items still pending.
+    """
+    items_list = list(items)
+    if not items_list:
+        return {"results": [], "restarts": 0, "failed": []}
+
+    collector = _spawn_collector(runtime, parent, label="supervisor-collector")
+    spawned: list[Address] = []
+    try:
+        specs: list[AgentSpec] = []
+        for item in items_list:
+            base = spec_factory(item)
+            specs.append(
+                base.model_copy(
+                    update={"capabilities": list(base.capabilities) + [collector]}
+                )
+            )
+        workers = runtime._spawn_batch(parent=parent, specs=specs)
+        spawned.extend(workers)
+        runtime.dispatch_batch(
+            [
+                (parent, worker, {"item": item, "reply_to": collector.id})
+                for worker, item in zip(workers, items_list)
+            ]
+        )
+
+        record = runtime.record_for(collector)
+        n = len(items_list)
+        results: list[Any] = [None] * n
+        done: list[bool] = [False] * n
+        worker_for_idx: list[Address] = list(workers)
+        sender_to_idx: dict[Address, int] = {w: i for i, w in enumerate(workers)}
+        restarts_used: list[int] = [0] * n
+        failed: set[int] = set()
+        total_restarts = 0
+        pending = n
+        deadline = time.monotonic() + timeout_s
+        cursor = 0
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                got = sum(done)
+                raise Timeout(
+                    f"only {got}/{n} replies received before timeout "
+                    f"({total_restarts} restart(s) attempted)",
+                    workers=[w.id for w in worker_for_idx],
+                    received=got,
+                    expected=n,
+                    partial=list(results),
+                )
+            # Short read slices (vs. _collect's 5s) so errored workers
+            # are noticed and replaced promptly instead of after the
+            # next reply happens to arrive.
+            envelopes = record.inbox.read(
+                since_seq=cursor,
+                max_n=n,
+                timeout_s=min(remaining, 0.25),
+            )
+            for env in envelopes:
+                cursor = max(cursor, env.seq)
+                idx = sender_to_idx.get(env.from_)
+                if idx is None or done[idx] or idx in failed:
+                    continue
+                results[idx] = env.body
+                done[idx] = True
+                pending -= 1
+            # Replies processed first: a worker that replied and *then*
+            # errored already did its job — no restart.
+            for idx in range(n):
+                if done[idx] or idx in failed:
+                    continue
+                worker = worker_for_idx[idx]
+                status = runtime.record_for(worker).status
+                if status not in ("error", "terminated"):
+                    continue
+                if restarts_used[idx] >= max_restarts:
+                    failed.add(idx)
+                    pending -= 1
+                    continue
+                restarts_used[idx] += 1
+                total_restarts += 1
+                # ``requested_by="oneshot"`` suppresses the per-child
+                # supervision envelope (the established idiom — see
+                # agent_fixed_point); the caller learns about restarts
+                # from this function's return value, not inbox spam.
+                try:
+                    runtime.terminate(
+                        worker, requested_by="oneshot", cascade=True
+                    )
+                except (NoSuchAddress, Terminated):
+                    pass
+                base = spec_factory(items_list[idx])
+                replacement_spec = base.model_copy(
+                    update={"capabilities": list(base.capabilities) + [collector]}
+                )
+                replacement = runtime._spawn(
+                    parent=parent, spec=replacement_spec
+                )
+                spawned.append(replacement)
+                worker_for_idx[idx] = replacement
+                sender_to_idx[replacement] = idx
+                _dispatch(
+                    runtime=runtime,
+                    sender=parent,
+                    recipient=replacement,
+                    body={"item": items_list[idx], "reply_to": collector.id},
+                )
+        return {
+            "results": results,
+            "restarts": total_restarts,
+            "failed": sorted(failed),
+        }
+    finally:
+        if spawned:
+            runtime.terminate_batch(
+                spawned, requested_by="supervisor-cleanup", cascade=True
+            )
         runtime.terminate(collector, requested_by="oneshot")
 
 

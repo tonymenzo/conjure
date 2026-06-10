@@ -42,6 +42,7 @@ from conjure.control import ControlClient
 from conjure.tools._base import StateField
 from conjure.tools.combinators import (
     AgentCriticTool,
+    AgentSupervisorTool,
     AgentEnsembleTool,
     AgentFilterTool,
     AgentFixedPointTool,
@@ -89,6 +90,7 @@ _BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
     "agent_race": (AgentRaceTool, "AgentRace"),
     "agent_ensemble": (AgentEnsembleTool, "AgentEnsemble"),
     "agent_critic": (AgentCriticTool, "AgentCritic"),
+    "agent_supervisor": (AgentSupervisorTool, "AgentSupervisor"),
 }
 
 

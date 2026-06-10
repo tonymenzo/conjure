@@ -80,6 +80,15 @@ class AgentSpec(BaseModel):
     # The orchestral engine routes ``"ask"`` decisions through its
     # ``permission_hook`` (typically the UI); ``"deny"`` is hard.
     permissions: dict[str, str] = Field(default_factory=dict)
+    # USD cost ceiling for this agent *plus its entire subtree*.
+    # ``None`` (default) means uncapped. Enforcement is hierarchical:
+    # an agent is blocked when ANY ancestor's (or its own) budget is
+    # exhausted, so a child's budget can never buy headroom an
+    # ancestor doesn't have — budgets attenuate like capabilities.
+    # When exhausted: spawns under the subtree raise
+    # ``BudgetExceeded``; drivers skip further steps and notify the
+    # parent with a ``budget_exceeded`` supervision event.
+    budget: float | None = None
     # Substrate-spawned plumbing agent that the user never directly
     # asked for — collectors, hedge/race losers cleaned up later, etc.
     # UI surfaces (tree pane, transcripts) hide these by default; they

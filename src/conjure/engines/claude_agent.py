@@ -283,6 +283,7 @@ class ClaudeAgentEngine:
                 "AgentMap", "AgentFold", "AgentFilter",
                 "AgentFixedPoint",
                 "AgentRace", "AgentEnsemble", "AgentCritic",
+                "AgentSupervisor",
             ):
                 bridged_tools.append(f"mcp__conjure__{short}")
 
@@ -436,6 +437,25 @@ class ClaudeAgentEngine:
         (no ``ANTHROPIC_API_KEY`` ⇒ probably subscription) only when
         the CLI is unreachable."""
         return self._uses_subscription
+
+    def interrupt(self) -> None:
+        """Best-effort abort of the in-flight turn. Fire-and-forget:
+        schedules the SDK's ``interrupt()`` on the shared loop and
+        returns immediately — the runtime calls this from its
+        terminate path and must not block on a hung CLI. The
+        interrupted ``receive_response`` ends (or raises) inside
+        ``_step_async``; the driver sees the terminated status and
+        exits without flagging an error. No-op before the lazy
+        connect or on SDK versions without ``interrupt``."""
+        if not self._connected:
+            return
+        fn = getattr(self._client, "interrupt", None)
+        if fn is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(fn(), self._loop)
+        except Exception:
+            pass
 
     def shutdown(self) -> None:
         """Disconnect the SDK client (if it was ever connected). The

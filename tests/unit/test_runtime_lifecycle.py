@@ -248,3 +248,54 @@ def test_spawn_at_exact_max_depth_succeeds():
     a = rt._spawn(parent=root, spec=AgentSpec(role_prompt="a"))
     b = rt._spawn(parent=a, spec=AgentSpec(role_prompt="b"))
     assert rt.record_for(b).depth == 2  # at the limit, not over
+
+
+def test_terminate_interrupts_engines_best_effort():
+    """Engines exposing ``interrupt()`` get it called (outside the
+    registry lock) when their agent is terminated — the hook that lets
+    ``claude_agent`` abort an in-flight LLM call instead of letting it
+    drain. Cascade reaches descendants; engines without the hook are
+    silently skipped."""
+    from conjure.scripted import BehaviorRegistry, ScriptedEngine
+
+    class InterruptibleEngine(ScriptedEngine):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.interrupts = 0
+
+        def interrupt(self):
+            self.interrupts += 1
+
+    reg = BehaviorRegistry()
+
+    def factory(record, runtime):
+        return InterruptibleEngine(
+            record=record,
+            runtime=runtime,
+            behavior=lambda *_a, **_k: "ok",
+        )
+
+    rt = Runtime(engine_factory=factory)
+    root = rt.root(AgentSpec(role_prompt="idle"))
+    kid = rt._spawn(parent=root, spec=AgentSpec(role_prompt="idle"))
+    grandkid = rt._spawn(parent=kid, spec=AgentSpec(role_prompt="idle"))
+
+    rt.terminate(kid, cascade=True)
+    assert rt.record_for(kid).agent.engine.interrupts == 1
+    assert rt.record_for(grandkid).agent.engine.interrupts == 1
+    assert rt.record_for(root).agent.engine.interrupts == 0
+    rt.shutdown()
+
+
+def test_terminated_agent_error_does_not_notify_parent():
+    """An engine error on an already-terminated agent (e.g. the tail
+    of an interrupt) must not surface an ``errored`` child_event — the
+    parent already received the ``terminated`` event."""
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    kid = rt._spawn(parent=root, spec=AgentSpec(role_prompt="kid"))
+    rt.terminate(kid)
+    before = len(rt.read_inbox(root))
+    rt.notify_child_errored(kid, "interrupted mid-step")
+    assert len(rt.read_inbox(root)) == before
+    rt.shutdown()

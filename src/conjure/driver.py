@@ -40,6 +40,9 @@ class Driver:
         self._cursor = 0
         self._stop_requested = False
         self._thread: threading.Thread | None = None
+        # One supervision event per exhaustion, not one per skipped
+        # message — the parent doesn't need a drumbeat.
+        self._budget_notified = False
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -86,6 +89,26 @@ class Driver:
             if not envelopes:
                 continue
             self._cursor = envelopes[-1].seq
+            # Budget gate: when a ceiling anywhere on this agent's
+            # ancestor chain is spent, skip the step (the messages are
+            # consumed but never reach the engine — no further tokens
+            # burn) and tell the parent once. ``budget_exceeded`` is a
+            # no-lock attribute read while no budgets exist.
+            exhausted_at = self.runtime.budget_exceeded(record.addr)
+            if exhausted_at is not None:
+                record.status = "error"
+                self._emit_engine_error(
+                    RuntimeError(f"budget exhausted at {exhausted_at}")
+                )
+                if not self._budget_notified:
+                    self._budget_notified = True
+                    try:
+                        self.runtime.notify_budget_exceeded(
+                            record.addr, exhausted_at
+                        )
+                    except Exception:
+                        pass
+                continue
             # Power the ``"caller"`` address shortcut — tools that
             # resolve ``to="caller"`` look up the agent's
             # ``last_received_from``. Most-recent envelope wins when

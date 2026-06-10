@@ -27,7 +27,13 @@ from typing import TYPE_CHECKING, Any
 
 from conjure.address import Address
 from conjure.envelope import Envelope
-from conjure.errors import MaxDepthExceeded, NoSuchAddress, Terminated, Timeout
+from conjure.errors import (
+    BudgetExceeded,
+    MaxDepthExceeded,
+    NoSuchAddress,
+    Terminated,
+    Timeout,
+)
 from conjure.ids import new_message_id
 from conjure.record import AgentSpec
 from conjure.tools._base import (
@@ -124,6 +130,7 @@ def spawn_impl(
     permissions: dict[str, str] | None = None,
     model: str | None = None,
     oneshot: bool = False,
+    budget: float | None = None,
 ) -> dict[str, Any]:
     resolved = _resolve(token)
     if isinstance(resolved, dict):
@@ -161,6 +168,7 @@ def spawn_impl(
         oneshot=oneshot,
         sandbox_dir=sandbox_dir,
         permissions=permissions or {},
+        budget=budget,
     )
 
     try:
@@ -171,6 +179,8 @@ def spawn_impl(
         return _err("no_such_address", str(e))
     except MaxDepthExceeded as e:
         return _err("depth_exceeded", str(e))
+    except BudgetExceeded as e:
+        return _err("budget_exceeded", str(e))
 
     # Optionally send the initial message right away.
     if initial_message:
@@ -681,6 +691,16 @@ class SpawnTool(StatelessRuntimeTool):
             "child in ``status=\"error\"`` for inspection / retry."
         ),
     )
+    budget: float | None = OptionalRuntimeField(
+        description=(
+            "USD cost ceiling for the child plus its entire subtree. "
+            "Omit for uncapped. Budgets attenuate: the child is also "
+            "bounded by every ancestor's remaining headroom, so this "
+            "can only narrow, never widen, what the subtree may spend. "
+            "When exhausted, the child's steps are skipped and you "
+            "receive a ``budget_exceeded`` child_event."
+        ),
+    )
     runtime_token: str = StateField(
         description="(internal) runtime token identifying the calling agent.",
     )
@@ -700,6 +720,7 @@ class SpawnTool(StatelessRuntimeTool):
             permissions=self.permissions,
             model=self.model,
             oneshot=bool(self.oneshot),
+            budget=self.budget,
         )
 
 
