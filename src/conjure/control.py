@@ -25,11 +25,14 @@ runtime API that the REPL uses, so capability rules apply.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
 from pathlib import Path
 from typing import Any
+
+from conjure.runtime import _engine_cost
 
 
 class ControlServer:
@@ -40,6 +43,13 @@ class ControlServer:
         self._stop = threading.Event()
         self._sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
+        # ``_log_events`` tail cache: path → (mtime, size, window,
+        # parsed rows). The UI snapshot ticks at 2 Hz and most agent
+        # logs are idle on any given tick — a stat() per file replaces
+        # a read + JSON-parse of its whole tail window.
+        self._log_tail_cache: dict[
+            str, tuple[float, int, int, list[dict[str, Any]]]
+        ] = {}
 
     def start(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -383,6 +393,22 @@ class ControlServer:
             # Read from the file tail instead of scanning historical
             # stream chunks on every UI snapshot.
             window = max(40, limit_per_agent * 8)
+            # Stat-guarded cache: an unchanged file (same mtime + size)
+            # reuses the rows parsed on a previous tick.
+            cache_key = str(log_path)
+            try:
+                st = os.stat(log_path)
+            except OSError:
+                continue
+            cached = self._log_tail_cache.get(cache_key)
+            if (
+                cached is not None
+                and cached[0] == st.st_mtime
+                and cached[1] == st.st_size
+                and cached[2] == window
+            ):
+                out.extend(cached[3][-limit_per_agent:])
+                continue
             try:
                 tail_lines = _tail_text_lines(log_path, window)
             except OSError:
@@ -429,6 +455,9 @@ class ControlServer:
             # Keep only the most recent ``limit_per_agent`` per agent
             # so a chatty agent can't crowd out a quieter one.
             collected.sort(key=lambda e: e["ts"])
+            self._log_tail_cache[cache_key] = (
+                st.st_mtime, st.st_size, window, collected
+            )
             out.extend(collected[-limit_per_agent:])
         out.sort(key=lambda e: e["ts"])
         return {"ok": True, "events": out}
@@ -599,9 +628,19 @@ class ControlServer:
         root = self.runtime.root_addr
         if root is None:
             return {"ok": True, "tree": None}
+        # One lock acquisition for the whole walk. ``record_for`` per
+        # node was N RLock round-trips per 500ms tick — pure contention
+        # against spawns/sends on a busy tree. Children are listed
+        # under the same lock so a concurrent spawn can't mutate a set
+        # mid-iteration.
+        with self.runtime._lock:  # noqa: SLF001
+            snapshot = {
+                a: (r, sorted(r.children, key=lambda c: c.id))
+                for a, r in self.runtime._records.items()  # noqa: SLF001
+            }
 
         def walk(addr: Any) -> dict[str, Any]:
-            rec = self.runtime.record_for(addr)
+            rec, children = snapshot[addr]
             event_log = getattr(rec, "event_log", None)
             log_path = (
                 str(event_log.path)
@@ -617,9 +656,7 @@ class ControlServer:
                 "model": _engine_model_name(engine),
                 "log_path": log_path,
                 "internal": rec.spec.internal,
-                "children": [
-                    walk(c) for c in sorted(rec.children, key=lambda a: a.id)
-                ],
+                "children": [walk(c) for c in children],
             }
 
         return {"ok": True, "tree": walk(root)}
@@ -644,16 +681,21 @@ class ControlServer:
     def _cost(self) -> dict[str, Any]:
         # Drop the @user / @system sentinels — they have no engine and
         # never accrue cost; surfacing them as $0 lines is just noise.
-        rows = [
-            (addr, cost)
-            for addr, cost in self.runtime.costs_by_agent()
-            if addr.id not in ("@user", "@system")
-        ]
+        # Single lock pass: ``costs_by_agent`` + a per-row
+        # ``record_for`` was 1 + N lock acquisitions per UI tick.
+        with self.runtime._lock:  # noqa: SLF001
+            pairs = [
+                (addr, rec)
+                for addr, rec in self.runtime._records.items()  # noqa: SLF001
+                if addr.id not in ("@user", "@system")
+            ]
         has_subscription_agent = False
         out_rows: list[dict[str, Any]] = []
-        for addr, cost in rows:
-            rec = self.runtime.record_for(addr)
+        total = 0.0
+        for addr, rec in pairs:
             engine = self.runtime._engine_for(rec)  # noqa: SLF001
+            cost = _engine_cost(engine)
+            total += cost
             uses_sub = bool(
                 getattr(engine, "uses_subscription", None)
                 and engine.uses_subscription()
@@ -670,7 +712,7 @@ class ControlServer:
             )
         return {
             "ok": True,
-            "total": sum(c for _addr, c in rows),
+            "total": total,
             "rows": out_rows,
             "has_subscription_agent": has_subscription_agent,
         }
