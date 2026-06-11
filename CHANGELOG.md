@@ -4,8 +4,6 @@
 
 ### Packaging / docs
 
-- Package description rewritten around the three primitives (no longer
-  leads with the orchestral dependency); README opening to match.
 - Hero banner removed pending final art.
 
 ### Reliability
