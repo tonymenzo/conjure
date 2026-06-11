@@ -1,11 +1,11 @@
 # conjure
 
-**Agentic functional programming.** A multi-agent harness built on
-[`orchestral`](https://pypi.org/project/orchestral-ai/), organized around
-three primitives — **recursive agent spawning**, **addressable mailboxes**,
-and **capability passing** — with a library of FP-style combinators
-(`agent_map`, `agent_fold`, `agent_filter`, `agent_race`, `agent_ensemble`,
-`agent_critic`) built on top.
+**Agentic functional programming.** Conjure is a multi-agent runtime built
+on three primitives — **recursive agent spawning**, **addressable
+mailboxes**, and **capability passing** — with a library of FP-style
+combinators (`agent_map`, `agent_fold`, `agent_filter`, `agent_race`,
+`agent_ensemble`, `agent_critic`, `agent_supervisor`) built on top.
+Agents spawn agents; topology is ordinary code, not a framework choice.
 
 Most multi-agent frameworks bake in a topology — group chat,
 supervisor/worker, DAG — and you fight the framework when your problem has
