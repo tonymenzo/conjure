@@ -43,3 +43,6 @@ AGENTIC_HIGHER_ORDER_FUNCTIONS.md
 CLAUDE.md
 .agentex/
 examples/archive/
+
+# Design notes are kept locally, not in the repository.
+DESIGN.md

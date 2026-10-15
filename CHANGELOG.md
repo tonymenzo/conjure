@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Removed
+
+- The design document is no longer part of the repository.
+
 ## [0.2.0] — 2026-10-15
 
 A browser UI, a Codex engine, agent-curated toolbase toolkits, a model
@@ -159,8 +163,7 @@ catalog with gateway support, and auditable run records.
 
 ## [0.1.0] — 2026-05-20
 
-First release: the v0.1 substrate described in [`DESIGN.md`](DESIGN.md).
-It provides recursive spawn, addressable mailboxes and capability
+First release: the v0.1 substrate. It provides recursive spawn, addressable mailboxes and capability
 passing, with FP-style combinators on top.
 
 ### Added
