@@ -106,7 +106,7 @@ def _collect(
 
 
 def _spawn_collector(runtime: Runtime, parent: Address, label: str) -> Address:
-    return runtime._spawn(
+    addr = runtime._spawn(
         parent=parent,
         spec=AgentSpec(
             role_prompt="(collector)",
@@ -115,6 +115,8 @@ def _spawn_collector(runtime: Runtime, parent: Address, label: str) -> Address:
             internal=True,
         ),
     )
+    runtime.mark_collector(addr)
+    return addr
 
 
 def agent_map(

@@ -258,6 +258,7 @@ def send_impl(
     )
     stored = target_record.inbox.put(env)
     runtime._journal_send(stored)
+    runtime.note_delivery(caller_addr, target_addr)
     # Reciprocal capability: the recipient may now reply to the sender.
     # Without this, common request/response patterns require explicit
     # introductions for every reply path, which doesn't scale across a

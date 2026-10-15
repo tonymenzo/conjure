@@ -147,3 +147,9 @@ class AgentRecord:
     # agent having to track ids itself. Updated by ``Driver._loop``
     # before each ``step`` call.
     last_received_from: Address | None = None
+    # Set once this agent has handed a result to a combinator collector
+    # (``Call`` / ``AgentMap`` / … reply). Its work is done; termination
+    # then lets the turn finish instead of interrupting it — an interrupt
+    # would abort the reply tool call mid-acknowledgement, which the
+    # claude CLI reports to the model as a user refusal.
+    delivered: bool = False

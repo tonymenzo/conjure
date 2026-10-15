@@ -204,6 +204,9 @@ class Runtime:
         # when no budgets exist anywhere (the common case) the check
         # is a single attribute read with no lock.
         self._budgets_in_use = False
+        # Combinator collectors (``mark_collector``): a send to one is a
+        # worker delivering its result.
+        self._collectors: set[Address] = set()
         self._install_sentinels()
 
     @property
@@ -1020,6 +1023,20 @@ class Runtime:
         self._interrupt_engines(terminated)
         return terminated
 
+    def mark_collector(self, addr: Address) -> None:
+        """Register ``addr`` as a combinator collector (see
+        ``note_delivery``)."""
+        with self._lock:
+            self._collectors.add(addr)
+
+    def note_delivery(self, sender: Address, target: Address) -> None:
+        """Record that ``sender`` just sent to ``target``; a send to a
+        collector marks the sender as having delivered its result."""
+        if target in self._collectors:
+            record = self._records.get(sender)
+            if record is not None:
+                record.delivered = True
+
     def _interrupt_engines(self, addrs: list[Address]) -> None:
         """Best-effort: ask each terminated agent's engine to abort
         its in-flight LLM call so termination takes effect now instead
@@ -1030,6 +1047,9 @@ class Runtime:
         for addr in addrs:
             with self._lock:
                 record = self._records.get(addr)
+            if record is not None and record.delivered:
+                # Its result is already in; let the turn wind down.
+                continue
             engine = self._engine_for(record) if record is not None else None
             fn = getattr(engine, "interrupt", None)
             if callable(fn):
