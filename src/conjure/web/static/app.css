@@ -300,6 +300,11 @@ code, .mono { font-family: var(--mono); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { border: 1px solid var(--faint); border-radius: 10px; padding: 0 7px; font-size: 11px; }
 .chip.kit { border-color: var(--cyan); color: var(--cyan); }
+.chip.model { border-color: var(--green-mid); color: var(--dim); font-size: 12px; padding: 1px 8px; }
+.chip.model b { color: var(--fg); }
+.chip.model.configured { border-style: dashed; }
+.chip.model.default { border-color: var(--amber); border-style: dashed; }
+.chip.model.default b { color: var(--amber); font-weight: 400; }
 .chip.link { cursor: pointer; }
 .chip.link:hover { border-color: var(--green); color: var(--green); }
 .budget { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; margin-top: 3px; }

@@ -312,3 +312,56 @@ def test_cli_parses_web_flags(monkeypatch, tmp_path):
     monkeypatch.setattr(launch, "cmd_web_replay", lambda target, **kw: seen.update(target=target, **kw) or 0)
     assert cli.main(["web", "--replay", "s1", "--store", str(tmp_path), "--port", "9999", "--no-browser"]) == 0
     assert seen == {"target": "s1", "store_dir": tmp_path, "port": 9999, "host": "127.0.0.1", "open_browser": False}
+
+
+# ---------- model provenance ----------
+
+
+def test_model_info_provenance():
+    from types import SimpleNamespace
+
+    from conjure.web.state import model_info
+
+    spec = SimpleNamespace(model=None)
+    # A claude_agent root with nothing pinned: the CLI default, unknown
+    # until the first reply.
+    unpinned = SimpleNamespace(_observed_model=None, model_name=lambda: None)
+    assert model_info(unpinned, spec) == (None, "default")
+    # An alias on the options: configured, not yet confirmed.
+    aliased = SimpleNamespace(_observed_model=None, model_name=lambda: "haiku")
+    assert model_info(aliased, spec) == ("haiku", "configured")
+    # After a reply names the model.
+    seen = SimpleNamespace(_observed_model="claude-opus-5-5", model_name=lambda: "claude-opus-5-5")
+    assert model_info(seen, spec) == ("claude-opus-5-5", "observed")
+    # Orchestral calls the model it was built with.
+    orch = SimpleNamespace(model_name=lambda: "claude-haiku-4-5")
+    assert model_info(orch, spec) == ("claude-haiku-4-5", "observed")
+    # No engine yet (lazy): fall back to the spec.
+    assert model_info(None, SimpleNamespace(model="sonnet")) == ("sonnet", "configured")
+
+
+def test_root_model_reaches_the_spec(monkeypatch):
+    from conjure import runner
+    from conjure.config import load_config_from_mapping
+
+    cfg = load_config_from_mapping(
+        {
+            "llms": {"default": {"provider": "anthropic"}},
+            "root": {"role_prompt": "r", "engine": "scripted-none", "model": "sonnet"},
+        }
+    )
+    assert cfg.root.model == "sonnet"
+    # build_runtime carries it onto the root's spec (no engine built:
+    # the factory is never reached for an unknown engine until a step).
+    seen = {}
+    real_root = Runtime.root
+
+    def capture(self, spec):
+        seen["model"] = spec.model
+        return real_root(self, spec)
+
+    monkeypatch.setattr(Runtime, "root", capture)
+    monkeypatch.setattr(Runtime, "_maybe_start_driver", lambda self, record: None)
+    rt, _ = runner.build_runtime(cfg)
+    assert seen["model"] == "sonnet"
+    rt.shutdown()

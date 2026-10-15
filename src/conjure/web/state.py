@@ -195,6 +195,7 @@ class SessionView:
                 subtree += sub
             spec = rec.spec
             engine = self.runtime._engine_for(rec)  # noqa: SLF001
+            model, model_source = model_info(engine, spec)
             node = {
                 "addr": addr.id,
                 "label": addr.label or addr.id,
@@ -202,8 +203,9 @@ class SessionView:
                 "awaiting_permission": addr.id in awaiting,
                 "depth": rec.depth,
                 "parent": rec.parent.id if rec.parent else None,
-                "engine": spec.engine,
-                "model": _model_name(engine) or spec.model,
+                "engine": _engine_kind(engine, spec),
+                "model": model,
+                "model_source": model_source,
                 "internal": bool(spec.internal),
                 "oneshot": bool(spec.oneshot),
                 "budget": spec.budget,
@@ -224,6 +226,7 @@ class SessionView:
             return {"ok": False, "error": f"unknown agent: {addr_id}"}
         rec = self.runtime.record_for(addr)
         spec = rec.spec
+        model, model_source = model_info(self.runtime._engine_for(rec), spec)  # noqa: SLF001
         caps = [
             {"addr": a.id, "label": a.label or a.id}
             for a in rec.capabilities.snapshot()
@@ -239,8 +242,9 @@ class SessionView:
             "children": [_ref(c) for c in sorted(rec.children, key=lambda c: c.id)],
             "capabilities": caps,
             "role_prompt": spec.role_prompt,
-            "engine": spec.engine,
-            "model": spec.model,
+            "engine": _engine_kind(self.runtime._engine_for(rec), spec),  # noqa: SLF001
+            "model": model,
+            "model_source": model_source,
             "tools": list(spec.tools or []),
             "permissions": dict(spec.permissions or {}),
             "budget": spec.budget,
@@ -541,6 +545,40 @@ def _ref(addr: Address | None) -> dict[str, str] | None:
     if addr is None:
         return None
     return {"addr": addr.id, "label": addr.label or addr.id}
+
+
+def model_info(engine: Any, spec: Any) -> tuple[str | None, str]:
+    """Which model an agent runs on, and how sure we are.
+
+    ``observed`` — the engine has seen the model answer (claude_agent
+    records it from each reply; orchestral calls the model it was built
+    with). ``configured`` — an alias or id from the spec, not yet
+    confirmed by a reply. ``default`` — nothing pinned; a claude_agent
+    root runs on the ``claude`` CLI's default, which is only known
+    after its first reply.
+    """
+    observed = getattr(engine, "_observed_model", None)
+    if isinstance(observed, str) and observed:
+        return observed, "observed"
+    name = _model_name(engine)
+    if name:
+        is_claude = hasattr(engine, "_observed_model")
+        return name, "configured" if is_claude else "observed"
+    if getattr(spec, "model", None):
+        return spec.model, "configured"
+    return None, "default"
+
+
+def _engine_kind(engine: Any, spec: Any) -> str:
+    """The engine actually running (``auto`` resolved)."""
+    if engine is None:
+        return spec.engine
+    name = type(engine).__name__
+    return {
+        "ClaudeAgentEngine": "claude_agent",
+        "OrchestralEngine": "orchestral",
+        "ScriptedEngine": "scripted",
+    }.get(name, spec.engine)
 
 
 def _model_name(engine: Any) -> str | None:

@@ -101,6 +101,7 @@ def build_runtime(
         label=config.root.label,
         sandbox_dir=config.root.sandbox_dir,
         permissions=config.root.permissions,
+        model=config.root.model,
         toolkits=parse_toolkits(config.root.toolkits) or None,
         toolbase_loadout=config.root.toolbase_loadout,
     )

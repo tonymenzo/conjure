@@ -74,6 +74,10 @@ class RootConfig(BaseModel):
     # Per-tool permission decisions, e.g. ``{Bash: ask, Write: allow}``.
     # ``ask`` blocks the tool until the UI banner resolves it.
     permissions: dict[str, str] = Field(default_factory=dict)
+    # Model for a claude_agent root — alias (``opus`` / ``sonnet`` /
+    # ``haiku``) or full id. ``None`` uses the ``claude`` CLI's default,
+    # which isn't known until the first reply names it.
+    model: str | None = None
     # Toolbase toolkits the root itself is served, in ``tb activate``
     # grammar (``[heptapod/llp, calculator]``) or the mapping form.
     # Must fall within ``toolbase.authority``.

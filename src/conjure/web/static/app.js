@@ -97,6 +97,21 @@
       .map(([k, v]) => `${k}=${clip(typeof v === "string" ? JSON.stringify(v) : bodyText(v), 50)}`)
       .join(", ");
   }
+  const shortModel = (m) => String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
+  const ENGINE_NAMES = { claude_agent: "claude", orchestral: "orchestral", scripted: "scripted" };
+  /** The model chip: what the agent runs on, and how sure we are. */
+  function modelChip(info, { withEngine = true } = {}) {
+    if (!info) return null;
+    const engine = ENGINE_NAMES[info.engine] || info.engine || "";
+    const src = info.model_source || (info.model ? "observed" : "default");
+    const label = info.model ? shortModel(info.model) : info.engine === "claude_agent" ? "CLI default model" : "model unknown";
+    const title = {
+      observed: `Running on ${info.model}`,
+      configured: `Configured as ${info.model}; the exact version shows after its first reply`,
+      default: "Not pinned: uses the claude CLI's default model, which shows after the first reply. Set root.model in the config to choose one.",
+    }[src];
+    return h("span", { class: `chip model ${src}`, title }, withEngine && engine ? `${engine} · ` : "", h("b", { text: label }));
+  }
   const MCP_PREFIX = /^mcp__(conjure|spawn)__/;
   const toolName = (n) => String(n || "?").replace(MCP_PREFIX, "");
   function now() {
@@ -260,7 +275,7 @@
     for (const { node, prefix, isLast, isRoot } of S.order) {
       const guide = isRoot ? "" : prefix + (isLast ? "└─ " : "├─ ");
       const meta = [];
-      if (node.model) meta.push(node.model.replace(/^claude-/, "").replace(/-\d{8}$/, ""));
+      meta.push(node.model ? shortModel(node.model) : "default model");
       if (node.cost) meta.push(money(node.cost));
       const row = h("div", {
         class: `node ${node.status}${node.addr === S.selected ? " selected" : ""}`,
@@ -635,7 +650,8 @@
       const status = node ? (node.awaiting_permission ? "awaiting permission" : node.status) : d.status || "";
       fill(this.head,
         h("span", { class: `dot ${node ? statusClass(node) : "st-" + (d.status || "idle")}` }),
-        h("span", { class: "meta", text: [status, node?.model || d.model, node?.cost ? money(node.cost) : null].filter(Boolean).join(" · ") }),
+        modelChip(node || d),
+        h("span", { class: "meta", text: [status, node?.cost ? money(node.cost) : null].filter(Boolean).join(" · ") }),
         ctxEl,
         h("div", { class: "actions" },
           h("button", { text: this.inspectorOpen ? "hide info" : "info", onclick: () => this.toggleInspector() }),
@@ -646,7 +662,10 @@
         ),
       );
       this.textarea.disabled = !S.live || node?.status === "terminated";
-      this.inputBox.querySelector(".hint span").textContent = node?.status === "terminated" ? "agent terminated" : `to ${label}`;
+      const model = (node || d).model;
+      this.inputBox.querySelector(".hint span").textContent = node?.status === "terminated"
+        ? "agent terminated"
+        : `to ${label} · ${model ? shortModel(model) : "CLI default model"}`;
     }
     toggleInspector() {
       this.inspectorOpen = !this.inspectorOpen;
@@ -719,7 +738,7 @@
       h("dl", { class: "kv" },
         h("dt", { text: "address" }), h("dd", { text: d.addr }),
         h("dt", { text: "status" }), h("dd", { text: d.status }),
-        h("dt", { text: "engine" }), h("dd", { text: [d.engine, d.model].filter(Boolean).join(" · ") }),
+        h("dt", { text: "model" }), h("dd", null, modelChip(d)),
         h("dt", { text: "depth" }), h("dd", { text: String(d.depth) }),
         h("dt", { text: "spawned" }), h("dd", { text: clock(d.spawned_at) }),
         h("dt", { text: "budget" }), h("dd", null, budget),
@@ -870,7 +889,7 @@
       for (const n of byId.values()) {
         const live = S.agents.get(n.addr);
         const status = live?.awaiting_permission ? "awaiting" : n.status;
-        const sub = n.sentinel ? "human" : [live?.model?.replace(/^claude-/, "").replace(/-\d{8}$/, ""), live?.cost ? money(live.cost) : null, live?.toolkits?.length ? `⚒${live.toolkits.length}` : null].filter(Boolean).join(" · ") || n.status;
+        const sub = n.sentinel ? "human" : [live ? (live.model ? shortModel(live.model) : "default model") : null, live?.cost ? money(live.cost) : null, live?.toolkits?.length ? `⚒${live.toolkits.length}` : null].filter(Boolean).join(" · ") || n.status;
         nodesG.append(s("g", {
           class: `g-node ${status}${n.addr === (this.selected || S.selected) ? " selected" : ""}`,
           transform: `translate(${n.x},${n.y})`,
