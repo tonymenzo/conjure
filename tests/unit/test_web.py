@@ -222,6 +222,12 @@ def test_page_is_public_api_is_not(server):
 def test_host_header_must_name_the_server(server):
     assert _req(server, "GET", "/api/meta", host="evil.example:80")[0] == 421
     assert _req(server, "POST", "/api/send", host="evil.example", body={})[0] == 421
+    # An SSH tunnel's local port differs from the server's: still allowed.
+    assert _req(server, "GET", "/api/meta", host="localhost:9000")[0] == 200
+    assert _req(server, "GET", "/api/meta", host="127.0.0.1:1")[0] == 200
+    assert _req(server, "GET", "/api/meta", host="[::1]:9000")[0] == 200
+    # ...but only loopback names (or the bound host) pass.
+    assert _req(server, "GET", "/api/meta", host="localhost.evil.example:9000")[0] == 421
     assert _req(server, "GET", "/api/meta", host=f"localhost:{server.port}")[0] == 200
 
 

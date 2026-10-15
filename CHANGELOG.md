@@ -85,6 +85,11 @@
   - Environment and versions, and the frozen config.
   - An **export** button that downloads the ``.tar.gz``, in live and
     replay modes.
+- Fixed: the web server's Host check also compared the port, so
+  forwarding a remote session to a different local port (``ssh -L
+  9000:127.0.0.1:8765 node``) failed every request with "bad Host".
+  The check now pins only the hostname: loopback names or the bound
+  host. That is what stops DNS rebinding; the port never did.
 - Fixed: the Codex engine could misreport an agent's model when its
   conversation contained another model's name (e.g. a child's
   ``model`` argument). It now reads only Codex's own ``turn_context``

@@ -153,14 +153,18 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": message}, status)
 
     def _host_ok(self) -> bool:
+        """DNS-rebinding defense: the Host must *name* this server. The
+        port is deliberately not compared: an SSH tunnel from a laptop
+        (``ssh -L 9000:127.0.0.1:8765 node``) arrives as
+        ``localhost:9000``, and a rebinding attacker can't choose the
+        hostname, which is what this check pins."""
         host = (self.headers.get("Host") or "").strip().lower()
-        allowed = {
-            f"127.0.0.1:{self.app.port}",
-            f"localhost:{self.app.port}",
-            f"[::1]:{self.app.port}",
-            f"{str(self.app.host).lower()}:{self.app.port}",
-        }
-        return host in allowed
+        if host.startswith("["):  # [::1]:port
+            name = host.split("]", 1)[0] + "]"
+        else:
+            name = host.rsplit(":", 1)[0] if ":" in host else host
+        allowed = {"127.0.0.1", "localhost", "[::1]", str(self.app.host).lower()}
+        return bool(name) and name in allowed
 
     def _authed(self) -> bool:
         given = self.headers.get("X-Conjure-Token") or ""
