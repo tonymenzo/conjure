@@ -71,6 +71,7 @@ def build_runtime(
 
     orchestral_factory = make_orchestral_engine_factory(
         llm_factories=llm_factories,
+        max_tool_iterations=config.runtime.max_tool_iterations,
         display_hook_builder=display_hook_builder,
         event_log_router=event_log_router,
         stream=stream,

@@ -1086,6 +1086,9 @@ def _format_event(
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())
 
+    if kind == "notice":
+        return (Text(f"⚠ {event.get('text') or ''}", style="yellow"), ())
+
     if kind == "retry":
         row = Text()
         row.append(

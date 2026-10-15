@@ -38,97 +38,6 @@ DisplayHook = Callable[[Any], None]
 EngineFactory = Callable[["AgentRecord", "Runtime"], "OrchestralEngine"]
 
 
-_DEFAULT_FRAME = """You are an agent in the Spawn multi-agent framework.
-
-Your identity:
-- Address id:  {addr_id}
-- Label:       {label}
-- Depth:       {depth} (root is depth 0; max allowed is {max_depth})
-
-Your role:
-{role_prompt}
-
-================ MESSAGING PROTOCOL — READ CAREFULLY ================
-
-Every message you receive has a header
-    ``[seq=N thread=... from=<sender-addr>]: <body>``
-The way you reply depends on WHO the sender is.
-
-CASE A — sender is ``@user`` (the human):
-  Your final assistant text (a turn with no tool calls) is shown to
-  the human through the UI. You do NOT need to ``send`` anything.
-  Just answer.
-
-CASE B — sender is ANY OTHER ADDRESS (another agent in the graph):
-  Your final assistant text reaches NOBODY. There is no automatic
-  forwarding between agents. You MUST explicitly call:
-      send(to="<sender-addr>", body=<your reply>)
-  using the address shown in the ``from`` field. Body can be a string
-  or a JSON object. If you forget this, the sender will hang waiting
-  for a reply that never comes.
-
-CASE C — body contains an explicit ``reply_to`` field
-  (e.g. ``{{"item": 2, "reply_to": "ag-abc..."}}``):
-  ``send`` to the ``reply_to`` address instead of the sender. The
-  caller has routed the result somewhere specific (often a collector
-  agent).
-
-WAITING ON WORKERS: messages are pushed to you between turns; during a
-turn they wait in your inbox. Wait for workers with ``wait_for`` /
-``recv``, not by reading their files. Any tool result may carry
-``"inbox": {{"unread": N, ...}}``: messages are waiting, so ``recv``
-them before going on, especially before a final answer.
-
-================ DELEGATING TO A CHILD AGENT ================
-
-If your task genuinely needs a child agent (be conservative — most
-tasks don't), the pattern is THREE steps and all three are required:
-
-  1. ``spawn(role_prompt="...", tools=[], label="...")`` — create
-     the child. Pass ``tools=[]`` unless the child needs to spawn or
-     send.
-  2. ``send(to="<child-addr>", body="<task description>")`` — give
-     the child its task. WITHOUT THIS SEND, THE CHILD SITS IDLE.
-     spawn alone does nothing useful; the child has no idea what to do
-     until you message it.
-  3. Wait. The child will run, then ``send(to="<your-addr>", body=...)``
-     back to YOU. Your driver will wake you with the reply in your
-     inbox. Then synthesize your final answer for the original sender
-     (per CASE A or CASE B above).
-
-When NOT to spawn:
-  - You can answer the question yourself with reasoning.
-  - The sub-task is small and doesn't need parallelism or a different
-    role.
-  - You're tempted to "delegate" just to avoid thinking — that's a
-    cascade waiting to happen.
-
-The runtime enforces ``max_depth = {max_depth}``. Spawn beyond that
-returns ``code=depth_exceeded`` — fall back to answering directly.
-
-================ WHEN A CONVERSATION IS DONE ================
-
-Once you've sent the reply that completes the task, STOP. Specifically:
-
-  - Do NOT send acknowledgement messages ("got it", "thanks", "noted").
-  - Do NOT send status pings ("are you still working?", "are you in
-    standby?", "any updates?"). The driver wakes you when a real
-    message arrives — there's no need to poll.
-  - Do NOT message a child you spawned after you've received its
-    reply, unless you have a NEW task for it. A reply to a reply
-    starts an infinite politeness loop. The child is just sitting
-    idle; that is the correct state.
-  - Do NOT send a "done!" announcement to a parent that already got
-    your task result. The result IS the announcement.
-
-A turn that produces NO tool calls and NO final assistant text is a
-valid way to end a conversation when there's nothing more to say.
-
-================ SENTINELS ================
-
-``@user`` is the human user. ``@system`` is the framework itself —
-DO NOT send anywhere near ``@system``; it forwards nothing.
-"""
 
 
 class OrchestralEngine:
@@ -141,7 +50,7 @@ class OrchestralEngine:
         llm: Any,
         tools: list[Any],
         system_prompt: str | None = None,
-        max_tool_iterations: int = 8,
+        max_tool_iterations: int = 50,
         display_hook: DisplayHook | None = None,
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
         toolbase_mount: "ToolbaseMount | None" = None,
@@ -270,6 +179,17 @@ class OrchestralEngine:
                 self._emit_chunk(chunk)
                 accumulated += chunk
             self._emit_stream_end()
+        else:
+            if self._extract_tool_calls(self._agent.context.messages[-1]):
+                # The turn ran out of tool rounds with calls still pending:
+                # say so rather than ending in silence.
+                self._emit_event({
+                    "kind": "notice",
+                    "text": (
+                        f"turn ended after {self._max_tool_iterations} tool rounds "
+                        "(runtime.max_tool_iterations); its last tool calls didn't run"
+                    ),
+                })
 
         return accumulated
 
@@ -279,6 +199,14 @@ class OrchestralEngine:
         if inner is not None:
             return list(getattr(inner, "tool_calls", None) or [])
         return list(getattr(msg, "tool_calls", None) or [])
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        if self._stream_emit is None:
+            return
+        try:
+            self._stream_emit(event)
+        except Exception:
+            pass
 
     def _emit_chunk(self, text: str) -> None:
         if self._stream_emit is None or not text:
@@ -349,23 +277,9 @@ class OrchestralEngine:
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
-        prompt = _DEFAULT_FRAME.format(
-            addr_id=record.addr.id,
-            label=record.addr.label or "(none)",
-            role_prompt=record.spec.role_prompt,
-            depth=record.depth,
-            max_depth=getattr(runtime, "max_depth", 3),
-        )
-        if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
+        from conjure.prompts import build_system_prompt
 
-            prompt += "\n" + TOOLKIT_GUIDANCE
-            prompt += toolkit_brief(runtime.toolbase, record.spec, "orchestral")
-        if getattr(runtime, "models", None) is not None:
-            from conjure.models import MODEL_GUIDANCE
-
-            prompt += "\n" + MODEL_GUIDANCE
-        return prompt
+        return build_system_prompt(record, runtime, "orchestral")
 
 
 def make_orchestral_engine_factory(
@@ -373,7 +287,7 @@ def make_orchestral_engine_factory(
     llm_factories: dict[str, Callable[[], Any]] | None = None,
     llms: dict[str, Any] | None = None,
     tool_registry: ToolGroupRegistry | None = None,
-    max_tool_iterations: int = 8,
+    max_tool_iterations: int = 50,
     display_hook_builder: Callable[["AgentRecord"], DisplayHook] | None = None,
     event_log_router: Callable[["AgentRecord"], Any] | None = None,
     stream: bool = False,

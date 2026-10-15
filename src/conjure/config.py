@@ -48,6 +48,10 @@ class RuntimeConfig(BaseModel):
     # ``depth_exceeded`` error so the agent's LLM can fall back to
     # answering directly. Tune up for genuinely deep workflows.
     max_depth: int = 3
+    # Most tool-call rounds in one turn for orchestral agents (Claude and
+    # Codex agents have their CLIs' own limits). A turn that reaches it
+    # ends, with a notice in the chat.
+    max_tool_iterations: int = 50
 
 
 class LLMConfig(BaseModel):

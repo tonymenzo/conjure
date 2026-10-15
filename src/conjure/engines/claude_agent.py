@@ -48,9 +48,6 @@ if TYPE_CHECKING:
     from conjure.toolbase import ToolbaseMount
 
 
-_SYSTEM_PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "system_prompts" / "claude_agent.md"
-)
 
 
 # Tools whose side effects can mutate the user's environment — file
@@ -68,27 +65,11 @@ _ASK_BY_DEFAULT: frozenset[str] = frozenset({
 })
 
 
-@functools.cache
 def _load_default_system_template() -> string.Template:
-    """Compile the templated system prompt from
-    ``system_prompts/claude_agent.md`` into a ``string.Template``.
+    """The shared agent prompt template (``conjure.prompts``)."""
+    from conjure.prompts import _template
 
-    Cached so we don't re-read the file or recompile the template on
-    every spawn — once at process start, all subsequent calls are an
-    O(1) dict lookup. The template uses ``$name`` / ``${name}`` syntax
-    (which doesn't collide with the curly braces in the prompt's JSON
-    examples the way ``str.format`` would). Falls back to a minimal
-    inline frame if the file is missing (shouldn't happen in a proper
-    install, but keeps the engine robust to packaging accidents)."""
-    try:
-        text = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    except OSError:
-        text = (
-            "You are an agent in the Spawn multi-agent framework.\n\n"
-            "Identity: address $addr_id, label $label, depth $depth "
-            "(max $max_depth).\n\nRole: $role_prompt"
-        )
-    return string.Template(text)
+    return _template()
 
 
 # The CLI's model table: alias (``default``, ``opus``, ``haiku``, …) →
@@ -768,24 +749,9 @@ class ClaudeAgentEngine:
     def _build_system_prompt(
         record: "AgentRecord", runtime: "Runtime", engine: str = "claude_agent"
     ) -> str:
-        template = _load_default_system_template()
-        prompt = template.safe_substitute(
-            addr_id=record.addr.id,
-            label=record.addr.label or "(none)",
-            role_prompt=record.spec.role_prompt,
-            depth=str(record.depth),
-            max_depth=str(getattr(runtime, "max_depth", 3)),
-        )
-        if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
+        from conjure.prompts import build_system_prompt
 
-            prompt += "\n" + TOOLKIT_GUIDANCE
-            prompt += toolkit_brief(runtime.toolbase, record.spec, engine)
-        if getattr(runtime, "models", None) is not None:
-            from conjure.models import MODEL_GUIDANCE
-
-            prompt += "\n" + MODEL_GUIDANCE
-        return prompt
+        return build_system_prompt(record, runtime, engine)
 
 
 @functools.cache

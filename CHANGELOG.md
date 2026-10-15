@@ -8,6 +8,12 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-15
+
+Fixes from running on a model access gateway: requests capped and
+retried, `Recv` / `WaitFor` no longer hang an agent, and one system
+prompt for every engine.
+
 ### Added
 
 - **Gateway-friendly LLM calls.** Each `llms:` entry takes
@@ -25,6 +31,21 @@ this file as its notes.
 
 ### Changed
 
+- **One system prompt for every engine.** `system_prompts/agent.md` is
+  the prompt for Claude, Codex and orchestral agents alike. Each engine
+  fills in only its name, its file and shell tools, and how its tool
+  names appear. The orchestral engine's separate prompt had drifted: it
+  still said "Spawn framework", named tools that don't exist, and
+  advised spawning children without the tools they need to reply. The
+  shared prompt no longer assumes Claude models: spawn defaults come
+  from the model catalog, and `Spawn`'s `initial_message` is documented.
+- **Orchestral tools use the same names as everywhere else**
+  (`WaitFor`, `GrantToolkits`, `ToolCatalog`, ...). orchestral had
+  lowercased them and stripped every "Tool" (`waitfor`, `grantkits`,
+  `catalog`), so prompts named tools that agents couldn't find.
+- **Orchestral turns allow 50 tool rounds** (was 8). It's configurable
+  as `runtime.max_tool_iterations`, and a turn that reaches it says so
+  in the chat instead of ending silently mid-work.
 - An agent's engine error prints one line on the console. The full
   traceback goes to the session's `conjure.log`.
 - `openai_compatible` clients leave retries to conjure (one visible
@@ -238,7 +259,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tonymenzo/conjure/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tonymenzo/conjure/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/tonymenzo/conjure/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tonymenzo/conjure/compare/v0.1.0...v0.1.1
