@@ -836,7 +836,7 @@ def _body_preview(body) -> str:
 
 def _cmd_check(config_path: Path) -> int:
     from conjure.env import load_env_files
-    from conjure.llm import api_key_present, key_env_for
+    from conjure.llm import key_env_for
 
     console = _ui.make_console()
     load_env_files()
@@ -853,18 +853,33 @@ def _cmd_check(config_path: Path) -> int:
     console.print(f"  root.tools:  {cfg.root.tools}")
     console.print()
     console.print("[dim][conjure][/dim] LLMs:")
-    missing = []
+    from conjure.engines import resolve_engine_name
+
+    # Only an orchestral root needs its LLM's key to start. Other entries
+    # (and every entry under a Claude / Codex root) are needed only by
+    # agents spawned on them: missing keys there are warnings.
+    root_engine = resolve_engine_name(cfg.root.engine)
+    required_llm = cfg.root.llm if root_engine == "orchestral" else None
+    missing, unused = [], []
     for name, llm_cfg in cfg.llms.items():
         env_var = llm_cfg.api_key_env or key_env_for(llm_cfg.provider)
-        present = api_key_present(llm_cfg.provider) or not env_var
-        status_tag = "[green]ok[/]" if present else "[red]MISSING[/]"
+        present = (not env_var) or bool(os.environ.get(env_var))
+        needed = name == required_llm
+        status_tag = "[green]ok[/]" if present else ("[red]MISSING[/]" if needed else "[yellow]not set[/]")
         env_display = env_var or "(no key needed)"
+        extra = f" base_url={llm_cfg.base_url}" if llm_cfg.base_url else ""
         console.print(
-            f"  [bold magenta]{name}[/]: provider={llm_cfg.provider} "
+            f"  [bold magenta]{name}[/]: provider={llm_cfg.provider}{extra} "
             f"env={env_display} {status_tag}"
         )
         if not present:
-            missing.append(env_var)
+            (missing if needed else unused).append(env_var)
+    if unused:
+        console.print(
+            f"  [dim]not set: {', '.join(unused)}. Only agents spawned on "
+            f"{'those LLMs' if len(unused) > 1 else 'that LLM'} need it; the "
+            f"{root_engine} root doesn't.[/]"
+        )
     if missing:
         console.print()
         _ui.print_error(
