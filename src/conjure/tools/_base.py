@@ -113,6 +113,17 @@ class StatelessRuntimeTool(BaseTool):
         name = cls.__name__
         return name[: -len("Tool")] if name.endswith("Tool") and name != "Tool" else name
 
+    @classmethod
+    def get_tool_spec(cls):
+        """The spec sent to the model, under the same name the router
+        dispatches on. orchestral's schema generator names specs itself
+        (lowercased, every "Tool" stripped) instead of asking
+        ``get_name``, so without this the model was offered ``catalog``
+        while the router only knew ``ToolCatalog``."""
+        spec = super().get_tool_spec()
+        spec.name = cls.get_name()
+        return spec
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         run = cls.__dict__.get("_run")
