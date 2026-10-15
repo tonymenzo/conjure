@@ -1,402 +1,205 @@
 # Changelog
 
-## Unreleased — web UI
+All notable changes to conjure are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
+follow [Semantic Versioning](https://semver.org/) (pre-1.0: a minor
+version may change behavior). Each GitHub release carries its section of
+this file as its notes.
 
-### Web
+## [Unreleased]
 
-- **``conjure web``: a browser UI that needs no tmux.** It runs a session
-  and serves it at ``http://127.0.0.1:8765/?token=…``. Use ``--detach`` to
-  run it as a daemon (``conjure quit`` stops it, ``conjure web --attach``
-  reprints the URL). ``conjure run --web`` adds the web UI next to the
-  tmux cockpit, on the same runtime. It needs only the standard library
-  and vanilla JS, with no build step and no new dependencies.
-- It keeps the cockpit's layout and look: agent tree with pulsing status
-  dots, activity feed, streaming chat (turn headers, tool calls you can
-  expand), and the amber permission panel. Approvals for agents whose
-  chat isn't open appear as toasts. It also adds:
-  - several agent chats **side by side**, with inter-agent messages and
-    supervision events interleaved into each chat by time;
-  - an **agent inspector**: role prompt, budget against subtree cost,
-    capabilities, toolkit grants;
-  - a **graph** of spawn, message (counted, animated while recent) and
-    introduction edges;
-  - a **timeline** with one lane per agent: turns, tool-call durations,
-    failures and incoming messages; wheel zooms, drag pans;
-  - a sandbox **file browser**;
-  - deep links (``#timeline/<agent>``), a light theme, and a narrow
-    layout.
-- **Markdown and LaTeX in chat.** Agent replies and string message
-  bodies render GitHub-style tables (with column alignment; ``|x|``
-  inside ``$…$`` doesn't split a cell), ordered and nested lists,
-  blockquotes, rules, emphasis and links, plus math: ``$…$``, ``\(…\)``,
-  ``$$…$$``, ``\[…\]``, bare ``\begin{align}…`` and ``math`` fences.
-  Math is typeset by KaTeX 0.16.11, vendored under ``web/static/vendor``
-  (MIT, ~600 KB with woff2 fonts) so it works offline and under the
-  same-origin CSP. Currency like ``$5 and $10`` stays text, bad TeX shows
-  in red instead of breaking the reply, and streaming replies re-render
-  every 150 ms so tables and equations take shape as they arrive.
-- **Replay**: ``conjure web --replay <session>`` serves any journaled
-  session read-only, with a scrubber that rebuilds the session at each
-  instant (``Runtime.replay(until=…)``).
-- Security: every ``/api`` call needs the session token, sent in a custom
-  header. A cross-site page can't attach that header without a CORS
-  preflight, and the server never answers preflights. The ``Host`` header
-  must name the server, which defeats DNS rebinding. The server binds to
-  loopback by default, the URL file is mode 600, and a replay refuses
-  every write.
+## [0.2.0] — 2026-10-15
 
-### Runtime
+A browser UI, a Codex engine, agent-curated toolbase toolkits, a model
+catalog with gateway support, and auditable run records.
 
-- The driver writes ``turn_start`` / ``turn_end`` around every step for
-  any engine; the timeline draws turns from them. Renderers that don't
-  recognize them skip them.
-- ``Runtime.replay(session_dir, until=ts)`` stops at a given instant.
-  Replayed agents now carry their journaled ``spawned_at``.
-- Session bring-up (event logs plus control server) moved to
-  ``conjure.session.start_session``, shared by tmux and web modes.
-- ``conjure quit`` no longer needs libtmux when no daemon is tracked.
+### Added
 
-## Unreleased — pilot-study fixes
+- **Web UI.** `conjure web <config>` serves a session in the browser,
+  with no tmux needed. `conjure run --web` adds it next to the tmux
+  cockpit, and `conjure web --replay <session>` reopens any journaled
+  session read-only, with a time scrubber.
+  - Side-by-side agent chats (split and close, tmux-style), an agent
+    tree with live status, an activity feed, and the permission panel.
+    Approvals for agents whose chat isn't open appear as toasts.
+  - Graph, timeline and file-browser views, an agent inspector, and a
+    model chip on every agent.
+  - Markdown tables and LaTeX in chat (vendored KaTeX, works offline).
+  - A run-record panel (`r`) and a keyboard-shortcuts dialog (`?`).
+    Plus a light theme, a narrow layout, and deep links.
+  - Every API call needs the session token, sent in a header. The
+    server binds to loopback, and the URL file is readable only by you.
+    Reach a remote session through an SSH tunnel.
+- **Codex engine** (`engine: codex`). Agents run on the Codex CLI under
+  your ChatGPT subscription. Each turn is a `codex exec --json` run that
+  resumes the agent's thread. Each agent has its own `CODEX_HOME` with
+  a link to your login and nothing else of `~/.codex`. Children left on
+  `auto` stay on Codex. Configure it under `codex:`, and see
+  `examples/codex_agent.yaml`.
+- **Agent-curated toolbase toolkits.** Agents grant toolkit slices to
+  the agents they spawn (`toolkits` on `Spawn`, `Call` and combinator
+  specs, in `tb activate` grammar). Grants attenuate like addresses and
+  budgets: a child's toolkits must be covered by its parent's.
+  - Tools: `ToolCatalog`, `GrantToolkits` (live, additive) and
+    `RequestToolkits`.
+  - Servers run in-process through toolbase's orchestrator, scoped to
+    the agent's sandbox. Each toolkit's config is resolved against the
+    session's project.
+  - Configure under `toolbase:` (`authority`, `project_root`,
+    `loadout`, `config`, `prestart`), plus `root.toolkits`.
+- **Toolkit skills travel with grants.** Claude and Codex agents get them
+  as native skills. Orchestral agents read them with `LoadSkill`.
+- **Model catalog.** `ModelCatalog` lists every model an agent may
+  spawn on:
+  - API LLMs from your config.
+  - Every model an OpenAI-compatible gateway serves.
+  - Claude subscription aliases, with the exact model each one
+    resolves to.
+  - Codex models.
 
-From a first pilot, in which a Codex root ran a five-decay MadGraph
-study with one worker:
+  `Spawn(model="<id>")` picks the engine for you. A `models:` policy
+  (`allow`, `default`, `notes`) bounds and guides the choice.
+- **OpenAI-compatible provider** (`provider: openai_compatible`) for
+  model access gateways (MAG), vLLM, LiteLLM and institutional proxies.
+  Set `base_url`, plus `api_key_env`, `headers` and `discover: true`.
+  See `examples/gateway_agent.yaml`.
+- **Run records.** Every session writes `manifest.json` at start: the
+  frozen config, software and toolkit versions, and the start time. It
+  also journals what each agent actually ran on: engine, exact model,
+  system prompt and cost.
+- **`conjure export <session>`** writes a portable, read-only record.
+  - Contents: per-agent rows (`agents.jsonl`), totals, the journal, the
+    event logs, and the agents' working files.
+  - Paths are scrubbed, and credentials are never included.
+  - `--archive` also writes a `.tar.gz`, which
+    `conjure web --replay` opens.
+- **Inbox notices.** Any conjure tool result can carry
+  `"inbox": {"unread": N, ...}` when messages are waiting. A parent busy
+  in a long turn sees its workers' results without waiting for the turn
+  to end.
+- `Runtime.replay(until=…)` rebuilds a session as it stood at an instant.
 
-- **Waiting messages show up on tool results.** Messages are pushed
-  between turns. In the pilot, all seven of the worker's messages
-  arrived during one 469-second root turn and reached the root only
-  after its final answer. It had found the results by reading the
-  worker's files, half-copied. Now any conjure tool result can carry
-  ``"inbox": {"unread": N, "latest": [...]}`` with the sender, kind and a
-  preview. ``Recv`` / ``WaitFor`` / ``ListInbox`` / ``Peek`` leave it
-  out, since they already show the inbox. Prompts tell agents to wait on
-  workers through the inbox, not their files, and that steering
-  reaches a busy worker at its next turn.
-- **Agents are told exactly which toolkit tools to call.** In the pilot
-  the worker was granted seven heptapod tools and the mg5 skill but
-  ran MG5 by hand 37 times. Each agent's prompt now names its toolkit
-  tools as its engine shows them (``mcp__toolbase__…`` for Claude,
-  ``mcp__conjure__…`` for Codex, ``<kit>__<tool>`` for orchestral) and
-  its skills, and says to use them rather than the underlying programs
-  and to report tool failures. A live grant adds a one-line note to the
-  next prompt.
-- **ToolCatalog separates what you can call from what you can grant.**
-  Each toolkit now shows ``tools_you_can_call`` next to ``tools_held``,
-  and each tool shows its ``call_as`` name. The root's authority (from
-  the config) is wider than what it's served, which is how the pilot's
-  root saw heptapod advertised but couldn't call it. The root may now
-  ``GrantToolkits(child="self", ...)`` to serve itself.
-- Codex prepended the HTTP MCP server's instructions to every tool
-  description. The server no longer sets any.
+### Changed
 
-Re-run on a smaller study (Z→ee width, one worker): the worker drove
-MadGraph through ``SubmitJob`` / ``JobStatus`` / ``JobResult`` /
-``ValidateProcess`` / ``MadGraphFromRunCard``. The root waited with
-``WaitFor`` / ``Peek``, received the result inside its turn, and
-answered with it.
-
-## Unreleased — run records and export
-
-- **Every session records its provenance.**
-  - ``manifest.json``, written at start: the frozen config; conjure,
-    toolbase, SDK and CLI versions; installed toolkit versions; and the
-    start time.
-  - After each turn, the journal gets an ``agent_meta`` entry with what
-    the agent actually ran on (engine, exact model, system prompt,
-    cost). Replays read it, so a replay shows each agent's model without
-    the live engine.
-- **``conjure export <session>``** writes a portable, read-only record:
-  - ``manifest.json`` with an ``export`` block, and ``summary.json``.
-  - ``agents.jsonl``: one flat, schema-versioned row per agent (engine,
-    model, system prompt, toolkits, turns, errored turns, tool calls and
-    failures, output tokens, active time, messages, cost).
-  - The raw journal and event logs.
-  - Sandboxes, optionally. Files over ``--max-file-mb`` are listed, not
-    copied.
-  - Paths are scrubbed to ``${SESSION}`` / ``${STORE}`` / ``${HOME}`` by
-    default. Codex homes, which link your login, are never included.
-  - ``--archive`` also writes a ``.tar.gz``.
-- **View an export**: ``conjure web --replay <export dir or .tar.gz>``.
-  Archives are unpacked safely. You get the scrubber, graph, timeline,
-  files and each agent's model, all read-only.
-- **Run record in the web UI** (``run`` button, or ``r``):
-  - Session totals, and a per-agent table that opens the agent's chat.
-  - Environment and versions, and the frozen config.
-  - An **export** button that downloads the ``.tar.gz``, in live and
-    replay modes.
-- Fixed: the web server's Host check also compared the port, so
-  forwarding a remote session to a different local port (``ssh -L
-  9000:127.0.0.1:8765 node``) failed every request with "bad Host".
-  The check now pins only the hostname: loopback names or the bound
-  host. That is what stops DNS rebinding; the port never did.
-- Fixed: the Codex engine could misreport an agent's model when its
-  conversation contained another model's name (e.g. a child's
-  ``model`` argument). It now reads only Codex's own ``turn_context``
-  records.
-
-## Unreleased — model catalog and gateways
-
-- **Agents can resolve every model they may spawn on.** ``ModelCatalog``
-  (all engines) lists one id per model, ``<source>/<model>``:
-  - API LLMs from ``llms:``.
-  - Every model an OpenAI-compatible gateway serves, when its entry sets
-    ``discover: true`` (it reads ``GET <base_url>/models``).
-  - Claude subscription aliases with the exact model each resolves to.
-  - Codex models with their context windows.
-  ``Spawn(model=...)`` (also ``Call`` and combinator specs) takes an id,
-  an alias or model name when unique, or an ``llms`` entry name. The
-  runtime resolves it to engine, LLM entry and provider model before
-  anything spawns. A gateway that can't be reached is reported in the
-  catalog, not raised.
-- **Model policy**: ``models: {allow: [globs], default: <id>, notes:
-  {id: text}}``. Ids outside ``allow`` are refused with
-  ``code=model_denied`` and the allowed list. So is a child whose
-  implied model falls outside it (e.g. Claude's ``haiku`` when only
-  ``mag/*`` is allowed). ``default`` covers children spawned without a
-  model.
-- **``openai_compatible`` provider** for model access gateways (MAG),
-  vLLM, LiteLLM or institutional proxies. Set ``base_url``, plus
-  ``api_key_env`` (sent as ``Bearer``), ``headers`` (``${VAR}`` reads the
-  environment) and ``timeout_s``. Keys never live in the config. See
-  ``examples/gateway_agent.yaml``.
-- Orchestral agents honour a resolved model over their LLM entry's
-  configured one, so one gateway entry serves all of its models.
-
-## Unreleased — Codex engine
-
-- **``engine: codex``**: agents run on the Codex CLI under your ChatGPT
-  subscription (``codex login``); ``OPENAI_API_KEY`` is withheld from
-  the CLI.
-  - Each turn is a ``codex exec --json`` run: the first one starts a
-    thread in the agent's sandbox, and later ones resume it.
-  - Each agent has its own ``CODEX_HOME`` under the store, containing a
-    link to ``auth.json`` and nothing else from ``~/.codex``: no
-    ``AGENTS.md``, personal MCP servers or ChatGPT connectors.
-  - Codex's shell and edits run in its ``workspace-write`` sandbox by
-    default (``codex.sandbox``).
-  - Events appear as conjure's own (replies, tool calls and results,
-    usage). The model and context window come from Codex's session
-    file, so the web UI shows ``codex · <model>`` and a context bar.
-  - Children left on ``auto`` stay on Codex.
-  - Granted toolkit skills appear as native Codex skills.
-  - ``codex exec`` can't ask for approval, so Codex agents have no
-    permission panel yet.
-- **Loopback MCP server** (``conjure.mcp_http``): one streamable-HTTP
-  endpoint per runtime on ``127.0.0.1``, started on first use. Each
-  request carries the calling agent's token (passed to Codex by env
-  var, never on the command line). It serves conjure's tools, run as
-  that agent, plus that agent's own toolkit tools. Unknown tokens see
-  nothing.
-- New ``codex:`` config section (``sandbox``, ``child_model``,
-  ``reasoning_effort``, ``bin``) and ``examples/codex_agent.yaml``.
-
-## Unreleased — agent-curated toolkits
-
-### Toolbase
-
-- **Agents curate toolbase toolkits for the agents they spawn.**
-  ``AgentSpec.toolkits`` (``{toolkit: ToolkitGrant}``: the whole
-  toolkit, or some of its bundles, tools and skills) is what an agent
-  is served and the most it may re-grant. Grants attenuate like budgets
-  and addresses: a child's toolset must be covered by its parent's.
-  This is enforced in ``Runtime._spawn_batch`` before any registry
-  mutation, so a refused grant leaves no half-spawned batch. The root's
-  authority is ``toolbase.authority`` (default: the project's active
-  toolbase loadout — what you've ``tb activate``-d; ``all`` opts in to
-  every installed toolkit).
-- New tools, served when the runtime has toolbase configured:
-  ``ToolCatalog`` (what you hold, with descriptions; ``refresh`` re-reads
-  the cache), ``GrantToolkits`` (additive, ancestor-only, journaled and
-  replayed), ``RequestToolkits`` (a ``toolkit_request`` message to the
-  parent). ``Spawn``, ``Call`` and every combinator ``spec`` take
-  ``toolkits`` in ``tb activate`` grammar. Refusals return
-  ``code=toolkit_denied``.
-- Serving is in-process for both engines, through toolbase's
-  orchestrator. The anchor project's loadout supplies version pins and
-  ``serve.yaml`` blocklists, and nothing is written to disk.
-  ``base_directory`` is scoped to the agent's sandbox. Servers start
-  lazily on the agent's first step, so a fan-out spawn doesn't start
-  N × K subprocesses serially inside the spawn call. They restart when
-  a live grant changes the toolset, and stop when the agent terminates.
-  The claude_agent engine serves them as an SDK MCP server
-  (``mcp__toolbase__<toolkit>__<tool>``). A grant reconnects the
-  session with ``resume=`` so the conversation survives. The orchestral
-  engine rebuilds its agent around the same context.
-- Config: a ``toolbase:`` section (``authority``, ``project_root``,
-  ``loadout``, ``call_timeout_s``), plus ``root.toolkits`` and
-  ``root.toolbase_loadout``. New ``[toolbase]`` extra (Python ≥ 3.12).
-  See ``examples/toolbase_agent.yaml``.
-
-- **Skills travel with grants.** A grant carries the skills of what it
-  covers: a bundle grant carries that bundle's skills, and toolkit-wide
-  skills come with any grant. Skills scoped to a bundle the session
-  can't serve are withheld. Claude Code children get them as native
-  skills, surfaced into ``<sandbox>/.claude/skills/<toolkit>__<skill>/``
-  in the layout ``tb connect`` writes. The session names exactly those
-  (``skills=``) and loads settings from the sandbox project only, never
-  the human's ``~/.claude``. A live grant re-surfaces them, and terminating
-  the agent removes them. Folders conjure didn't write are never
-  overwritten or removed. Orchestral agents read skills with the new
-  ``LoadSkill(name, file=)`` tool.
-- **Toolkit servers start at spawn.** A child's servers boot in the
-  background as it's spawned, so its first turn no longer waits for
-  them (``toolbase.prestart: false`` turns this off). Servers aren't
-  shared between agents with identical grants: each one's
-  ``base_directory`` is its own sandbox.
+- **The root's toolkit authority defaults to your active toolbase
+  loadout** (what you've `tb activate`-d), not every installed toolkit.
+  `toolbase.authority: all` restores the old behavior, and a toolset
+  such as `[heptapod]` pins it exactly.
+- Each agent's prompt names its toolkit tools exactly as its engine
+  shows them, and tells it to use them rather than the underlying
+  programs. `ToolCatalog` separates what you can call from what you can
+  grant. The root may grant itself toolkits
+  (`GrantToolkits(child="self")`).
+- A child's toolkit servers start at spawn, in the background
+  (`toolbase.prestart: false` turns this off).
+- The `toolbase_profile` spec field is now `toolbase_loadout`. The old
+  key is still accepted.
+- The claude_agent engine names the exact model before the first reply,
+  from the CLI's model table.
+- Prompts tell agents to wait for workers through their inbox rather
+  than by reading worker files, and explain how steering reaches a busy
+  worker.
 
 ### Fixed
 
-- The claude_agent engine registered its in-process tool server as
-  ``spawn`` but pre-approved ``mcp__conjure__*``, so none of the
-  orchestration tools were actually pre-approved. They were only
-  allowed through the permission callback's default. The server is now
-  ``conjure``, matching the allowlist and the chat UI.
-- **The toolbase hook served nothing.** ``toolbase_profile`` launched
-  ``toolbase serve --profile <name> --no-tui``. toolbase 0.12 renamed
-  profiles to loadouts, so the command now exits with ``No such option:
-  --profile``. The field is now ``toolbase_loadout`` (the old key is
-  still accepted, so old journals replay), and the stdio fallback uses
-  ``--loadout``.
-- The daemon's ``tool_call`` registry was missing ``agent_race``,
-  ``agent_ensemble``, ``agent_critic`` and ``agent_supervisor``, so
-  those tools failed with ``unknown tool`` through the stdio MCP bridge.
+- The toolbase hook launched `toolbase serve --profile`, which toolbase
+  0.12+ rejects.
+- Workers that had already delivered their reply were interrupted
+  mid-`Send` during `Call` / `AgentMap` cleanup. The Claude CLI
+  reported this to the model as a user refusal.
+- Messages an agent had already read with `Recv` were pushed to it again
+  on its next turn.
+- The daemon's tool registry was missing `agent_race`, `agent_ensemble`,
+  `agent_critic` and `agent_supervisor`.
+- The claude_agent engine registered its tool server under a name that
+  didn't match its pre-approval list.
+- `conjure check` ignored an LLM's `api_key_env`, and required API keys
+  that a Claude or Codex root never uses.
 
-## v0.1.2 — reliability layer
+## [0.1.2] — 2026-06-10
 
-### Packaging / docs
+### Added
 
+- **`agent_supervisor`**: supervised fan-out. It's `agent_map` with
+  one-for-one restarts. Errored workers are respawned on the same item
+  up to `max_restarts` times. Items that exhaust the budget come back in
+  `failed` instead of sinking the whole fan-out.
+- **Hierarchical cost ceilings.** `AgentSpec.budget` (USD) caps an agent
+  plus its whole subtree. Budgets attenuate like capabilities.
+  - Spawning under an exhausted subtree raises `BudgetExceeded` (tool
+    code `budget_exceeded`).
+  - Drivers skip further steps, and the parent gets a one-time
+    `budget_exceeded` event.
+
+### Changed
+
+- **Terminate interrupts in-flight steps.** `Runtime.terminate` calls
+  `engine.interrupt()`, so killing a claude_agent aborts its in-flight
+  LLM call instead of draining it.
+- The control-plane snapshot behind the 2 Hz UI tick takes one registry
+  lock per walk, not one per node. Idle agents now cost a `stat()`, not
+  a log read and parse.
 - Hero banner removed pending final art.
 
-### Reliability
+### Fixed
 
-- **``agent_supervisor``** — supervised fan-out: ``agent_map`` with
-  one-for-one restarts. Errored workers are torn down and respawned on
-  the same item up to ``max_restarts`` times; items that exhaust the
-  budget come back in ``failed`` instead of sinking the whole fan-out.
-  Ships as the ``AgentSupervisor`` tool (registered in both MCP
-  bridges + the claude_agent allowlist + system prompt).
-- **Hierarchical cost ceilings** — ``AgentSpec.budget`` (USD) caps an
-  agent plus its entire subtree. Budgets attenuate like capabilities:
-  an agent is blocked when *any* ancestor's ceiling is spent. Spawns
-  under an exhausted subtree raise ``BudgetExceeded`` (tool code
-  ``budget_exceeded``); drivers skip further steps and emit a one-time
-  ``budget_exceeded`` child_event to the parent. Zero overhead while
-  no budgets are set (flag-gated fast path).
-- **Terminate interrupts in-flight steps** — ``Runtime.terminate`` /
-  ``terminate_batch`` now call ``engine.interrupt()`` (best-effort,
-  outside the registry lock) on every terminated agent.
-  ``ClaudeAgentEngine`` implements it via the SDK's ``interrupt()``,
-  so killing an agent aborts its in-flight LLM call instead of
-  draining it — races stop burning loser tokens. Engine errors on
-  already-terminated agents no longer emit spurious ``errored``
-  supervision events.
+- Engine errors on already-terminated agents no longer emit spurious
+  `errored` supervision events.
 
-### Performance
+## [0.1.1] — 2026-06-09
 
-- Control-plane snapshot (2 Hz UI tick): ``_tree`` walks the registry
-  under one lock acquisition instead of one per node; ``_cost`` builds
-  rows in a single pass (was 1 + N lock round-trips); ``_log_events``
-  caches each agent's parsed log tail behind an mtime + size stat —
-  idle agents cost a ``stat()`` instead of a read + JSON parse per
-  tick.
+### Fixed
 
-## v0.1.1 — PyPI page fix
+- The README hero image uses an absolute URL, so the PyPI project page
+  renders it.
 
-- README hero image references the absolute GitHub raw URL so the PyPI
-  project page renders it (relative paths only resolve on GitHub).
-- Project URLs added to the package metadata (repository, changelog).
+### Added
 
-## v0.1.0 — substrate release
+- Project URLs (repository, changelog) in the package metadata.
 
-### Packaging (PyPI release prep)
+## [0.1.0] — 2026-05-20
 
-- Licensed under **AGPL-3.0-only** (``LICENSE`` + PEP 639 metadata).
-- ``py.typed`` marker shipped — the package is typed for downstream
-  checkers.
-- ``textual`` and ``libtmux`` moved to the ``[ui]`` extra; the core
-  install is library + ``conjure repl``. ``conjure run`` degrades with
-  a pointer to ``pip install conjure-agents[ui]`` when the extra is absent.
-- ``mcp`` declared directly (``orchestral.mcp.server`` imports it but
-  orchestral-ai ≤1.6.2 doesn't declare it).
-- ``SpawnTool``'s optional fields (``tools``, ``capabilities``,
-  ``sandbox_dir``, ``permissions``, ``model``) use a new
-  ``OptionalRuntimeField`` so orchestral's schema generator marks them
-  optional — a plain ``default=None`` is treated as "no default" and
-  made required, which forced every spawn call to pass every field.
-- Test fakes updated for orchestral-ai 1.6.x's ``LLM`` abstract surface
-  (``_format_tool_choice``); suite verified green against released
-  orchestral-ai 1.4.0 and 1.6.2 and the local orchestral-core HEAD.
+First release: the v0.1 substrate described in [`DESIGN.md`](DESIGN.md).
+It provides recursive spawn, addressable mailboxes and capability
+passing, with FP-style combinators on top.
 
-First tagged release. Ships the v0.1 substrate described in
-[`DESIGN.md`](DESIGN.md): recursive spawn, addressable mailboxes,
-capability passing, and FP-style combinators on top.
+### Added
 
-### Substrate
+- **Value types:**
+  - `Address`, `Envelope` and `CapabilitySet`.
+  - A thread-safe `Mailbox` with per-inbox sequencing and one `read`
+    primitive.
+- **Runtime:** the spawn tree, agent registry and capability sets, plus
+  an append-only JSONL journal that replays the spawn tree and inbox
+  contents.
+- **Driver, Agent and Engine:** a per-agent thread loop around a
+  pluggable `Engine`. Production engines wrap `orchestral.Agent`, and
+  tests use `ScriptedEngine`.
+- **Primitive tools:** `spawn`, `send`, `recv`, `wait_for`,
+  `terminate`, `introduce` and `list_inbox`. Capabilities are enforced
+  in the tool layer.
+- **Combinator tools:**
+  - The FP core: `agent_map`, `agent_fold`, `agent_filter` and
+    `agent_fixed_point`.
+  - Patterns on top: `agent_race`, `agent_ensemble` and
+    `agent_critic`.
+- **Toolbase hook:** `AgentSpec.toolbase_profile` serves a toolbase
+  profile to a claude_agent child.
+- **Packaging:**
+  - AGPL-3.0-only, typed (`py.typed`).
+  - `textual` and `libtmux` are in the `[ui]` extra, and `mcp` is
+    declared directly.
+- **Tests:** 121 offline tests, plus toy programs covering recursion,
+  map, tree decomposition, shared state, fixed points, capability
+  violations, termination cascades and replay.
 
-- **Address, Envelope, CapabilitySet** — frozen value types for routing
-  and authorization.
-- **Mailbox** — threadsafe FIFO inbox with per-inbox monotonic
-  sequencing and a single ``read`` primitive that subsumes peek, recv,
-  and wait_for.
-- **Runtime** — owns the spawn tree, agent registry, capability sets,
-  and an append-only JSONL persistence journal. Replay reconstructs
-  spawn tree and inbox contents from disk.
-- **Driver + Agent + Engine** — per-agent thread loop wrapped around a
-  pluggable ``Engine`` protocol. Production engines wrap
-  ``orchestral.Agent``; tests use ``ScriptedEngine``.
+### Fixed
 
-### Tools
+- `Spawn`'s optional fields were marked required by orchestral's schema
+  generator.
 
-- **Primitive tools**: ``spawn``, ``send``, ``recv``, ``wait_for``,
-  ``terminate``, ``introduce``, ``list_inbox``. Each has both a pure-
-  Python ``*_impl`` and an orchestral ``@define_tool``-wrapped class.
-  Capability enforcement lives in the tool layer.
-- **Combinator tools**: ``agent_map``, ``agent_fold``, ``agent_filter``,
-  ``agent_fixed_point``, ``agent_race``, ``agent_ensemble``,
-  ``agent_critic``. LLM-callable wrappers around the Python combinators
-  in ``conjure.combinators``. The first four are the FP-style core; the
-  last three are higher-order patterns (race for quality-vs-latency,
-  ensemble for best-of-N synthesis via an aggregator agent, critic for
-  generator/critic refinement loops).
-
-### Integrations
-
-- **Toolbase consumer**: ``AgentSpec`` gains ``toolbase_profile: str |
-  None``. When set, the ``claude_agent`` engine wires a second MCP
-  server (``toolbase serve --profile <name> --no-tui``) into the
-  child's ``mcp_servers`` alongside spawn's own surface. Lets a parent
-  agent curate which toolbase profile (and therefore which toolkits /
-  tools) each subagent sees — agent-curates-tools-for-subagents.
-  Strictly opt-in; ``None`` (default) means no toolbase wiring.
-  Requires ``toolbase`` on ``PATH``.
-
-### Tests
-
-- **121 tests** total, all offline (no LLM, no network).
-- Unit tests cover every value type, the mailbox, the runtime
-  lifecycle, persistence + replay, the driver loop, primitive-tool
-  capability enforcement, and the combinators.
-- Toy programs (``tests/programs/``) demonstrate:
-  - **Recursive spawn**: factorial as a depth-``n`` chain.
-  - **Map**: sum-of-squares via ``agent_map``.
-  - **Tree decomposition**: prime factorization with smallest-divisor
-    recursion.
-  - **Capability passing + shared state**: memoized Fibonacci with a
-    shared cache agent introduced to each worker.
-  - **Fixed-point iteration**: whitespace-string convergence.
-  - **Capability violation**: siblings can't message without an
-    introduction.
-  - **Termination cascade**: middle-of-chain terminate kills
-    descendants.
-  - **Persistence replay**: sum-of-squares run, shut down, then
-    rehydrated from journal.
-
-### Deferred / Known Limitations
-
-- No distributed / multi-process operation (in-memory only).
-- No capability revocation.
-- No mid-LLM-call interruption on terminate (in-flight ``step``
-  finishes before the driver exits).
-- Cost ceilings are tracked but not enforced.
-- No CLI or human-facing UI.
-- See ``DESIGN.md`` §6 and the implementation plan's "Open Decisions
-  Deferred" for more.
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tonymenzo/conjure/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/tonymenzo/conjure/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/tonymenzo/conjure/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/tonymenzo/conjure/releases/tag/v0.1.0
