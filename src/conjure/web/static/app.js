@@ -727,6 +727,10 @@
 
   class ChatColumn {
     constructor(addr) {
+      this.epoch = 0;          // bumped by each load(); stale responses are dropped
+      this.loaded = false;
+      this.polling = false;
+      this.pollAgain = false;
       this.addr = addr;
       this.offset = 0;
       this.start = 0;
@@ -762,13 +766,17 @@
     nearBottom() { return this.body.scrollHeight - this.body.scrollTop - this.body.clientHeight < 60; }
     scrollEnd() { this.body.scrollTop = this.body.scrollHeight; }
     async load() {
+      const epoch = ++this.epoch;
+      this.loaded = false;
       this.body.replaceChildren();
       this.renderer = new Renderer(this.body, { live: S.live });
       this.seenSeq.clear();
       let data;
       try { data = await api("events", { addr: this.addr }); } catch { return; }
+      if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
       this.offset = data.offset;
+      this.loaded = true;
       if (data.start > 0) this.body.append(this.olderButton());
       for (const ev of data.events) this.renderer.apply(ev);
       if (!S.live) this.renderer.flush();
@@ -789,10 +797,25 @@
       this.start = data.start;
       this.body.scrollTop += this.body.scrollHeight - prevHeight;
     }
+    /** One poll at a time: send() polls right away while the interval's
+     *  poll may be in flight, and two reads from the same offset would
+     *  render the same events (your message) twice. A poll asked for
+     *  meanwhile runs once the current one lands. */
     async poll() {
       if (!S.live) return;
+      if (this.polling) { this.pollAgain = true; return; }
+      this.polling = true;
+      try {
+        do { this.pollAgain = false; await this.pollOnce(); } while (this.pollAgain);
+      } finally { this.polling = false; }
+    }
+    async pollOnce() {
+      const epoch = this.epoch, since = this.offset;
+      if (!this.loaded) return;
       let data;
-      try { data = await api("events", { addr: this.addr, since: this.offset }); } catch { return; }
+      try { data = await api("events", { addr: this.addr, since }); } catch { return; }
+      // A load (or retarget) since the request owns the log now.
+      if (epoch !== this.epoch || since !== this.offset) return;
       if (!data.events.length) { this.renderer.tick(); return; }
       const stick = this.nearBottom();
       this.offset = data.offset;
