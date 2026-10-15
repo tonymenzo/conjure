@@ -875,10 +875,14 @@ def _build_tool_registry() -> dict[str, type]:
     conjure tool classes. Lazily imported so importing
     ``conjure.control`` doesn't drag the whole tool surface in."""
     from conjure.tools.combinators import (
+        AgentCriticTool,
+        AgentEnsembleTool,
         AgentFilterTool,
         AgentFixedPointTool,
         AgentFoldTool,
         AgentMapTool,
+        AgentRaceTool,
+        AgentSupervisorTool,
     )
     from conjure.tools.primitives import (
         CallTool,
@@ -890,6 +894,11 @@ def _build_tool_registry() -> dict[str, type]:
         SpawnTool,
         TerminateTool,
         WaitForTool,
+    )
+    from conjure.tools.toolkits import (
+        GrantToolkitsTool,
+        RequestToolkitsTool,
+        ToolCatalogTool,
     )
 
     return {
@@ -906,6 +915,15 @@ def _build_tool_registry() -> dict[str, type]:
         "agent_fold": AgentFoldTool,
         "agent_filter": AgentFilterTool,
         "agent_fixed_point": AgentFixedPointTool,
+        # The stdio bridge advertises these too; without them here its
+        # calls failed with ``unknown tool``.
+        "agent_race": AgentRaceTool,
+        "agent_ensemble": AgentEnsembleTool,
+        "agent_critic": AgentCriticTool,
+        "agent_supervisor": AgentSupervisorTool,
+        "tool_catalog": ToolCatalogTool,
+        "grant_toolkits": GrantToolkitsTool,
+        "request_toolkits": RequestToolkitsTool,
     }
 
 

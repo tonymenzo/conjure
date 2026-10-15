@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased — agent-curated toolkits
+
+### Toolbase
+
+- **Agents curate toolbase toolkits for the agents they spawn.**
+  ``AgentSpec.toolkits`` (``{toolkit: ToolkitGrant}``: the whole
+  toolkit, or some of its bundles, tools and skills) is what an agent
+  is served and the most it may re-grant. Grants attenuate like budgets
+  and addresses: a child's toolset must be covered by its parent's.
+  This is enforced in ``Runtime._spawn_batch`` before any registry
+  mutation, so a refused grant leaves no half-spawned batch. The root's
+  authority is ``toolbase.authority`` (default: every installed
+  toolkit).
+- New tools, served when the runtime has toolbase configured:
+  ``ToolCatalog`` (what you hold, with descriptions; ``refresh`` re-reads
+  the cache), ``GrantToolkits`` (additive, ancestor-only, journaled and
+  replayed), ``RequestToolkits`` (a ``toolkit_request`` message to the
+  parent). ``Spawn``, ``Call`` and every combinator ``spec`` take
+  ``toolkits`` in ``tb activate`` grammar. Refusals return
+  ``code=toolkit_denied``.
+- Serving is in-process for both engines, through toolbase's
+  orchestrator. The anchor project's loadout supplies version pins and
+  ``serve.yaml`` blocklists, and nothing is written to disk.
+  ``base_directory`` is scoped to the agent's sandbox. Servers start
+  lazily on the agent's first step, so a fan-out spawn doesn't start
+  N × K subprocesses serially inside the spawn call. They restart when
+  a live grant changes the toolset, and stop when the agent terminates.
+  The claude_agent engine serves them as an SDK MCP server
+  (``mcp__toolbase__<toolkit>__<tool>``). A grant reconnects the
+  session with ``resume=`` so the conversation survives. The orchestral
+  engine rebuilds its agent around the same context.
+- Config: a ``toolbase:`` section (``authority``, ``project_root``,
+  ``loadout``, ``call_timeout_s``), plus ``root.toolkits`` and
+  ``root.toolbase_loadout``. New ``[toolbase]`` extra (Python ≥ 3.12).
+  See ``examples/toolbase_agent.yaml``.
+
+### Fixed
+
+- **The toolbase hook served nothing.** ``toolbase_profile`` launched
+  ``toolbase serve --profile <name> --no-tui``. toolbase 0.12 renamed
+  profiles to loadouts, so the command now exits with ``No such option:
+  --profile``. The field is now ``toolbase_loadout`` (the old key is
+  still accepted, so old journals replay), and the stdio fallback uses
+  ``--loadout``.
+- The daemon's ``tool_call`` registry was missing ``agent_race``,
+  ``agent_ensemble``, ``agent_critic`` and ``agent_supervisor``, so
+  those tools failed with ``unknown tool`` through the stdio MCP bridge.
+
 ## v0.1.2 — reliability layer
 
 ### Packaging / docs

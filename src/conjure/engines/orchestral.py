@@ -31,6 +31,7 @@ from conjure.engines.registry import (
 if TYPE_CHECKING:
     from conjure.record import AgentRecord
     from conjure.runtime import Runtime
+    from conjure.toolbase import ToolbaseMount
 
 
 DisplayHook = Callable[[Any], None]
@@ -137,8 +138,15 @@ class OrchestralEngine:
         max_tool_iterations: int = 8,
         display_hook: DisplayHook | None = None,
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
+        toolbase_mount: "ToolbaseMount | None" = None,
     ) -> None:
-        """``stream_emit`` (optional) — when provided, ``step`` streams
+        """``toolbase_mount`` (optional) serves the agent's toolbase
+        toolkits. Its servers start at the first step, not here, so a
+        fan-out spawn doesn't start every worker's toolkits serially
+        inside the spawn call; a live grant swaps the tool list at the
+        next step, keeping the conversation.
+
+        ``stream_emit`` (optional) — when provided, ``step`` streams
         text chunks to it as ``{"kind": "chunk", "text": ...}`` events
         and emits a ``{"kind": "stream_end", "tool_calls": [...]}``
         event when the LLM finishes a response. The display hook is
@@ -149,6 +157,10 @@ class OrchestralEngine:
         self._runtime = runtime
         self._stream_emit = stream_emit
         self._max_tool_iterations = max_tool_iterations
+        self._llm = llm
+        self._base_tools = list(tools)
+        self._display_hook = display_hook
+        self._toolbase = toolbase_mount
         prompt = system_prompt or self._build_system_prompt(record, runtime)
         self._agent = OrchestralAgent(
             llm=llm,
@@ -160,7 +172,33 @@ class OrchestralEngine:
             debug=False,
         )
 
+    def _sync_toolkits(self) -> None:
+        if self._toolbase is None:
+            return
+        served = self._toolbase.sync()
+        if served is None:
+            return
+        # Same LLM, same context (so the conversation carries over);
+        # only the tool list changes.
+        self._agent = OrchestralAgent(
+            llm=self._llm,
+            context=self._agent.context,
+            tools=self._base_tools + served,
+            max_tool_interations=self._max_tool_iterations,
+            tool_config=None,
+            display_hook=self._display_hook,
+            debug=False,
+        )
+
+    def close_toolkits(self) -> None:
+        if self._toolbase is not None:
+            self._toolbase.close()
+
+    def shutdown(self) -> None:
+        self.close_toolkits()
+
     def step(self, prompt: str) -> str:
+        self._sync_toolkits()
         if self._stream_emit is None:
             response = self._agent.run(prompt)
             return response.text if response.text is not None else ""
@@ -279,13 +317,18 @@ class OrchestralEngine:
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
-        return _DEFAULT_FRAME.format(
+        prompt = _DEFAULT_FRAME.format(
             addr_id=record.addr.id,
             label=record.addr.label or "(none)",
             role_prompt=record.spec.role_prompt,
             depth=record.depth,
             max_depth=getattr(runtime, "max_depth", 3),
         )
+        if getattr(runtime, "toolbase", None) is not None:
+            from conjure.toolbase import TOOLKIT_GUIDANCE
+
+            prompt += "\n" + TOOLKIT_GUIDANCE
+        return prompt
 
 
 def make_orchestral_engine_factory(
@@ -338,7 +381,23 @@ def make_orchestral_engine_factory(
                 )
             llm = llms[llm_name]
         tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
+        hub = getattr(runtime, "toolbase", None)
+        if hub is not None and "toolkit" in registry and "toolkit" not in tool_names:
+            # Toolkit curation (catalog, grant, request) rides along
+            # whenever the runtime has toolbase configured.
+            tool_names.append("toolkit")
         tools = build_tools(record.token, tool_names, registry)
+        mount = None
+        if hub is not None:
+            # Every agent gets a mount, even with no toolkits yet: a
+            # later GrantToolkits lands through it. An empty mount
+            # starts nothing.
+            from conjure.toolbase import ToolbaseMount
+            from conjure.tools.filesystem import _sandbox_for
+
+            mount = ToolbaseMount(
+                hub, record, lambda: _sandbox_for(record, runtime)
+            )
 
         # When streaming, the engine emits chunks directly into the
         # agent's event log and the display hook MUST filter out
@@ -363,6 +422,7 @@ def make_orchestral_engine_factory(
             max_tool_iterations=max_tool_iterations,
             display_hook=hook,
             stream_emit=stream_emit,
+            toolbase_mount=mount,
         )
 
     return factory

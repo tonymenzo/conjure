@@ -39,6 +39,7 @@ the user) terminates it.
 pip install conjure-agents                 # core library + headless CLI (repl)
 pip install "conjure-agents[ui]"           # + the tmux/textual cockpit (conjure run)
 pip install "conjure-agents[claude_agent]" # + claude-agent-sdk engine
+pip install "conjure-agents[toolbase]"     # + agent-curated toolbase toolkits (Python ≥ 3.12)
 ```
 
 The distribution is named `conjure-agents`; the import package and CLI are
@@ -138,6 +139,39 @@ tools, so agents can invoke them on their own subtrees:
   routing.
 - **`ScriptedEngine`** — deterministic behaviors for tests and offline
   development.
+
+## Toolkits (toolbase)
+
+With [toolbase](https://github.com/alexr314/toolbase) installed, agents
+curate domain toolkits for the agents they spawn. Toolkits are
+capabilities too: a child's toolkits must be covered by its parent's,
+the same way addresses and budgets work.
+
+```yaml
+toolbase:
+  authority: all          # the root may grant any installed toolkit
+root:
+  role_prompt: ...
+  toolkits: [heptapod/units]   # the root's own tools (optional)
+```
+
+- `ToolCatalog()` lists what the caller holds, so it can grant from it.
+- `Spawn(..., toolkits=["heptapod/llp", "calculator__add"])` serves the
+  child that slice. The grammar is `tb activate`'s: `toolkit`,
+  `toolkit/bundle`, or `toolkit__tool`. `Call` and the combinator
+  `spec`s take the same field.
+- `GrantToolkits(child, toolkits)` widens a live descendant's toolset.
+  The child picks it up at its next turn, and its conversation is kept.
+- `RequestToolkits(toolkits, reason)` lets a child ask its parent for
+  tools. The parent grants them, escalates to its own parent, or
+  declines.
+
+Each agent's toolkits are served in-process from toolbase's cache.
+Nothing is written to your loadouts. File-aware tools are scoped to
+the agent's sandbox. The servers start on the agent's first turn and
+stop when it terminates. Version pins and `serve.yaml` blocklists come
+from the project's active loadout. See
+[`examples/toolbase_agent.yaml`](examples/toolbase_agent.yaml).
 
 ## Persistence & replay
 

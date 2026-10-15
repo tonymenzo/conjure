@@ -33,7 +33,19 @@ def test_bridge_tools_expose_pascalcase_display_names():
         "Terminate", "Introduce", "ListInbox", "Peek", "Call",
         "AgentMap", "AgentFold", "AgentFilter", "AgentFixedPoint",
         "AgentRace", "AgentEnsemble", "AgentCritic", "AgentSupervisor",
+        "ToolCatalog", "GrantToolkits", "RequestToolkits",
     ]
+
+
+def test_daemon_registry_covers_every_bridged_tool():
+    """Every tool the stdio bridge advertises must resolve in the
+    daemon's ``tool_call`` registry, or the call fails with
+    ``unknown tool`` (the race/ensemble/critic/supervisor tools did,
+    before they were registered)."""
+    from conjure.control import _TOOL_CLASS_REGISTRY
+    from conjure.mcp_bridge import _BRIDGE_TARGETS
+
+    assert set(_BRIDGE_TARGETS) <= set(_TOOL_CLASS_REGISTRY)
 
 
 @pytest.fixture

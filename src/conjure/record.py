@@ -17,11 +17,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from conjure.address import Address
 from conjure.capability import CapabilitySet
 from conjure.mailbox import Mailbox
+from conjure.toolbase import ToolkitGrant
 
 
 AgentStatus = Literal[
@@ -94,14 +95,21 @@ class AgentSpec(BaseModel):
     # UI surfaces (tree pane, transcripts) hide these by default; they
     # remain inspectable via ``Peek`` and addressable like any agent.
     internal: bool = False
-    # Name of a ``toolbase`` profile to expose to this agent as a second
-    # MCP server. When set, the ``claude_agent`` engine spawns
-    # ``toolbase serve --profile <name> --no-tui`` and wires its tools
-    # in alongside conjure's own ``mcp__conjure__*`` surface. The parent
-    # gets to curate which toolbase profile (and therefore which
-    # toolkits/tools) each child sees — "agent-curates-tools-for-
-    # subagents". ``None`` (default) means no toolbase wiring.
-    toolbase_profile: str | None = None
+    # Toolbase toolkits this agent is served — and may re-grant to its
+    # children. ``{toolkit: ToolkitGrant}`` (whole toolkit, bundles,
+    # tools, skills); see ``conjure.toolbase``. Grants attenuate: a
+    # child's toolkits must be covered by its parent's, enforced at
+    # spawn. ``None`` (default) means no toolbase tools.
+    toolkits: dict[str, ToolkitGrant] | None = None
+    # Name of an existing toolbase loadout to serve this agent, merged
+    # with ``toolkits``. Mostly for the root (``root.toolbase_loadout``
+    # in config). Journals written before toolbase 0.12 renamed
+    # profiles to loadouts carry ``toolbase_profile``; accepted as an
+    # alias so they still replay.
+    toolbase_loadout: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("toolbase_loadout", "toolbase_profile"),
+    )
 
 
 @dataclass

@@ -75,6 +75,24 @@ class Driver:
     # ----- internals -----
 
     def _loop(self) -> None:
+        try:
+            self._run_loop()
+        finally:
+            # The loop only exits once any in-flight step has returned,
+            # so this can't pull tools out from under a running turn.
+            # Toolkit servers are per-agent subprocesses; without this a
+            # finished fan-out worker would hold them until shutdown.
+            engine = getattr(self.agent, "engine", None)
+            close = getattr(engine, "close_toolkits", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.exception(
+                        "closing toolkits for %s", self.agent.record.addr
+                    )
+
+    def _run_loop(self) -> None:
         record = self.agent.record
         while not self._stop_requested:
             record.wakeup.wait()

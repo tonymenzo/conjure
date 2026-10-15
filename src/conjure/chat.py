@@ -1086,6 +1086,15 @@ def _format_event(
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())
 
+    if kind == "toolkits":
+        # The agent's toolbase tool list changed (first serve, or a
+        # live grant took effect).
+        tools = event.get("tools") or []
+        row = Text()
+        row.append("· toolkits ", style="dim")
+        row.append(", ".join(tools) if tools else "(none)", style="dim cyan")
+        return (row, ())
+
     # ``user`` is the noisy driver-wrapped prompt; skip silently.
     # ``unknown`` is anything we can't classify.
     return (None, ())

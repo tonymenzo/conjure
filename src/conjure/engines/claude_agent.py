@@ -45,6 +45,7 @@ from conjure.runtime import PERMISSION_WAIT_S
 if TYPE_CHECKING:
     from conjure.record import AgentRecord
     from conjure.runtime import Runtime
+    from conjure.toolbase import ToolbaseMount
 
 
 _SYSTEM_PROMPT_PATH = (
@@ -104,6 +105,7 @@ class ClaudeAgentEngine:
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
         mcp_socket: Path | None = None,
         model: str | None = None,
+        toolbase_mount: "ToolbaseMount | None" = None,
     ) -> None:
         # Import lazily so the runtime doesn't hard-require
         # claude-agent-sdk for agents that only use the orchestral
@@ -117,6 +119,11 @@ class ClaudeAgentEngine:
         self._record = record
         self._runtime = runtime
         self._stream_emit = stream_emit
+        self._toolbase = toolbase_mount
+        # Captured from each turn's ResultMessage; a toolkit change
+        # reconnects with ``resume=`` this id so the conversation
+        # survives the new tool list.
+        self._session_id: str | None = None
         self._cost_used: float = 0.0
         self._uses_subscription: bool = _detect_subscription()
         # Actual model the SDK reports on the last AssistantMessage —
@@ -226,7 +233,10 @@ class ClaudeAgentEngine:
                     build_in_process_mcp_server,
                 )
 
-                in_process_server = build_in_process_mcp_server(record.token)
+                in_process_server = build_in_process_mcp_server(
+                    record.token,
+                    include_toolkits=getattr(runtime, "toolbase", None) is not None,
+                )
             except Exception:
                 in_process_server = None
         if in_process_server is not None:
@@ -246,28 +256,20 @@ class ClaudeAgentEngine:
                     "PATH": os.environ.get("PATH", ""),
                 },
             )
-        # Optional toolbase profile: add a second MCP server that
-        # serves a curated set of toolkits (per the named profile).
-        # Lets a parent agent hand its child a different tool slate
-        # than its own — "agent curates tools for subagents." The
-        # profile must already exist (created via ``tb activate``);
-        # this just connects to it. Toolbase tools are NOT
-        # pre-approved here — they flow through ``can_use_tool``
-        # so the user gets a permission prompt per call (or
-        # auto-allow when the agent is in auto mode).
-        if record.spec.toolbase_profile:
+        # Toolbase toolkits. Preferred path: the agent's ToolbaseMount
+        # serves them in-process and ``_sync_toolkits`` wires them in as
+        # an SDK MCP server at connect time (and again after a live
+        # grant). Fallback when toolbase isn't importable here (it needs
+        # Python >= 3.12): a named loadout can still be served by the
+        # ``toolbase`` CLI over stdio, against this process's project.
+        if toolbase_mount is None and record.spec.toolbase_loadout:
             import shutil
 
             from claude_agent_sdk.types import McpStdioServerConfig
             tb_bin = shutil.which("toolbase") or "toolbase"
             mcp_servers["toolbase"] = McpStdioServerConfig(
                 command=tb_bin,
-                args=[
-                    "serve",
-                    "--profile",
-                    record.spec.toolbase_profile,
-                    "--no-tui",
-                ],
+                args=["serve", "--loadout", record.spec.toolbase_loadout],
                 env={"PATH": os.environ.get("PATH", "")},
             )
 
@@ -286,6 +288,12 @@ class ClaudeAgentEngine:
                 "AgentSupervisor",
             ):
                 bridged_tools.append(f"mcp__conjure__{short}")
+            if getattr(runtime, "toolbase", None) is not None:
+                from conjure.mcp_in_process import TOOLKIT_TOOL_NAMES
+
+                bridged_tools.extend(
+                    f"mcp__conjure__{short}" for short in TOOLKIT_TOOL_NAMES
+                )
 
         # When the user is on a subscription, shadow ANTHROPIC_API_KEY
         # in the subprocess env so the CLI doesn't flip to per-token
@@ -462,6 +470,7 @@ class ClaudeAgentEngine:
         event loop itself is owned by the runtime; we never stop it
         here. Safe to call multiple times — spawn's terminate
         path may call this more than once."""
+        self.close_toolkits()
         if not self._connected:
             return
         try:
@@ -473,7 +482,61 @@ class ClaudeAgentEngine:
             pass
         self._connected = False
 
+    def close_toolkits(self) -> None:
+        if self._toolbase is not None:
+            self._toolbase.close()
+
     # ----- internals -----
+
+    async def _sync_toolkits(self) -> None:
+        """Bring the session's ``toolbase`` MCP server in line with the
+        agent's current toolset. No-op unless it changed — on the first
+        step that means starting the toolkit servers; after a live
+        grant, restarting them and reconnecting the session with
+        ``resume=`` so the conversation carries over."""
+        if self._toolbase is None:
+            return
+        served = await asyncio.to_thread(self._toolbase.sync)
+        if served is None:
+            return
+        import dataclasses
+
+        from claude_agent_sdk import ClaudeSDKClient
+
+        from conjure.mcp_in_process import build_toolbase_sdk_server
+
+        servers = dict(self._options.mcp_servers or {})
+        allowed = [
+            t for t in (self._options.allowed_tools or [])
+            if not t.startswith("mcp__toolbase__")
+        ]
+        servers.pop("toolbase", None)
+        if served:
+            servers["toolbase"] = build_toolbase_sdk_server(served)
+            explicit = self._record.spec.permissions or {}
+            for tool in served:
+                name = f"mcp__toolbase__{tool.get_name()}"
+                # The parent's grant is the authorization; an explicit
+                # ``ask`` / ``deny`` in the spec still routes the tool
+                # through ``can_use_tool`` instead.
+                if explicit.get(name, "allow") == "allow":
+                    allowed.append(name)
+        if self._connected:
+            await self._client.disconnect()
+            self._connected = False
+        self._options = dataclasses.replace(
+            self._options,
+            mcp_servers=servers,
+            allowed_tools=allowed,
+            resume=self._session_id,
+        )
+        self._client = ClaudeSDKClient(self._options)
+        self._emit_event(
+            {
+                "kind": "toolkits",
+                "tools": [t.get_name() for t in served],
+            }
+        )
 
     async def _step_async(self, prompt: str) -> str:
         from claude_agent_sdk.types import (
@@ -482,6 +545,7 @@ class ClaudeAgentEngine:
             UserMessage,
         )
 
+        await self._sync_toolkits()
         if not self._connected:
             await self._client.connect()
             self._connected = True
@@ -540,6 +604,9 @@ class ClaudeAgentEngine:
                     for result in _extract_tool_results(msg):
                         self._emit_tool_result(result)
                 elif isinstance(msg, ResultMessage):
+                    sid = getattr(msg, "session_id", None)
+                    if isinstance(sid, str) and sid:
+                        self._session_id = sid
                     cost = getattr(msg, "total_cost_usd", None)
                     if cost is not None:
                         try:
@@ -597,13 +664,18 @@ class ClaudeAgentEngine:
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
         template = _load_default_system_template()
-        return template.safe_substitute(
+        prompt = template.safe_substitute(
             addr_id=record.addr.id,
             label=record.addr.label or "(none)",
             role_prompt=record.spec.role_prompt,
             depth=str(record.depth),
             max_depth=str(getattr(runtime, "max_depth", 3)),
         )
+        if getattr(runtime, "toolbase", None) is not None:
+            from conjure.toolbase import TOOLKIT_GUIDANCE
+
+            prompt += "\n" + TOOLKIT_GUIDANCE
+        return prompt
 
 
 @functools.cache

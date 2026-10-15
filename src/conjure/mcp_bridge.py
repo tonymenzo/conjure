@@ -61,6 +61,11 @@ from conjure.tools.primitives import (
     TerminateTool,
     WaitForTool,
 )
+from conjure.tools.toolkits import (
+    GrantToolkitsTool,
+    RequestToolkitsTool,
+    ToolCatalogTool,
+)
 
 
 # Map each MCP tool's short name to (conjure tool class,
@@ -91,6 +96,9 @@ _BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
     "agent_ensemble": (AgentEnsembleTool, "AgentEnsemble"),
     "agent_critic": (AgentCriticTool, "AgentCritic"),
     "agent_supervisor": (AgentSupervisorTool, "AgentSupervisor"),
+    "tool_catalog": (ToolCatalogTool, "ToolCatalog"),
+    "grant_toolkits": (GrantToolkitsTool, "GrantToolkits"),
+    "request_toolkits": (RequestToolkitsTool, "RequestToolkits"),
 }
 
 

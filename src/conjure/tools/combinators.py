@@ -23,8 +23,9 @@ from conjure.combinators import (
     agent_race,
     agent_supervisor,
 )
-from conjure.errors import BudgetExceeded, Timeout
+from conjure.errors import BudgetExceeded, Timeout, ToolkitDenied
 from conjure.record import AgentSpec
+from conjure.toolbase import parse_toolkits
 from conjure.tools._base import (
     RuntimeField,
     StateField,
@@ -62,6 +63,7 @@ def _build_factory(spec_template: dict[str, Any]) -> Callable[[Any], AgentSpec]:
     tools = list(spec_template.get("tools") or [])
     llm = spec_template.get("llm", "default")
     initial_message = spec_template.get("initial_message", "") or ""
+    raw_toolkits = spec_template.get("toolkits")
 
     counter = {"n": 0}
 
@@ -69,11 +71,15 @@ def _build_factory(spec_template: dict[str, Any]) -> Callable[[Any], AgentSpec]:
         counter["n"] += 1
         idx = counter["n"]
         augmented_role = _safe_format(role_prompt, item=item, value=item) + _TERSE_SUFFIX
+        # Parsed per call (inside the combinator's error handling) so a
+        # malformed grant surfaces as ``toolkit_denied``, not a crash.
+        toolkits = parse_toolkits(raw_toolkits) or None
         return AgentSpec(
             role_prompt=augmented_role,
             label=f"{base_label}-{idx}",
             tools=tools,
             llm=llm,
+            toolkits=toolkits,
             initial_message=(
                 _safe_format(initial_message, item=item, value=item)
                 if initial_message
@@ -104,6 +110,7 @@ def _build_spec(spec_template: dict[str, Any], label_suffix: str = "") -> AgentS
         tools=tools,
         llm=llm,
         initial_message=initial_message,
+        toolkits=parse_toolkits(spec_template.get("toolkits")) or None,
     )
 
 
@@ -167,6 +174,8 @@ class AgentMapTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {"ok": True, "result": result}
 
 
@@ -208,6 +217,8 @@ class AgentFoldTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         if isinstance(result, dict) and "trace" in result:
             return {"ok": True, "result": result["result"], "trace": result["trace"]}
         return {"ok": True, "result": result}
@@ -237,6 +248,8 @@ class AgentFilterTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {"ok": True, "result": result}
 
 
@@ -265,6 +278,8 @@ class AgentFixedPointTool(StatelessRuntimeTool):
             return _err("timeout", str(e))
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {"ok": True, "result": value, "converged": converged}
 
 
@@ -295,8 +310,11 @@ class AgentRaceTool(StatelessRuntimeTool):
         specs_in = list(self.specs or [])
         if not specs_in:
             return _err("bad_args", "specs must be non-empty")
-        specs = [_build_spec(s or {}, label_suffix=str(i + 1))
-                 for i, s in enumerate(specs_in)]
+        try:
+            specs = [_build_spec(s or {}, label_suffix=str(i + 1))
+                     for i, s in enumerate(specs_in)]
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         try:
             winner_idx, winner_body = agent_race(
                 runtime, caller_addr, specs, self.body,
@@ -306,6 +324,8 @@ class AgentRaceTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="race")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {"ok": True, "winner_idx": winner_idx, "result": winner_body}
 
 
@@ -344,9 +364,12 @@ class AgentEnsembleTool(StatelessRuntimeTool):
             return _err("bad_args", "specs must be non-empty")
         if not self.aggregator_spec:
             return _err("bad_args", "aggregator_spec is required")
-        worker_specs = [_build_spec(s or {}, label_suffix=str(i + 1))
-                        for i, s in enumerate(specs_in)]
-        agg_spec = _build_spec(self.aggregator_spec, label_suffix="agg")
+        try:
+            worker_specs = [_build_spec(s or {}, label_suffix=str(i + 1))
+                            for i, s in enumerate(specs_in)]
+            agg_spec = _build_spec(self.aggregator_spec, label_suffix="agg")
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         try:
             result = agent_ensemble(
                 runtime, caller_addr, worker_specs, self.body, agg_spec,
@@ -356,6 +379,8 @@ class AgentEnsembleTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="ensemble")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {"ok": True, "result": result}
 
 
@@ -399,8 +424,11 @@ class AgentCriticTool(StatelessRuntimeTool):
             return _err(
                 "bad_args", "generator_spec and critic_spec are required"
             )
-        gen_spec = _build_spec(self.generator_spec, label_suffix="gen")
-        crit_spec = _build_spec(self.critic_spec, label_suffix="crit")
+        try:
+            gen_spec = _build_spec(self.generator_spec, label_suffix="gen")
+            crit_spec = _build_spec(self.critic_spec, label_suffix="crit")
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         try:
             output, converged, iters = agent_critic(
                 runtime, caller_addr, gen_spec, crit_spec, self.body,
@@ -411,6 +439,8 @@ class AgentCriticTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="critic")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {
             "ok": True,
             "result": output,
@@ -458,6 +488,8 @@ class AgentSupervisorTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="supervise")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         return {
             "ok": True,
             "result": out["results"],

@@ -1,0 +1,42 @@
+# Example configuration: a root that curates toolbase toolkits for the
+# agents it spawns.
+#
+# The root sees every installed toolkit through ``ToolCatalog`` and
+# hands each child only the slice its task needs
+# (``Spawn(toolkits=["heptapod/llp"])``). Children can re-grant subsets
+# of what they hold, ask their parent for more (``RequestToolkits``),
+# and receive live grants (``GrantToolkits``) without losing their
+# conversation.
+#
+# Setup (toolbase needs Python >= 3.12):
+#   pip install "conjure-agents[claude_agent,toolbase]"
+#   tb install heptapod            # or any toolkit; no activation needed
+#   conjure check examples/toolbase_agent.yaml
+#   conjure run examples/toolbase_agent.yaml
+
+runtime:
+  store_dir: ./.conjure/store
+  max_depth: 3
+
+llms:
+  default:
+    provider: anthropic
+
+toolbase:
+  # What the root may grant: ``all`` installed toolkits (re-read on
+  # ``ToolCatalog(refresh=true)``, so a toolkit installed mid-session
+  # becomes grantable), or a toolset like ``[heptapod/llp, calculator]``.
+  authority: all
+  # Version pins and serve.yaml blocklists come from this project's
+  # toolbase loadout (default: discovered from the cwd, like tb serve).
+  # project_root: .
+  # loadout: default
+
+root:
+  role_prompt: |
+    You coordinate specialist agents. Before spawning, check
+    ToolCatalog and give each child only the toolkits its task needs.
+  engine: claude_agent
+  tools: [Read, Glob, Grep]
+  # The root's own domain tools, if any (must fall within authority).
+  # toolkits: [heptapod/units]

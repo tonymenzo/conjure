@@ -65,6 +65,13 @@ env = [
 claude_agent = [
     "claude-agent-sdk>=0.2",
 ]
+# Lets agents curate toolbase toolkits for the agents they spawn
+# (``Spawn(toolkits=...)``, ``ToolCatalog``, ``GrantToolkits``). toolbase
+# itself requires Python >= 3.12; on older interpreters the extra
+# installs nothing and toolkit grants are refused.
+toolbase = [
+    "toolbase>=0.16; python_version >= '3.12'",
+]
 test = [
     "pytest>=7",
     "sympy>=1.12",
