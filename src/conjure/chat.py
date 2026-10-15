@@ -1086,6 +1086,15 @@ def _format_event(
     if kind == "error":
         return (_error_block(event.get("text", "") or ""), ())
 
+    if kind == "retry":
+        row = Text()
+        row.append(
+            f"⟳ LLM call failed ({str(event.get('error') or '').split(':')[0]}); "
+            f"retry {event.get('attempt')}/{event.get('max')} in {round(event.get('delay_s') or 0)}s",
+            style="yellow",
+        )
+        return (row, ())
+
     if kind == "toolkits":
         # The agent's toolbase tool list changed (first serve, or a
         # live grant took effect).

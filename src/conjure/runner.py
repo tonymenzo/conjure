@@ -53,10 +53,17 @@ def build_runtime(
     """
     # Capture each LLM config as a default arg so the lambda closes
     # over the right value (avoid the classic late-binding bug).
+    from conjure.llm_resilience import make_resilient
+
+    # Every client of one ``llms`` entry shares its concurrency cap, so
+    # all agents on a gateway together stay under its limit.
     llm_factories = {
         name: (
-            lambda model=None, c=cfg.model_dump(): build_llm(
-                {**c, "model": model} if model else c
+            lambda model=None, c=cfg.model_dump(), n=name: make_resilient(
+                build_llm({**c, "model": model} if model else c),
+                key=n,
+                max_concurrency=c.get("max_concurrency"),
+                max_retries=int(c.get("max_retries") or 0),
             )
         )
         for name, cfg in config.llms.items()

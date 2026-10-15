@@ -85,6 +85,7 @@ def start_session(cfg: Any, name: str) -> Session:
         stream=True,  # agent text streams into chat views
         control_socket=control_path,
     )
+    _session_logging(Path(runtime.session_dir or session_dir))
     try:
         from conjure.provenance import write_manifest
 
@@ -106,3 +107,30 @@ def start_session(cfg: Any, name: str) -> Session:
         control_path=control_path,
         session_dir=Path(runtime.session_dir or session_dir),
     )
+
+
+def _session_logging(session_dir: Path) -> None:
+    """``conjure.*`` logs: everything (tracebacks included) to
+    ``<session>/conjure.log``; warnings and up to the console, one line
+    each. Without this, Python's fallback handler printed full
+    tracebacks for every transient gateway error."""
+    import logging
+
+    log = logging.getLogger("conjure")
+    if getattr(log, "_conjure_session_logging", False):
+        return
+    log.setLevel(logging.DEBUG)
+    log.propagate = False
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(session_dir / "conjure.log", encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        log.addHandler(fh)
+    except OSError:
+        pass
+    console = logging.StreamHandler()
+    console.setLevel(logging.WARNING)
+    console.setFormatter(logging.Formatter("conjure: %(message)s"))
+    log.addHandler(console)
+    log._conjure_session_logging = True  # type: ignore[attr-defined]

@@ -164,6 +164,12 @@ class OrchestralEngine:
         self._stream_emit = stream_emit
         self._max_tool_iterations = max_tool_iterations
         self._llm = llm
+        # Retries of a dropped or throttled LLM call (``llm_resilience``)
+        # show in the chat, and stop once the agent is terminated.
+        try:
+            llm.conjure_on_retry = self._on_llm_retry
+        except Exception:
+            pass
         self._base_tools = list(tools)
         self._display_hook = display_hook
         self._toolbase = toolbase_mount
@@ -200,6 +206,25 @@ class OrchestralEngine:
     def close_toolkits(self) -> None:
         if self._toolbase is not None:
             self._toolbase.close()
+
+    def _on_llm_retry(self, attempt: int, max_retries: int, delay_s: float, exc: BaseException) -> bool:
+        if self._record.status == "terminated":
+            return False
+        if self._stream_emit is not None:
+            try:
+                # Close any partial reply the dropped stream showed; the
+                # retry streams a fresh one.
+                self._stream_emit({"kind": "stream_end", "tool_calls": []})
+                self._stream_emit({
+                    "kind": "retry",
+                    "attempt": attempt,
+                    "max": max_retries,
+                    "delay_s": round(delay_s, 1),
+                    "error": f"{type(exc).__name__}: {' '.join(str(exc).split())[:300]}",
+                })
+            except Exception:
+                pass
+        return True
 
     def shutdown(self) -> None:
         self.close_toolkits()

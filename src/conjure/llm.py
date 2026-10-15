@@ -152,6 +152,9 @@ def build_openai_compatible(config: dict[str, Any]) -> Any:
         base_url=llm.base_url,
         default_headers=headers or None,
         timeout=float(config.get("timeout_s") or 600.0),
+        # conjure retries (llm_resilience): one layer, visible in the UI,
+        # honoring the gateway's reset time.
+        max_retries=0,
     )
     return llm
 

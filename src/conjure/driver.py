@@ -158,9 +158,13 @@ class Driver:
                 errored = True
                 engine_exc = exc
                 self._emit_engine_error(exc)
-                logger.exception(
-                    "engine raised in driver for %s", record.addr
+                # One line on the console; the traceback goes to the
+                # session log (``conjure.log``) at debug level.
+                logger.warning(
+                    "agent %s errored: %s: %s",
+                    record.addr, type(exc).__name__, " ".join(str(exc).split())[:300],
                 )
+                logger.debug("engine traceback for %s", record.addr, exc_info=True)
             finally:
                 self._emit_event({"kind": "turn_end", "errored": errored})
                 self._note_meta()

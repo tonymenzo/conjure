@@ -8,6 +8,28 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Gateway-friendly LLM calls.** Each `llms:` entry takes
+  `max_concurrency`: the most requests in flight at once across every
+  agent on it. Set it under a gateway's parallel-request limit, e.g. 16
+  for a limit of 20. A slot is held only while a request or stream is
+  in flight, so a parent waiting on its children can't starve them.
+- **Retries of transient failures** (dropped connections, broken
+  streams, timeouts, 429, 5xx), with backoff, up to `max_retries`
+  (default 5) per entry. A 429 waits for the gateway's stated reset
+  time. A stream that breaks midway is re-requested; the conversation
+  is untouched, since a reply is only recorded once its stream
+  completes. Each retry shows in the chat, and a terminated agent stops
+  retrying.
+
+### Changed
+
+- An agent's engine error prints one line on the console. The full
+  traceback goes to the session's `conjure.log`.
+- `openai_compatible` clients leave retries to conjure (one visible
+  layer), instead of the OpenAI SDK's silent ones.
+
 ### Removed
 
 - The design document is no longer part of the repository.

@@ -65,6 +65,13 @@ class LLMConfig(BaseModel):
     discover: bool = False
     # A note shown to agents in ModelCatalog (what this LLM is for).
     note: str | None = None
+    # Most requests in flight at once across every agent on this entry.
+    # Set it under a gateway's parallel-request limit (e.g. 16 for a
+    # limit of 20). None: unlimited.
+    max_concurrency: int | None = None
+    # Retries of a transient failure (dropped connection, timeout, 429,
+    # 5xx), with backoff; a 429 waits for the gateway's stated reset.
+    max_retries: int = 5
 
 
 class RootConfig(BaseModel):
