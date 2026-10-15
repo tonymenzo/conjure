@@ -423,27 +423,8 @@ def _strip_shell(command: str) -> str:
     return m.group(1) if m else command
 
 
-_CLAUDE_TOOLS_SECTION = re.compile(
-    r"### Filesystem & shell \(Claude Code's native tools\)\n.*?(?=\n### )", re.S
-)
-_CODEX_TOOLS_SECTION = """### Filesystem & shell (Codex's native tools)
-
-Run shell commands and edit files with your built-in tools. They work
-inside your sandbox directory (your working directory): you can read
-and write there; writes elsewhere are blocked by Codex's sandbox.
-"""
-
-
 def build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
-    """The claude_agent prompt, with its Claude Code tool section and
-    tool-naming note rewritten for Codex."""
-    from conjure.engines.claude_agent import ClaudeAgentEngine
+    """The shared agent prompt (``conjure.prompts``), for Codex."""
+    from conjure.prompts import build_system_prompt as build
 
-    prompt = ClaudeAgentEngine._build_system_prompt(record, runtime, "codex")  # noqa: SLF001
-    prompt = prompt.replace("(claude_agent engine)", "(codex engine)", 1)
-    prompt = _CLAUDE_TOOLS_SECTION.sub(_CODEX_TOOLS_SECTION, prompt, count=1)
-    prompt = prompt.replace(
-        "tool list as `mcp__conjure__<Name>` (PascalCase, matching the\nbuilt-in tool convention)",
-        "tool list from the `conjure` MCP server (PascalCase names)",
-    )
-    return prompt
+    return build(record, runtime, "codex")

@@ -643,6 +643,13 @@
         case "error":
           this.block(h("div", { class: "errblk", text: ev.text || "error" }), ev.ts);
           return;
+        case "notice":
+          this.block(h("div", { class: "metablk retry", text: `⚠ ${ev.text || ""}` }), ev.ts);
+          return;
+        case "retry":
+          this.block(h("div", { class: "metablk retry", title: ev.error || "",
+            text: `⟳ LLM call failed (${(ev.error || "").split(":")[0] || "error"}); retry ${ev.attempt}/${ev.max} in ${Math.round(ev.delay_s || 0)}s` }), ev.ts);
+          return;
         case "toolkits":
           this.block(h("div", { class: "metablk" }, "⚒ toolkits now: ",
             h("span", { class: "kits", text: (ev.tools || []).join(", ") || "(none)" }),

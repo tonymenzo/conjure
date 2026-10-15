@@ -103,6 +103,16 @@ class StatelessRuntimeTool(BaseTool):
     # Tools whose result already is the inbox.
     _shows_inbox: ClassVar[bool] = False
 
+    @classmethod
+    def get_name(cls) -> str:
+        """The tool's name as models see it: the class name without its
+        ``Tool`` suffix (``WaitFor``, ``GrantToolkits``, ``ToolCatalog``),
+        the same as over MCP, so one prompt names tools right for every
+        engine. orchestral's default lowercased the name and stripped
+        every "Tool" in it (``grantkits``, ``catalog``)."""
+        name = cls.__name__
+        return name[: -len("Tool")] if name.endswith("Tool") and name != "Tool" else name
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         run = cls.__dict__.get("_run")
@@ -179,7 +189,7 @@ def inbox_notice(token: str, *, limit: int = 3) -> dict | None:
         "unread": len(waiting),
         "latest": [preview(e) for e in waiting[-limit:]],
         "hint": (
-            "Messages are waiting. Read them now with Recv (or WaitFor); "
-            "otherwise they reach you only after this turn ends."
+            "Messages are waiting: Recv() returns them. Otherwise they "
+            "reach you only after this turn ends."
         ),
     }

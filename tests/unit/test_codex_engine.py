@@ -166,12 +166,12 @@ def test_a_failed_run_raises_with_stderr(tmp_path):
         rt.shutdown()
 
 
-def test_system_prompt_is_rewritten_for_codex(tmp_path):
+def test_system_prompt_is_the_shared_one_for_codex(tmp_path):
     rt = Runtime(store_dir=tmp_path)
     rec = rt.record_for(rt.root(AgentSpec(role_prompt="r")))
     prompt = build_system_prompt(rec, rt)
-    assert "(codex engine)" in prompt and "Codex's native tools" in prompt
-    assert "Claude Code's native tools" not in prompt and "mcp__conjure__" not in prompt
+    assert "(Codex engine)" in prompt and "Codex's shell and file editing" in prompt
+    assert "Claude Code's tools" not in prompt
     rt.shutdown()
 
 

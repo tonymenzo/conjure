@@ -8,6 +8,64 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-15
+
+Fixes from running on a model access gateway: requests capped and
+retried, `Recv` / `WaitFor` no longer hang an agent, and one system
+prompt for every engine.
+
+### Added
+
+- **Gateway-friendly LLM calls.** Each `llms:` entry takes
+  `max_concurrency`: the most requests in flight at once across every
+  agent on it. Set it under a gateway's parallel-request limit, e.g. 16
+  for a limit of 20. A slot is held only while a request or stream is
+  in flight, so a parent waiting on its children can't starve them.
+- **Retries of transient failures** (dropped connections, broken
+  streams, timeouts, 429, 5xx), with backoff, up to `max_retries`
+  (default 5) per entry. A 429 waits for the gateway's stated reset
+  time. A stream that breaks midway is re-requested; the conversation
+  is untouched, since a reply is only recorded once its stream
+  completes. Each retry shows in the chat, and a terminated agent stops
+  retrying.
+
+### Changed
+
+- **One system prompt for every engine.** `system_prompts/agent.md` is
+  the prompt for Claude, Codex and orchestral agents alike. Each engine
+  fills in only its name, its file and shell tools, and how its tool
+  names appear. The orchestral engine's separate prompt had drifted: it
+  still said "Spawn framework", named tools that don't exist, and
+  advised spawning children without the tools they need to reply. The
+  shared prompt no longer assumes Claude models: spawn defaults come
+  from the model catalog, and `Spawn`'s `initial_message` is documented.
+- **Orchestral tools use the same names as everywhere else**
+  (`WaitFor`, `GrantToolkits`, `ToolCatalog`, ...). orchestral had
+  lowercased them and stripped every "Tool" (`waitfor`, `grantkits`,
+  `catalog`), so prompts named tools that agents couldn't find.
+- **Orchestral turns allow 50 tool rounds** (was 8). It's configurable
+  as `runtime.max_tool_iterations`, and a turn that reaches it says so
+  in the chat instead of ending silently mid-work.
+- An agent's engine error prints one line on the console. The full
+  traceback goes to the session's `conjure.log`.
+- `openai_compatible` clients leave retries to conjure (one visible
+  layer), instead of the OpenAI SDK's silent ones.
+
+### Fixed
+
+- **`Recv` and `WaitFor` could hang an agent.**
+  - `Recv()` with no arguments always returned the inbox's first
+    message, often the agent's own original task, so an agent waiting
+    for results looped on it.
+  - `WaitFor()` waited out its whole timeout even after the reply had
+    arrived, and returned old messages along with new ones.
+  - Both now return only messages the agent hasn't seen, and `WaitFor`
+    returns as soon as one arrives (`max_n=N` still waits for N, for
+    fan-in). Sender filters accept a child's label, `parent` or
+    `caller`, and an unknown name fails at once instead of waiting
+    out the timeout. Passing `since_seq` still pages through the whole
+    inbox.
+
 ### Removed
 
 - The design document is no longer part of the repository.
@@ -201,7 +259,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tonymenzo/conjure/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tonymenzo/conjure/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/tonymenzo/conjure/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tonymenzo/conjure/compare/v0.1.0...v0.1.1
