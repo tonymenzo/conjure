@@ -244,7 +244,21 @@ code, .mono { font-family: var(--mono); }
 .resp { overflow-wrap: anywhere; }
 .resp p { margin: 0 0 6px; white-space: pre-wrap; }
 .resp h1, .resp h2, .resp h3, .resp h4 { font-size: var(--fs); margin: 8px 0 4px; color: var(--green-mid); }
-.resp ul { margin: 0 0 6px; padding-left: 18px; }
+.resp ul, .resp ol { margin: 0 0 6px; padding-left: 22px; }
+.resp li > ul, .resp li > ol { margin: 0; }
+.resp h5, .resp h6 { font-size: var(--fs); margin: 6px 0 2px; color: var(--dim); }
+.resp blockquote { margin: 0 0 6px; padding: 0 10px; border-left: 2px solid var(--faint); color: var(--dim); }
+.resp hr { border: 0; border-top: 1px solid var(--faint); margin: 8px 0; }
+.resp a { color: var(--green-mid); }
+.resp .tablewrap { overflow-x: auto; margin: 4px 0 8px; }
+.resp table { border-collapse: collapse; font-size: 12.5px; }
+.resp th, .resp td { border: 1px solid var(--faint); padding: 3px 8px; vertical-align: top; white-space: pre-wrap; }
+.resp th { background: var(--bg-2); color: var(--green-mid); text-align: left; font-weight: 700; }
+.resp tbody tr:nth-child(even) td { background: var(--bg-2); }
+.resp .math.display { overflow-x: auto; overflow-y: hidden; margin: 4px 0 8px; }
+.resp .math.raw { font-family: inherit; color: var(--dim); white-space: pre-wrap; }
+.resp .katex { font-size: 1.1em; }
+.resp .katex-display { margin: 0 4px 0 0; }  /* equation numbers overhang by ~2px */
 .resp pre { background: var(--bg-2); border: 1px solid var(--faint); border-radius: 6px; padding: 8px 10px; overflow-x: auto; margin: 4px 0 8px; }
 .resp code { background: var(--bg-3); border-radius: 3px; padding: 0 3px; }
 .resp pre code { background: none; padding: 0; }

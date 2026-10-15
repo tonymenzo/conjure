@@ -25,6 +25,16 @@
   - a sandbox **file browser**;
   - deep links (``#timeline/<agent>``), a light theme, and a narrow
     layout.
+- **Markdown and LaTeX in chat.** Agent replies and string message
+  bodies render GitHub-style tables (with column alignment; ``|x|``
+  inside ``$…$`` doesn't split a cell), ordered and nested lists,
+  blockquotes, rules, emphasis and links, plus math: ``$…$``, ``\(…\)``,
+  ``$$…$$``, ``\[…\]``, bare ``\begin{align}…`` and ``math`` fences.
+  Math is typeset by KaTeX 0.16.11, vendored under ``web/static/vendor``
+  (MIT, ~600 KB with woff2 fonts) so it works offline and under the
+  same-origin CSP. Currency like ``$5 and $10`` stays text, bad TeX shows
+  in red instead of breaking the reply, and streaming replies re-render
+  every 150 ms so tables and equations take shape as they arrive.
 - **Replay**: ``conjure web --replay <session>`` serves any journaled
   session read-only, with a scrubber that rebuilds the session at each
   instant (``Runtime.replay(until=…)``).

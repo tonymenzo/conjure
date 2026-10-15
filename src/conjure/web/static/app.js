@@ -120,11 +120,139 @@
     return Date.now() / 1000;
   }
 
-  // Minimal markdown: fenced code, headings, bullets, inline code, bold.
-  // Everything goes through textContent, so model output can't inject HTML.
+  // Markdown: fenced code, headings, lists (nested, ordered), tables,
+  // blockquotes, rules, emphasis, links, and LaTeX math ($…$, \(…\),
+  // $$…$$, \[…\], \begin{align}…) typeset by the vendored KaTeX.
+  // Text goes through textContent and math through KaTeX (trust off), so
+  // model output can't inject HTML.
+  const FENCE = /^\s*(`{3,}|~{3,})\s*([\w+-]*)/;
+  const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+  const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+  const QUOTE = /^\s{0,3}>\s?(.*)$/;
+  const MATH_ENV = /^\s*\\begin\{(equation|align|alignat|gather|multline|eqnarray|split|cases|[pbvBV]?matrix)(\*?)\}/;
+  const isDelimCell = (c) => /^:?-+:?$/.test(c);
+
+  function math(tex, display) {
+    const el = h(display ? "div" : "span", { class: display ? "math display" : "math" });
+    if (window.katex) {
+      try {
+        window.katex.render(tex, el, { displayMode: display, throwOnError: false, trust: false, strict: "ignore", output: "htmlAndMathml" });
+        return el;
+      } catch { /* fall through to the source */ }
+    }
+    el.classList.add("raw");
+    el.textContent = display ? tex : `$${tex}$`;
+    return el;
+  }
+
+  /** Cells of a table row. Pipes inside `code` or $math$ don't split
+   *  (|x| is everywhere in physics), unless the row's $ don't pair up. */
+  function splitRow(line, protectMath = true) {
+    let s = line.trim();
+    if (s.startsWith("|")) s = s.slice(1);
+    if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+    const cells = [];
+    let cur = "", code = false, inMath = false;
+    for (let k = 0; k < s.length; k++) {
+      const c = s[k];
+      if (c === "\\" && (s[k + 1] === "|" || s[k + 1] === "$")) { cur += s[k + 1] === "|" ? "|" : "\\$"; k++; continue; }
+      if (c === "`") code = !code;
+      else if (c === "$" && !code && protectMath) inMath = !inMath;
+      if (c === "|" && !code && !inMath) { cells.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    if (inMath) return splitRow(line, false);
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  function tableAt(lines, i) {
+    if (!lines[i].includes("|") || i + 1 >= lines.length) return null;
+    const head = splitRow(lines[i]);
+    const delim = splitRow(lines[i + 1]);
+    if (!delim.every(isDelimCell) || delim.length !== head.length) return null;
+    const align = delim.map((c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null));
+    const cell = (tag, text, k) => inline(h(tag, align[k] ? { style: `text-align:${align[k]}` } : null), text);
+    const thead = h("thead", null, h("tr", null, head.map((c, k) => cell("th", c, k))));
+    const tbody = h("tbody");
+    let j = i + 2;
+    while (j < lines.length && lines[j].trim() && lines[j].includes("|") && !FENCE.test(lines[j])) {
+      const row = splitRow(lines[j]);
+      tbody.append(h("tr", null, head.map((_, k) => cell("td", row[k] ?? "", k))));
+      j++;
+    }
+    return [h("div", { class: "tablewrap" }, h("table", null, thead, tbody)), j];
+  }
+
+  /** Display math starting at line i: $$…$$, \[…\], or a bare
+   *  \begin{env}…\end{env}. Unclosed (mid-stream) → null, shown as text. */
+  function displayMathAt(lines, i) {
+    const t = lines[i].trim();
+    const env = t.match(MATH_ENV);
+    let close, rest, keep = false;
+    if (t.startsWith("$$")) { close = "$$"; rest = t.slice(2); }
+    else if (t.startsWith("\\[")) { close = "\\]"; rest = t.slice(2); }
+    else if (env) { close = `\\end{${env[1]}${env[2]}}`; rest = t; keep = true; }
+    else return null;
+    const parts = [];
+    for (let j = i; j < lines.length; j++) {
+      if (j > i) rest = lines[j].trim();
+      const at = rest.indexOf(close);
+      if (at >= 0) {
+        parts.push(rest.slice(0, keep ? at + close.length : at));
+        const tex = parts.join("\n").trim();
+        return tex ? [math(tex, true), j + 1, rest.slice(at + close.length).trim()] : null;
+      }
+      parts.push(rest);
+    }
+    return null;
+  }
+
+  function listAt(lines, i) {
+    const indentOf = (s) => s.replace(/\t/g, "    ").length;
+    const root = { indent: -1, el: null, ordered: null };
+    const stack = [];
+    let j = i, top = null;
+    while (j < lines.length) {
+      const m = lines[j].match(LIST_ITEM);
+      if (!m) {
+        const line = lines[j];
+        if (!line.trim()) {
+          // A blank line ends the list unless another item follows.
+          if (j + 1 < lines.length && LIST_ITEM.test(lines[j + 1])) { j++; continue; }
+          break;
+        }
+        if (/^\s+\S/.test(line) && top) {
+          const li = top.el.lastElementChild;
+          if (li) { li.append("\n"); inline(li, line.trim()); }
+          j++;
+          continue;
+        }
+        break;
+      }
+      const indent = indentOf(m[1]);
+      const ordered = /\d/.test(m[2]);
+      while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
+      top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        const el = h(ordered ? "ol" : "ul");
+        if (ordered && parseInt(m[2], 10) !== 1) el.setAttribute("start", parseInt(m[2], 10));
+        const parentLi = top?.el.lastElementChild;
+        if (parentLi) parentLi.append(el);
+        top = { indent, el, ordered };
+        stack.push(top);
+        if (!root.el) root.el = el;
+      }
+      top.el.append(inline(h("li"), m[3]));
+      j++;
+    }
+    return [root.el, j];
+  }
+
   function renderMarkdown(text) {
     const frag = document.createDocumentFragment();
-    const lines = String(text).split("\n");
+    const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
     let i = 0;
     let para = [];
     const flushPara = () => {
@@ -133,26 +261,44 @@
     };
     while (i < lines.length) {
       const line = lines[i];
-      const fence = line.match(/^\s*```(\S*)/);
+      const fence = line.match(FENCE);
       if (fence) {
         flushPara();
         const code = [];
+        const closeRe = new RegExp(`^\\s*${fence[1][0]}{${fence[1].length},}\\s*$`);
         i++;
-        while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+        while (i < lines.length && !closeRe.test(lines[i])) code.push(lines[i++]);
         i++;
-        frag.append(h("pre", null, h("code", { text: code.join("\n") })));
+        const lang = fence[2].toLowerCase();
+        if (lang === "math" || lang === "katex") frag.append(math(code.join("\n"), true));
+        else frag.append(h("pre", null, h("code", { text: code.join("\n") })));
         continue;
       }
-      const head = line.match(/^(#{1,4})\s+(.*)$/);
-      if (head) { flushPara(); frag.append(inline(h(`h${head[1].length}`), head[2])); i++; continue; }
-      if (/^\s*[-*]\s+/.test(line)) {
+      const dm = displayMathAt(lines, i);
+      if (dm) {
         flushPara();
-        const ul = h("ul");
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          ul.append(inline(h("li"), lines[i].replace(/^\s*[-*]\s+/, "")));
-          i++;
-        }
-        frag.append(ul);
+        frag.append(dm[0]);
+        if (dm[2]) para.push(dm[2]);
+        i = dm[1];
+        continue;
+      }
+      const table = tableAt(lines, i);
+      if (table) { flushPara(); frag.append(table[0]); i = table[1]; continue; }
+      const head = line.match(HEADING);
+      if (head) { flushPara(); frag.append(inline(h(`h${head[1].length}`), head[2])); i++; continue; }
+      if (RULE.test(line)) { flushPara(); frag.append(h("hr")); i++; continue; }
+      if (QUOTE.test(line)) {
+        flushPara();
+        const quoted = [];
+        while (i < lines.length && QUOTE.test(lines[i])) quoted.push(lines[i++].match(QUOTE)[1]);
+        frag.append(h("blockquote", null, renderMarkdown(quoted.join("\n"))));
+        continue;
+      }
+      if (LIST_ITEM.test(line)) {
+        flushPara();
+        const [el, next] = listAt(lines, i);
+        frag.append(el);
+        i = next;
         continue;
       }
       if (!line.trim()) { flushPara(); i++; continue; }
@@ -162,14 +308,41 @@
     flushPara();
     return frag;
   }
+
+  // One pass over the inline grammar; the first alternative to match at a
+  // position wins, so code spans shield their contents from everything.
+  const INLINE = new RegExp([
+    /(`+)([\s\S]*?[^`])\1(?!`)/,                         // 1,2 code
+    /\$\$([\s\S]+?)\$\$/,                                // 3 display math
+    /\\\(([\s\S]+?)\\\)/,                                // 4 \( \)
+    /\\\[([\s\S]+?)\\\]/,                                // 5 \[ \]
+    /\$(?=[^\s$])((?:\\\$|[^$])*?[^\s\\$])\$(?!\d)/,     // 6 $math$ (not $5 or $5-$10)
+    /\*\*(?=\S)([\s\S]*?\S)\*\*/,                        // 7 bold
+    /(?<![\w])__(?=\S)([\s\S]*?\S)__(?![\w])/,           // 8 bold
+    /~~(?=\S)([\s\S]*?\S)~~/,                            // 9 strike
+    /\*(?=[^\s*])([\s\S]*?[^\s*])\*/,                    // 10 italic
+    /(?<![\w])_(?=\S)([\s\S]*?\S)_(?![\w])/,             // 11 italic
+    /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/, // 12,13 link
+    /(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_])/,        // 14 bare URL
+    /\\([\\`*_{}[\]()#+\-.!$|~<>])/,                     // 15 escape
+  ].map((r) => r.source).join("|"), "g");
+
   function inline(el, text) {
-    const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
     let last = 0;
-    for (const m of text.matchAll(re)) {
+    for (const m of text.matchAll(INLINE)) {
       if (m.index > last) el.append(text.slice(last, m.index));
-      const tok = m[0];
-      el.append(tok.startsWith("`") ? h("code", { text: tok.slice(1, -1) }) : h("b", { text: tok.slice(2, -2) }));
-      last = m.index + tok.length;
+      last = m.index + m[0].length;
+      if (m[2] !== undefined) el.append(h("code", { text: m[2].replace(/^ (.*) $/s, "$1") }));
+      else if (m[3] !== undefined) el.append(math(m[3].trim(), true));
+      else if (m[4] !== undefined) el.append(math(m[4].trim(), false));
+      else if (m[5] !== undefined) el.append(math(m[5].trim(), true));
+      else if (m[6] !== undefined) el.append(math(m[6], false));
+      else if (m[7] !== undefined || m[8] !== undefined) el.append(inline(h("b"), m[7] ?? m[8]));
+      else if (m[9] !== undefined) el.append(inline(h("s"), m[9]));
+      else if (m[10] !== undefined || m[11] !== undefined) el.append(inline(h("i"), m[10] ?? m[11]));
+      else if (m[12] !== undefined) el.append(inline(h("a", { href: m[13], target: "_blank", rel: "noopener noreferrer" }), m[12]));
+      else if (m[14] !== undefined) el.append(h("a", { href: m[14], target: "_blank", rel: "noopener noreferrer", text: m[14] }));
+      else if (m[15] !== undefined) el.append(m[15]);
     }
     if (last < text.length) el.append(text.slice(last));
     return el;
@@ -442,7 +615,7 @@
             this.stream = { el, text: "" };
           }
           this.stream.text += ev.text || "";
-          this.stream.el.textContent = this.stream.text;
+          this.paintStream();
           return;
         case "stream_end":
           this.finishStream(ev.tool_calls || [], ev.ts);
@@ -502,10 +675,22 @@
       );
     }
     tick() { if (this.turn && !this.turn.done && this.live) this.paintTurn(); }
+    /** Re-render the streaming reply as markdown at most every 150 ms:
+     *  tables and math appear as they arrive, without re-typesetting
+     *  per token. */
+    paintStream() {
+      const st = this.stream;
+      if (!st || st.timer) return;
+      st.timer = setTimeout(() => {
+        st.timer = null;
+        if (this.stream === st) st.el.replaceChildren(renderMarkdown(st.text));
+      }, 150);
+    }
     finishStream(toolCalls, ts) {
       const st = this.stream;
       this.stream = null;
       if (st) {
+        clearTimeout(st.timer);
         st.el.classList.remove("streaming");
         st.el.replaceChildren(renderMarkdown(st.text));
         if (!st.text.trim()) st.el.remove();
@@ -638,7 +823,9 @@
         } else {
           el = h("div", { class: "msgblk blk" },
             h("div", { class: "from", text: `✉ ${labelOf(e.from, e.from_label)} · ${clock(e.ts)}` }),
-            h("pre", { text: bodyText(e.body) }));
+            typeof e.body === "string"
+              ? h("div", { class: "resp" }, renderMarkdown(e.body))
+              : h("pre", { text: bodyText(e.body) }));
         }
         el.dataset.ts = e.ts;
         const after = [...this.body.children].find((c) => c.dataset.ts && parseFloat(c.dataset.ts) > e.ts);
