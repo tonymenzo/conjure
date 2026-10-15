@@ -13,8 +13,6 @@ a different shape. Conjure inverts that: the primitives are the substrate,
 and topology is ordinary code. The composition vocabulary is borrowed from
 functional programming, where these problems have decades of prior art.
 
-See [`DESIGN.md`](DESIGN.md) for the design philosophy and architecture.
-
 ## The three primitives
 
 1. **Recursive spawning.** One root agent; every other agent is created by
@@ -240,9 +238,6 @@ Honest boundaries, documented rather than discovered:
 - Cost is tracked but not yet enforced as a ceiling.
 - `agent_fixed_point` uses strict output equality, which stochastic LLMs
   rarely satisfy — prefer `agent_critic` for refinement loops.
-
-See [`DESIGN.md`](DESIGN.md) §6 and §10 for where the FP framing breaks
-down and which workloads the substrate fits poorly.
 
 ## Development
 
