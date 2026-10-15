@@ -272,6 +272,11 @@
 
   function renderTree() {
     const tree = $("#tree");
+    // Same reason as the chat header: only rebuild on a visible change.
+    const sig = JSON.stringify(S.order.map(({ node, prefix, isLast }) => [node.addr, node.label, node.status,
+      node.awaiting_permission, node.model, node.cost?.toFixed?.(4), node.toolkits?.length, node.oneshot, prefix, isLast]));
+    if (sig === renderTree.sig) return;
+    renderTree.sig = sig;
     const frag = document.createDocumentFragment();
     for (const { node, prefix, isLast, isRoot } of S.order) {
       const guide = isRoot ? "" : prefix + (isLast ? "└─ " : "├─ ");
@@ -358,7 +363,7 @@
     for (const p of pending) {
       if (shown.has(p.addr)) continue;
       toast(h("span", null, h("b", { text: `${p.addr_label || p.addr}` }), ` wants `, h("b", { text: toolName(p.tool_name) }), " — click to review"),
-        { key: p.req_id, ttl: 0, onclick: () => openChat(p.addr, { replaceFocused: false }) });
+        { key: p.req_id, ttl: 0, onclick: () => openChat(p.addr, { newColumn: true }) });
     }
     for (const col of S.columns) col.renderPermission(pending.filter((p) => p.addr === col.addr));
   }
@@ -553,7 +558,12 @@
       this.inputBox = h("div", { class: "chat-input pane" }, this.textarea,
         h("div", { class: "hint" }, h("span", { text: "" }), h("span", { text: "esc to leave" })));
       this.el.append(this.title, this.head, this.inspector, this.body, this.permBox, this.inputBox);
-      this.el.addEventListener("mousedown", () => { S.focusedCol = S.columns.indexOf(this); });
+      this.el.addEventListener("mousedown", (e) => {
+        const i = S.columns.indexOf(this);
+        if (i < 0 || i === S.focusedCol || e.target.closest("button")) return;
+        setFocusedColumn(i);
+        if (S.selected !== this.addr) { S.selected = this.addr; renderTreeSelection(); syncHash(); }
+      });
       this.textarea.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
         if (e.key === "Escape") this.textarea.blur();
@@ -640,6 +650,13 @@
       const node = S.agents.get(this.addr);
       const d = this.detail || {};
       const label = node?.label || d.label || this.addr;
+      // Rebuild only when something shown changes: a rebuild between a
+      // button's mousedown and mouseup swallows the click.
+      const sig = JSON.stringify([label, node?.status, node?.awaiting_permission, node?.model, node?.model_source,
+        node?.engine, node?.cost?.toFixed?.(4), d.status, d.model, d.context && Math.round((100 * d.context.used) / (d.context.max || 1)),
+        this.inspectorOpen, S.columns.length, S.live]);
+      if (sig === this.headSig) return;
+      this.headSig = sig;
       this.title.textContent = label;
       const ctx = d.context;
       let ctxEl = null;
@@ -657,7 +674,7 @@
         h("div", { class: "actions" },
           h("button", { text: this.inspectorOpen ? "hide info" : "info", onclick: () => this.toggleInspector() }),
           h("button", { text: "files", onclick: () => { select(this.addr, { quiet: true }); setView("files"); } }),
-          S.columns.length < MAX_COLUMNS ? h("button", { text: "split", title: "open the selected agent beside this one (s)", onclick: () => openChat(S.selected, { replaceFocused: false }) }) : null,
+          S.columns.length < MAX_COLUMNS ? h("button", { text: "split", title: "add a column; the next agent you pick shows there (s)", onclick: () => splitColumn() }) : null,
           S.live && node && node.status !== "terminated" ? h("button", { class: "danger", text: "terminate", onclick: () => this.terminate() }) : null,
           S.columns.length > 1 ? h("button", { text: "✕", title: "close column", onclick: () => closeColumn(this) }) : null,
         ),
@@ -758,33 +775,57 @@
     return frag;
   }
 
-  function openChat(addr, { replaceFocused = true, focus = false } = {}) {
+  /** Show ``addr`` in the chat view. Like tmux panes: the focused
+   *  column (white border) shows whatever you select; ``split`` adds a
+   *  column and focuses it. An agent already open in another column is
+   *  focused there instead of opened twice. ``newColumn`` (permission
+   *  toasts) opens beside the others rather than replacing. */
+  function openChat(addr, { newColumn = false, focus = false } = {}) {
     if (!addr) return;
     if (S.view !== "chat") setView("chat");
+    const focused = S.columns[S.focusedCol];
     const existing = S.columns.findIndex((c) => c.addr === addr);
-    if (existing >= 0) {
-      S.focusedCol = existing;
-    } else if (!S.columns.length || (!replaceFocused && S.columns.length < MAX_COLUMNS)) {
-      const col = new ChatColumn(addr);
-      S.columns.push(col);
-      $("#chat-columns").append(col.el);
-      S.focusedCol = S.columns.length - 1;
-      for (const c of S.columns) c.updateHeader();
+    if (focused && focused.addr === addr) {
+      // already showing
+    } else if (existing >= 0) {
+      setFocusedColumn(existing);
+    } else if (!S.columns.length || (newColumn && S.columns.length < MAX_COLUMNS)) {
+      addColumn(addr);
     } else {
-      const col = S.columns[Math.min(S.focusedCol, S.columns.length - 1)];
-      col.retarget(addr);
+      (focused || S.columns[0]).retarget(addr);
     }
     if (S.selected !== addr) { S.selected = addr; renderTreeSelection(); syncHash(); }
     if (focus) S.columns[S.focusedCol]?.textarea.focus();
     if (S.snap) handlePermissions();
+  }
+  function addColumn(addr) {
+    const col = new ChatColumn(addr);
+    S.columns.push(col);
+    $("#chat-columns").append(col.el);
+    setFocusedColumn(S.columns.length - 1);
+    return col;
+  }
+  /** Split: a new column on the current agent, focused, so the next
+   *  agent you pick lands in it. */
+  function splitColumn() {
+    if (S.columns.length >= MAX_COLUMNS) { toast(`at most ${MAX_COLUMNS} columns`); return; }
+    if (S.view !== "chat") setView("chat");
+    addColumn(S.selected || S.columns[S.focusedCol]?.addr || S.snap?.tree?.addr);
+    toast("split — pick an agent in the tree to show it here", { ttl: 2500 });
+  }
+  function setFocusedColumn(i) {
+    S.focusedCol = Math.max(0, Math.min(i, S.columns.length - 1));
+    S.columns.forEach((c, j) => { c.el.classList.toggle("focused", j === S.focusedCol && S.columns.length > 1); c.updateHeader(); });
   }
   function closeColumn(col) {
     const i = S.columns.indexOf(col);
     if (i < 0 || S.columns.length === 1) return;
     S.columns.splice(i, 1);
     col.el.remove();
-    S.focusedCol = Math.max(0, Math.min(S.focusedCol, S.columns.length - 1));
-    for (const c of S.columns) c.updateHeader();
+    setFocusedColumn(Math.min(S.focusedCol, S.columns.length - 1));
+    const now = S.columns[S.focusedCol];
+    if (now && S.selected !== now.addr) { S.selected = now.addr; renderTreeSelection(); syncHash(); }
+    if (S.snap) handlePermissions();
   }
 
   // ---------- graph ----------
@@ -1261,7 +1302,7 @@
         case "j": case "ArrowDown": e.preventDefault(); moveSelection(1); break;
         case "k": case "ArrowUp": e.preventDefault(); moveSelection(-1); break;
         case "Enter": e.preventDefault(); openChat(S.selected, { focus: true }); break;
-        case "s": openChat(S.selected, { replaceFocused: false }); break;
+        case "s": splitColumn(); break;
         case "?": $("#help").hidden = !$("#help").hidden; break;
         case "Escape": $("#help").hidden = true; break;
         case " ": if (!S.live) { e.preventDefault(); Scrub.playing ? Scrub.stop() : Scrub.play(); } break;
