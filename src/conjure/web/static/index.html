@@ -32,7 +32,7 @@
     <section class="pane" id="tree-pane">
       <h2 class="pane-title">agents <span id="agent-count" class="dim"></span></h2>
       <div class="pane-tools">
-        <label class="dim small"><input type="checkbox" id="show-internal"> internal</label>
+        <label class="toggle small" title="Show internal agents (combinator workers)"><input type="checkbox" id="show-internal"> internal</label>
       </div>
       <div id="tree" tabindex="0"></div>
     </section>
@@ -49,9 +49,9 @@
     </section>
     <section id="view-graph" class="view">
       <div class="view-toolbar">
-        <label><input type="checkbox" id="edge-spawn" checked> <span class="legend spawn"></span> spawn</label>
-        <label><input type="checkbox" id="edge-message" checked> <span class="legend message"></span> messages</label>
-        <label><input type="checkbox" id="edge-capability" checked> <span class="legend capability"></span> introductions</label>
+        <label class="toggle"><input type="checkbox" id="edge-spawn" checked> <span class="legend spawn"></span> spawn</label>
+        <label class="toggle"><input type="checkbox" id="edge-message" checked> <span class="legend message"></span> messages</label>
+        <label class="toggle"><input type="checkbox" id="edge-capability" checked> <span class="legend capability"></span> introductions</label>
         <span class="dim small">click an agent to inspect · double-click to open its chat</span>
       </div>
       <div id="graph-wrap"><svg id="graph" role="img" aria-label="Agent graph"></svg></div>
@@ -65,7 +65,7 @@
         <span class="legend-item"><span class="legend msg"></span> message in</span>
         <span class="spacer"></span>
         <button id="tl-fit" class="small-btn">fit</button>
-        <label class="dim small"><input type="checkbox" id="tl-follow" checked> follow</label>
+        <label class="toggle small" title="Keep the newest activity in view"><input type="checkbox" id="tl-follow" checked> follow</label>
         <span class="dim small">wheel: zoom · drag: pan</span>
       </div>
       <div id="timeline-wrap"><svg id="timeline" role="img" aria-label="Agent timeline"></svg></div>
@@ -96,18 +96,57 @@
 
 <div id="toasts"></div>
 <div id="help" class="overlay" hidden>
-  <div class="overlay-card pane">
-    <h2 class="pane-title">keys</h2>
-    <dl>
-      <dt>1 · 2 · 3 · 4</dt><dd>chat · graph · timeline · files</dd>
-      <dt>j / k · ↑ / ↓</dt><dd>move through agents</dd>
-      <dt>enter</dt><dd>open selected agent's chat and focus its input</dd>
-      <dt>s</dt><dd>open selected agent in a new column (side by side)</dd>
-      <dt>esc</dt><dd>leave the input</dd>
-      <dt>F6 · ctrl+g</dt><dd>toggle auto-approve</dd>
-      <dt>space</dt><dd>replay: play / pause</dd>
-      <dt>?</dt><dd>this help</dd>
-    </dl>
+  <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <header class="help-head">
+      <h2 id="help-title">Keyboard shortcuts</h2>
+      <button class="help-close" id="help-close" aria-label="Close">✕</button>
+    </header>
+    <div class="help-grid">
+      <section>
+        <h3>Views</h3>
+        <dl>
+          <dt><kbd>1</kbd></dt><dd>Chat</dd>
+          <dt><kbd>2</kbd></dt><dd>Graph</dd>
+          <dt><kbd>3</kbd></dt><dd>Timeline</dd>
+          <dt><kbd>4</kbd></dt><dd>Files</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Agents</h3>
+        <dl>
+          <dt><kbd>j</kbd><kbd>k</kbd></dt><dd>Next / previous agent</dd>
+          <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Same, with arrows</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Open chat and focus its input</dd>
+          <dt><kbd>s</kbd></dt><dd>Open in a new column, side by side</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Chat</h3>
+        <dl>
+          <dt><kbd>Enter</kbd></dt><dd>Send message</dd>
+          <dt><kbd>Shift</kbd><kbd>Enter</kbd></dt><dd>New line</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Leave the input</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Session</h3>
+        <dl>
+          <dt><kbd>F6</kbd></dt><dd>Toggle auto-approve</dd>
+          <dt><kbd>Ctrl</kbd><kbd>G</kbd></dt><dd>Same</dd>
+          <dt><kbd>Space</kbd></dt><dd>Replay: play / pause</dd>
+          <dt><kbd>?</kbd></dt><dd>Show / hide this panel</dd>
+        </dl>
+      </section>
+      <section class="wide">
+        <h3>Mouse</h3>
+        <dl>
+          <dt>Graph</dt><dd>Click an agent to inspect it, double-click to open its chat</dd>
+          <dt>Timeline</dt><dd>Wheel to zoom, drag to pan</dd>
+          <dt>Columns</dt><dd>Click a column to focus it; the next agent you pick opens there</dd>
+        </dl>
+      </section>
+    </div>
+    <footer class="help-foot">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</footer>
   </div>
 </div>
 <div id="gate" class="overlay" hidden>

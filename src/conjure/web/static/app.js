@@ -1435,7 +1435,9 @@
     for (const b of document.querySelectorAll("#views button")) b.addEventListener("click", () => setView(b.dataset.view));
     $("#auto-toggle").addEventListener("click", toggleAuto);
     $("#help-toggle").addEventListener("click", () => ($("#help").hidden = !$("#help").hidden));
-    $("#help").addEventListener("click", () => ($("#help").hidden = true));
+    // Close on the backdrop or ✕, not on clicks inside the card.
+    $("#help").addEventListener("click", (e) => { if (e.target === e.currentTarget) $("#help").hidden = true; });
+    $("#help-close").addEventListener("click", () => ($("#help").hidden = true));
     $("#theme-toggle").addEventListener("click", () => {
       const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
       document.documentElement.dataset.theme = next;
