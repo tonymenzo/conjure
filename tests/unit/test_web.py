@@ -371,3 +371,37 @@ def test_root_model_reaches_the_spec(monkeypatch):
     rt, _ = runner.build_runtime(cfg)
     assert seen["model"] == "sonnet"
     rt.shutdown()
+
+
+def test_parsed_log_reads_only_appended_complete_lines(session, tmp_path, monkeypatch):
+    import conjure.web.state as state
+    path = tmp_path / "incremental.jsonl"
+    path.write_bytes(b'{"n": 1}\n')
+    parsed = []
+    original = state._parse_lines
+    def parse(data):
+        parsed.append(data)
+        return original(data)
+    monkeypatch.setattr(state, "_parse_lines", parse)
+    view = session["view"]
+    first = view._parsed_log(path)
+    assert first == [{"n": 1}]
+    assert view._parsed_log(path) is first
+    assert len(parsed) == 1
+    with path.open("ab") as fh:
+        fh.write(b'{"n": 2}\n{"n":')
+    assert view._parsed_log(path) == [{"n": 1}, {"n": 2}]
+    assert parsed[-1] == b'{"n": 2}\n'
+    with path.open("ab") as fh:
+        fh.write(b' 3}\n')
+    assert view._parsed_log(path) == [{"n": 1}, {"n": 2}, {"n": 3}]
+    assert parsed[-1] == b'{"n": 3}\n'
+    assert first == [{"n": 1}], "previous readers must keep a stable snapshot"
+    path.write_bytes(b'{"n": 4}\n')
+    assert view._parsed_log(path) == [{"n": 4}]
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(b'{"n": 5}\n{"n": 6}\n')
+    replacement.replace(path)
+    assert view._parsed_log(path) == [{"n": 5}, {"n": 6}]
+    path.unlink()
+    assert view._parsed_log(path) == []

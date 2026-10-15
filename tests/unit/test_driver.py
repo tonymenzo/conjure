@@ -357,3 +357,29 @@ def test_driver_skips_messages_the_agent_already_pulled():
     # … and the kid's already-collected reply is not in it.
     assert len(prompts) == 2
     assert "result" not in prompts[1] and "next" in prompts[1]
+
+
+def test_driver_drains_burst_larger_than_one_batch():
+    from conjure.driver import Driver
+    rt = Runtime()
+    addr = rt.root(AgentSpec(role_prompt="root"))
+    record = rt.record_for(addr)
+    for i in range(1025):
+        rt.send_external(addr, f"message-{i}")
+    done = threading.Event()
+    class Engine(MockEngine):
+        def step(self, prompt):
+            result = super().step(prompt)
+            if "message-1024" in prompt:
+                done.set()
+            return result
+    engine = Engine()
+    driver = Driver(agent=Agent(record=record, engine=engine), runtime=rt)
+    try:
+        driver.start()
+        assert done.wait(2), "backlog stalled without a new send"
+        assert len(engine.prompts) == 2
+        assert driver._cursor == 1025
+    finally:
+        driver.stop()
+        rt.shutdown()

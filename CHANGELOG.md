@@ -8,6 +8,26 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Drivers drain mailbox backlogs larger than 1,024 messages without requiring
+  another send to wake them.
+- Mailbox sequence assignment and journal writes are serialized; replay also
+  sorts out-of-order sends from older journals before cursor reads.
+- Failed batch startup terminates all children, revokes tokens, and cleans up
+  started engines and logs. Terminated records remain available for inspection.
+
+### Changed
+
+- `Send` deduplicates only when an explicit `idempotency_key` is supplied.
+  Independent messages with identical bodies are delivered normally. Reusing
+  a key for a different message returns `idempotency_conflict`.
+- `agent_map` and `AgentMap` accept `max_concurrency` (default `None`, unlimited).
+  Slots refill as workers finish; one timeout covers the entire operation.
+- Bounded mailbox reads no longer copy the remaining backlog. Timeline log
+  parsing reads only appended complete lines and resets on replacement or
+  truncation, retaining incomplete lines for the next update.
+
 ## [0.2.2] — 2026-10-15
 
 ### Fixed

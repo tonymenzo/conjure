@@ -216,3 +216,37 @@ def test_read_then_cursor_advances_via_since_seq():
     mb.put(_env(msg_id="m3", from_=a, to=b))
     second = mb.read(since_seq=cursor, max_n=10)
     assert [e.msg_id for e in second] == ["m3"]
+
+
+def test_replay_sorts_legacy_out_of_order_messages():
+    mb = Mailbox()
+    env = _env(msg_id="m", from_=USER, to=SYSTEM)
+    for seq in (2, 1, 3):
+        mb.replay_put(env.model_copy(update={"seq": seq}))
+    assert [e.seq for e in mb.read(max_n=10)] == [1, 2, 3]
+    assert [e.seq for e in mb.read(since_seq=1, max_n=10)] == [2, 3]
+
+
+def test_bounded_read_does_not_copy_backlog():
+    class NoSlice(list):
+        def __getitem__(self, index):
+            assert not isinstance(index, slice), "read copied the mailbox backlog"
+            return super().__getitem__(index)
+    mb = Mailbox()
+    for i in range(100):
+        mb.put(_env(msg_id=str(i), from_=USER, to=SYSTEM))
+    mb._items = NoSlice(mb._items)
+    assert mb.read(max_n=1)[0].seq == 1
+    assert mb.read(since_seq=50, max_n=1)[0].seq == 51
+
+
+def test_failed_persistence_does_not_publish_or_consume_sequence():
+    import pytest
+    mb = Mailbox()
+    env = _env(msg_id="m", from_=USER, to=SYSTEM)
+    def fail(_):
+        raise OSError("disk unavailable")
+    with pytest.raises(OSError):
+        mb.put(env, before_publish=fail)
+    assert len(mb) == 0
+    assert mb.put(env).seq == 1

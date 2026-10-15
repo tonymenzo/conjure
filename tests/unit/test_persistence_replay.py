@@ -104,3 +104,69 @@ def test_replay_runtime_has_no_journal(tmp_path: Path):
     # Original session only had a spawn — the post-replay send must NOT
     # appear in the original journal.
     assert "send" not in kinds
+
+
+def test_concurrent_delivery_journals_in_mailbox_order(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+    from conjure.tools.primitives import send_impl
+    rt = Runtime(store_dir=tmp_path)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))
+    token = rt.record_for(root).token
+    entered, release, second_started = (threading.Event() for _ in range(3))
+    original = rt._journal_send
+    def journal(env):
+        if env.body == "first":
+            entered.set()
+            assert release.wait(2)
+        original(env)
+    rt._journal_send = journal
+    def second():
+        second_started.set()
+        return send_impl(token=token, to=child.id, body="second")
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(send_impl, token=token, to=child.id, body="first")
+            assert entered.wait(2)
+            other = pool.submit(second)
+            assert second_started.wait(2)
+            # Under the old implementation the second send completed while the
+            # first journal write was paused, producing seqs [2, 1] on disk.
+            try:
+                other.result(timeout=0.05)
+            except FutureTimeout:
+                pass
+            release.set()
+            assert first.result()["ok"] and other.result()["ok"]
+        rt._journal.flush()
+        entries = [e["payload"]["envelope"] for e in Journal.read_all(rt.session_dir)
+                   if e["kind"] == "send"]
+        assert [e["seq"] for e in entries] == [1, 2]
+        replay = Runtime.replay(rt.session_dir)
+        assert [e.body for e in replay.read_inbox(child, since_seq=1)] == ["second"]
+        replay.shutdown()
+    finally:
+        release.set()
+        rt.shutdown()
+
+
+def test_concurrent_retries_publish_once(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from conjure.tools.primitives import send_impl
+    rt = Runtime(store_dir=tmp_path)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))
+    token = rt.record_for(root).token
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            replies = list(pool.map(lambda _: send_impl(
+                token=token, to=child.id, body="result", idempotency_key="retry"
+            ), range(32)))
+        assert all(r["ok"] for r in replies)
+        assert len({r["msg_id"] for r in replies}) == 1
+        assert len(rt.read_inbox(child)) == 1
+        rt._journal.flush()
+        assert sum(e["kind"] == "send" for e in Journal.read_all(rt.session_dir)) == 1
+    finally:
+        rt.shutdown()

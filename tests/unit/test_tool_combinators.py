@@ -70,6 +70,7 @@ def test_map_tool_squares_items():
     # The simpler way: just set fields and call _run().
     tool.spec = {"role_prompt": "sq"}
     tool.items = [1, 2, 3, 4]
+    tool.max_concurrency = 2
     tool.timeout_s = 5.0
     result = tool._run()
     assert result["ok"] is True

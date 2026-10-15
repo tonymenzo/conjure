@@ -778,3 +778,88 @@ def test_call_timeout_returns_structured_error():
     assert out["code"] == "timeout"
     assert "worker" in out
     rt.shutdown()
+
+
+def test_map_reuses_slots_without_waiting_for_slowest_worker():
+    import threading
+    third_started = threading.Event()
+    lock = threading.Lock()
+    active = peak = 0
+    def worker(engine, prompt, envelopes):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            for env in envelopes:
+                item = env.body["item"]
+                if item == 0:
+                    assert third_started.wait(2), "map waited for the whole batch"
+                if item == 2:
+                    third_started.set()
+                send_impl(token=engine.token, to=env.body["reply_to"], body=item * 2)
+        finally:
+            with lock:
+                active -= 1
+        return "ok"
+    rt = _make_runtime({"worker": worker})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    try:
+        result = agent_map(rt, root, lambda _: AgentSpec(role_prompt="worker"),
+                           list(range(8)), max_concurrency=2, timeout_s=5)
+        assert result == [i * 2 for i in range(8)]
+        assert peak == 2
+        assert active == 0
+        assert all(rt.record_for(a).status == "terminated" for a in rt.record_for(root).children)
+    finally:
+        rt.shutdown()
+
+
+def test_map_bounded_timeout_includes_unstarted_items():
+    rt = _make_runtime({"worker": lambda *args: "no reply"})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    try:
+        with pytest.raises(Timeout) as caught:
+            agent_map(rt, root, lambda _: AgentSpec(role_prompt="worker"),
+                      [1, 2, 3], max_concurrency=1, timeout_s=0.1)
+        assert caught.value.expected == 3
+        assert caught.value.partial == [None, None, None]
+        assert len(caught.value.workers) == 1
+        assert all(rt.record_for(a).status == "terminated" for a in rt.record_for(root).children)
+    finally:
+        rt.shutdown()
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_map_rejects_invalid_concurrency_before_spawning(limit):
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    try:
+        with pytest.raises(ValueError, match="max_concurrency"):
+            agent_map(rt, root, lambda _: AgentSpec(role_prompt="worker"), [1], max_concurrency=limit)
+        assert not rt.record_for(root).children
+    finally:
+        rt.shutdown()
+
+
+def test_map_slow_turn_cleanup_does_not_block_other_slots():
+    import threading
+    third_started = threading.Event()
+    def worker(engine, prompt, envelopes):
+        for env in envelopes:
+            item = env.body["item"]
+            if item == 2:
+                third_started.set()
+            send_impl(token=engine.token, to=env.body["reply_to"], body=item)
+            if item == 0:
+                assert third_started.wait(2), "cleanup blocked the other slot"
+        return "ok"
+    rt = _make_runtime({"worker": worker})
+    root = rt.root(AgentSpec(role_prompt="root"))
+    try:
+        assert agent_map(rt, root, lambda _: AgentSpec(role_prompt="worker"),
+                         [0, 1, 2], max_concurrency=2, timeout_s=5) == [0, 1, 2]
+        assert third_started.is_set()
+    finally:
+        third_started.set()
+        rt.shutdown()

@@ -150,6 +150,27 @@ tools, so agents can invoke them on their own subtrees:
 | `agent_ensemble`    | Best-of-N: gather all replies, synthesize via an aggregator  |
 | `agent_critic`      | Generator/critic refinement loop with principled termination |
 
+For large maps, set `max_concurrency` to limit active workers while preserving
+input order. The same option is available on the `AgentMap` tool:
+
+```python
+results = agent_map(rt, root, spec_factory, items,
+                    max_concurrency=8, timeout_s=120)
+```
+
+The default (`None`) preserves unlimited fan-out. The timeout is a single
+deadline for the whole map, including startup and gathering. A worker slot
+is reused after its reply and turn cleanup; a slow worker does not hold up
+slots freed by other workers. Timeout results include partial outputs in
+input order, including `None` for items not yet started.
+
+`Send` delivers identical bodies as independent messages by default. For
+retry-safe delivery, supply an `idempotency_key`, scoped to the sender and
+recipient for that mailbox's lifetime. Retrying the same key and payload
+returns the original message ID with `deduplicated: true`; using that key
+with a different body, thread, reply target, or kind returns
+`idempotency_conflict`. Use a fresh key for a new request.
+
 ## Engines
 
 - **`orchestral`** — wraps `orchestral.Agent`; multi-provider out of the

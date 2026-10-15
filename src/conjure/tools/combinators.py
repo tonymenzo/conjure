@@ -157,6 +157,9 @@ class AgentMapTool(StatelessRuntimeTool):
     timeout_s: float = RuntimeField(
         default=60.0, description="Maximum seconds to wait for all replies."
     )
+    max_concurrency: int | None = RuntimeField(
+        default=None, description="Maximum active workers; omit for unlimited fan-out."
+    )
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
@@ -169,7 +172,10 @@ class AgentMapTool(StatelessRuntimeTool):
             result = agent_map(
                 runtime, caller_addr, factory, list(self.items or []),
                 timeout_s=float(self.timeout_s or 120.0),
+                max_concurrency=self.max_concurrency,
             )
+        except ValueError as e:
+            return _err("invalid_argument", str(e))
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:

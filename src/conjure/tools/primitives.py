@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from conjure.address import Address
 from conjure.envelope import Envelope
 from conjure.errors import (
+    IdempotencyConflict,
     BudgetExceeded,
     MaxDepthExceeded,
     NoSuchAddress,
@@ -220,6 +221,7 @@ def send_impl(
     thread_id: str = "",
     in_reply_to: str = "",
     kind: str = "msg",
+    idempotency_key: str = "",
 ) -> dict[str, Any]:
     resolved = _resolve(token)
     if isinstance(resolved, dict):
@@ -238,23 +240,6 @@ def send_impl(
     if target_record.status == "terminated":
         return _err("terminated", f"target {to} is terminated")
 
-    # Suppress near-duplicate sends: if the same caller pushed the
-    # exact same body to this target within the last few seconds, the
-    # LLM is most likely stuttering (emitting a duplicate ``send`` tool
-    # call within one turn). Returning ok=True with the existing
-    # msg_id + a ``deduplicated`` flag keeps the engine happy while
-    # preventing the target from seeing the same message twice.
-    duplicate = _find_recent_duplicate(
-        target_record.inbox, sender=caller_addr, body=body
-    )
-    if duplicate is not None:
-        return {
-            "ok": True,
-            "msg_id": duplicate.msg_id,
-            "seq": duplicate.seq,
-            "deduplicated": True,
-        }
-
     msg_id = new_message_id()
     env = Envelope(
         seq=0,
@@ -264,11 +249,18 @@ def send_impl(
         thread_id=thread_id or msg_id,
         in_reply_to=in_reply_to or None,
         body=body,
-        headers={"kind": kind} if kind != "msg" else {},
+        headers={
+            **({"kind": kind} if kind != "msg" else {}),
+            **({"idempotency_key": idempotency_key} if idempotency_key else {}),
+        },
         ts=time.time(),
     )
-    stored = target_record.inbox.put(env)
-    runtime._journal_send(stored)
+    try:
+        stored = target_record.inbox.put(env, before_publish=runtime._journal_send)
+    except IdempotencyConflict as exc:
+        return _err("idempotency_conflict", str(exc))
+    if stored.msg_id != msg_id:
+        return {"ok": True, "msg_id": stored.msg_id, "seq": stored.seq, "deduplicated": True}
     runtime.note_delivery(caller_addr, target_addr)
     # Reciprocal capability: the recipient may now reply to the sender.
     # Without this, common request/response patterns require explicit
@@ -279,38 +271,6 @@ def send_impl(
         target_record.wakeup.set()
 
     return {"ok": True, "msg_id": stored.msg_id, "seq": stored.seq}
-
-
-# Dedup window: how recently must a same-(from, body) message have
-# landed for a new send to be treated as a stutter. 5s comfortably
-# covers an LLM emitting two send tool calls in one turn but is short
-# enough that legitimate retries (rare, and usually with different
-# bodies) get through.
-_DEDUP_WINDOW_S = 5.0
-
-
-def _find_recent_duplicate(
-    inbox: Any,
-    *,
-    sender: Address,
-    body: Any,
-) -> Any:
-    """Return the most recent envelope in ``inbox`` from ``sender``
-    with the same body and within ``_DEDUP_WINDOW_S`` seconds. Returns
-    None if there's no such duplicate."""
-    now = time.time()
-    # Last 10 envelopes is plenty — the duplicate, if any, is among
-    # the most recent few.
-    recent = inbox.read_recent(max_n=10)
-    for env in reversed(recent):
-        if (now - env.ts) > _DEDUP_WINDOW_S:
-            return None  # older than the window — done scanning
-        if env.from_ != sender:
-            continue
-        if env.body != body:
-            continue
-        return env
-    return None
 
 
 def _unread_cursor(record: Any) -> int:
@@ -835,7 +795,7 @@ class SendTool(StatelessRuntimeTool):
     """Send a message to an address you hold a capability for.
 
     Error codes: ``not_permitted`` (no capability), ``no_such_address``,
-    ``terminated``.
+    ``terminated``, ``idempotency_conflict`` (retry key reused for a different message).
     """
 
     to: str = RuntimeField(description="Address id of the recipient.")
@@ -843,6 +803,9 @@ class SendTool(StatelessRuntimeTool):
     thread_id: str = RuntimeField(default="", description="Conversation thread id; defaults to msg id.")
     in_reply_to: str = RuntimeField(default="", description="Message id this is a reply to.")
     kind: str = RuntimeField(default="msg", description="Free-form message kind tag (e.g. 'result').")
+    idempotency_key: str = RuntimeField(
+        default="", description="Optional retry key, scoped to sender and recipient. Reuse only for the same message; omit for independent sends."
+    )
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
@@ -853,6 +816,7 @@ class SendTool(StatelessRuntimeTool):
             thread_id=self.thread_id or "",
             in_reply_to=self.in_reply_to or "",
             kind=self.kind or "msg",
+            idempotency_key=self.idempotency_key or "",
         )
 
 

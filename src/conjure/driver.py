@@ -67,7 +67,9 @@ class Driver:
             self._thread.join(timeout=timeout)
 
     def join(self, timeout: float | None = None) -> bool:
-        if self._thread is None:
+        # Thread.start() can fail (for example, OS thread exhaustion). Cleanup
+        # must also work for a driver whose Thread object never started.
+        if self._thread is None or self._thread.ident is None:
             return True
         self._thread.join(timeout=timeout)
         return not self._thread.is_alive()
@@ -95,7 +97,10 @@ class Driver:
     def _run_loop(self) -> None:
         record = self.agent.record
         while not self._stop_requested:
-            record.wakeup.wait()
+            # An Event coalesces multiple sends. Never sleep while a previous
+            # bounded read left a backlog, including messages pulled by tools.
+            if record.inbox.latest_seq() <= self._cursor:
+                record.wakeup.wait()
             record.wakeup.clear()
             if self._stop_requested or record.status == "terminated":
                 return

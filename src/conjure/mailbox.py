@@ -22,9 +22,11 @@ from __future__ import annotations
 import bisect
 import threading
 import time
+from collections.abc import Callable
 
 from conjure.address import Address
 from conjure.envelope import Envelope
+from conjure.errors import IdempotencyConflict
 
 
 class Mailbox:
@@ -37,17 +39,41 @@ class Mailbox:
         # lockstep with ``_items``; never touched outside the lock.
         self._seqs: list[int] = []
         self._next_seq = 1
+        self._idempotency: dict[tuple[str, str], Envelope] = {}
 
-    def put(self, env: Envelope) -> Envelope:
+    def put(
+        self, env: Envelope, *, before_publish: Callable[[Envelope], None] | None = None
+    ) -> Envelope:
         """Append ``env`` to the mailbox, assigning a fresh seq.
 
         Returns the stored envelope, which differs from the input by its
         ``seq`` field. The original is unmodified (Envelope is frozen).
+        An explicit ``headers["idempotency_key"]`` retries the original send
+        from this sender; conflicting payloads raise ``IdempotencyConflict``.
+        ``before_publish`` runs under the mailbox lock before readers can see
+        the message. It must not acquire the runtime registry lock.
         """
         with self._cond:
+            key = env.headers.get("idempotency_key")
+            identity = (env.from_.id, key) if key else None
+            previous = self._idempotency.get(identity) if identity else None
+            if previous is not None:
+                def payload(e: Envelope) -> tuple:
+                    thread = None if e.thread_id == e.msg_id else e.thread_id
+                    return (e.body, thread, e.in_reply_to, e.headers)
+                if payload(previous) != payload(env):
+                    raise IdempotencyConflict("idempotency key reused with a different message")
+                return previous
             seq = self._next_seq
-            self._next_seq += 1
             stored = env.model_copy(update={"seq": seq})
+            # Serialize persistence with sequence assignment. The callback must
+            # not acquire the runtime registry lock (registry -> inbox -> journal).
+            # Publish only after it succeeds; readers cannot observe half a send.
+            if before_publish is not None:
+                before_publish(stored)
+            self._next_seq += 1
+            if identity:
+                self._idempotency[identity] = stored
             self._items.append(stored)
             self._seqs.append(seq)
             self._cond.notify_all()
@@ -58,8 +84,15 @@ class Mailbox:
         journal replay only; advances the next-seq counter past
         ``env.seq`` so future puts remain monotonic."""
         with self._cond:
-            self._items.append(env)
-            self._seqs.append(env.seq)
+            # Older journals may contain concurrent sends out of seq order.
+            index = bisect.bisect_left(self._seqs, env.seq)
+            if index < len(self._seqs) and self._seqs[index] == env.seq:
+                raise ValueError(f"duplicate mailbox sequence: {env.seq}")
+            self._items.insert(index, env)
+            self._seqs.insert(index, env.seq)
+            key = env.headers.get("idempotency_key")
+            if key:
+                self._idempotency[(env.from_.id, key)] = env
             if env.seq + 1 > self._next_seq:
                 self._next_seq = env.seq + 1
             self._cond.notify_all()
@@ -145,8 +178,8 @@ class Mailbox:
         thread_id: str,
         from_id: str,
     ) -> list[Envelope]:
-        # ``_items`` is invariably sorted by seq (``put`` assigns under
-        # the lock; ``replay_put`` reads the journal in append order),
+        # ``_items`` is sorted by seq (``put`` assigns under the lock;
+        # ``replay_put`` inserts historical envelopes in sequence order),
         # so the first envelope with ``seq > since_seq`` can be found
         # in O(log N). Without the bisect, every read of a long-lived
         # inbox would re-scan the entire history — a quiet O(N) tax
@@ -154,7 +187,8 @@ class Mailbox:
         items = self._items
         start = bisect.bisect_right(self._seqs, since_seq) if since_seq > 0 else 0
         out: list[Envelope] = []
-        for env in items[start:]:
+        for index in range(start, len(items)):
+            env = items[index]
             if thread_id and env.thread_id != thread_id:
                 continue
             if from_id and _sender_id(env.from_) != from_id:

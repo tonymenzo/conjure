@@ -225,8 +225,7 @@ def request_toolkits_impl(
         headers={"kind": "toolkit_request"},
         ts=time.time(),
     )
-    stored = parent_record.inbox.put(env)
-    runtime._journal_send(stored)  # noqa: SLF001
+    stored = parent_record.inbox.put(env, before_publish=runtime._journal_send)
     if parent_record.wakeup is not None:
         parent_record.wakeup.set()
     return {

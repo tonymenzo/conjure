@@ -129,43 +129,28 @@ def test_send_to_terminated_target(rt, root_token):
     assert out["code"] == "terminated"
 
 
-def test_send_dedups_immediate_duplicate(rt, root_token):
-    """Two identical sends in quick succession from the same caller
-    coalesce — the second is suppressed and returns the first's
-    msg_id with ``deduplicated=True``."""
+def test_send_same_body_on_distinct_threads_is_not_deduplicated(rt, root_token):
     child = spawn_impl(token=root_token, role_prompt="c")
-    first = send_impl(token=root_token, to=child["address"], body="hi")
-    second = send_impl(token=root_token, to=child["address"], body="hi")
-    assert first["ok"] and second["ok"]
-    assert second.get("deduplicated") is True
-    assert second["msg_id"] == first["msg_id"]
-    # The recipient's inbox should have exactly ONE envelope.
-    inbox = rt.read_inbox(rt.address_by_id(child["address"]))
-    assert len(inbox) == 1
+    sends = [send_impl(token=root_token, to=child["address"], body="ok", thread_id=t)
+             for t in ("task-a", "task-b", "task-b")]
+    assert len({s["msg_id"] for s in sends}) == 3
+    assert len(rt.read_inbox(rt.address_by_id(child["address"]))) == 3
 
 
-def test_send_different_body_not_deduped(rt, root_token):
+def test_send_explicit_retry_key_survives_intervening_messages(rt, root_token):
     child = spawn_impl(token=root_token, role_prompt="c")
-    a = send_impl(token=root_token, to=child["address"], body="first")
-    b = send_impl(token=root_token, to=child["address"], body="second")
-    assert a["msg_id"] != b["msg_id"]
-    assert not b.get("deduplicated")
-    inbox = rt.read_inbox(rt.address_by_id(child["address"]))
-    assert len(inbox) == 2
-
-
-def test_send_dedup_checks_recent_tail(rt, root_token):
-    child = spawn_impl(token=root_token, role_prompt="c")
-    first = send_impl(token=root_token, to=child["address"], body="first")
+    args = dict(token=root_token, to=child["address"], body="ok", idempotency_key="request-1")
+    first = send_impl(**args)
     for i in range(12):
-        send_impl(token=root_token, to=child["address"], body=f"body-{i}")
-
-    duplicate = send_impl(token=root_token, to=child["address"], body="body-11")
-    late_repeat = send_impl(token=root_token, to=child["address"], body="first")
-
-    assert duplicate.get("deduplicated") is True
-    assert duplicate["msg_id"] != first["msg_id"]
-    assert late_repeat.get("deduplicated") is not True
+        send_impl(token=root_token, to=child["address"], body=i)
+    retry = send_impl(**args)
+    assert retry["deduplicated"] is True
+    assert retry["msg_id"] == first["msg_id"]
+    assert len(rt.read_inbox(rt.address_by_id(child["address"]))) == 13
+    conflict = send_impl(**{**args, "body": "changed"})
+    assert conflict["code"] == "idempotency_conflict"
+    conflict = send_impl(**{**args, "thread_id": "different-task"})
+    assert conflict["code"] == "idempotency_conflict"
 
 
 # ----- recv_impl & wait_for_impl -----

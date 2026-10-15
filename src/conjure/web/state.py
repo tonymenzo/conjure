@@ -17,6 +17,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,15 @@ class _LogRef:
         pass
 
 
+@dataclass
+class _ParsedLog:
+    identity: tuple[int, int]
+    mtime_ns: int
+    size: int
+    offset: int
+    rows: list[dict[str, Any]]
+
+
 class SessionView:
     def __init__(
         self,
@@ -62,7 +72,7 @@ class SessionView:
         self.name = name
         self.live = live
         self.until = until
-        self._parse_cache: dict[str, tuple[float, int, list[dict[str, Any]]]] = {}
+        self._parse_cache: dict[str, _ParsedLog] = {}
         self._cache_lock = threading.Lock()
 
     # ----- construction -----
@@ -539,23 +549,41 @@ class SessionView:
         return out
 
     def _parsed_log(self, path: Path | None) -> list[dict[str, Any]]:
-        """Whole-file parse, cached on (mtime, size) — an idle agent's
-        log costs a ``stat`` per call."""
+        """Parse appended complete lines only; reset on replacement/truncation.
+
+        Cache updates are serialized so concurrent HTTP readers cannot regress
+        the offset. An incomplete final line is retried on the next append.
+        Returned lists remain stable when a later request updates the cache.
+        """
         if path is None:
-            return []
-        try:
-            st = os.stat(path)
-        except OSError:
             return []
         key = str(path)
         with self._cache_lock:
-            hit = self._parse_cache.get(key)
-            if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
-                return hit[2]
-        rows = _parse_lines(Path(path).read_bytes())
-        with self._cache_lock:
-            self._parse_cache[key] = (st.st_mtime, st.st_size, rows)
-        return rows
+            try:
+                st = os.stat(path)
+                identity = (st.st_dev, st.st_ino)
+                hit = self._parse_cache.get(key)
+                if hit and (hit.identity, hit.mtime_ns, hit.size) == (
+                    identity, st.st_mtime_ns, st.st_size
+                ):
+                    return hit.rows
+                with path.open("rb") as fh:
+                    st = os.fstat(fh.fileno())
+                    identity = (st.st_dev, st.st_ino)
+                    append = hit is not None and hit.identity == identity and st.st_size > hit.size
+                    offset = hit.offset if append else 0
+                    fh.seek(offset)
+                    data = fh.read(max(0, st.st_size - offset))
+            except OSError:
+                self._parse_cache.pop(key, None)
+                return []
+            cut = data.rfind(b"\n") + 1
+            added = _parse_lines(data[:cut])
+            rows = hit.rows + added if append else added
+            self._parse_cache[key] = _ParsedLog(
+                identity, st.st_mtime_ns, st.st_size, offset + cut, rows,
+            )
+            return rows
 
 
 class ReplayCache:

@@ -418,9 +418,13 @@ class Runtime:
         # Notify externally-registered listener (e.g. the tmux
         # orchestrator) so it can set up per-agent state (event log,
         # window) BEFORE the driver starts emitting events.
-        if self._spawn_listener is not None:
-            self._spawn_listener(record)
-        self._maybe_start_driver(record)
+        try:
+            if self._spawn_listener is not None:
+                self._spawn_listener(record)
+            self._maybe_start_driver(record)
+        except BaseException:
+            self._cleanup_failed_spawn([record])
+            raise
         return addr
 
     def send_external(self, to: Address, body: Any, *, sender: str = "user") -> str:
@@ -443,8 +447,7 @@ class Runtime:
                 ts=time.time(),
             )
             target_record = self._records[to]
-            stored = target_record.inbox.put(env)
-            self._journal_send(stored)
+            stored = target_record.inbox.put(env, before_publish=self._journal_send)
             wakeup = target_record.wakeup
         if wakeup is not None:
             wakeup.set()
@@ -668,8 +671,8 @@ class Runtime:
         child can't block the registry for the others.
 
         Order is preserved: the returned address list lines up with
-        ``specs``. Either all specs spawn or none do — depth-exceeded
-        on any spec raises before registry mutation begins.
+        ``specs``. Validation fails before registry mutation. Startup failure
+        terminates the entire batch, retaining its records for inspection.
         """
         if not specs:
             return []
@@ -721,11 +724,45 @@ class Runtime:
         # the lock — one slow child's SDK setup must not block the
         # others' registry visibility (or any other lock contender).
         listener = self._spawn_listener
-        for record in records:
-            if listener is not None:
-                listener(record)
-            self._maybe_start_driver(record)
+        try:
+            for record in records:
+                if listener is not None:
+                    listener(record)
+                self._maybe_start_driver(record)
+        except BaseException:
+            # Keep terminated records for inspection/replay, but revoke their
+            # tokens and stop every member of the failed batch, including those
+            # whose engines started successfully before a sibling failed.
+            self._cleanup_failed_spawn(records)
+            raise
         return addrs
+
+    def _cleanup_failed_spawn(self, records: list[AgentRecord]) -> None:
+        terminated: list[Address] = []
+        with self._lock:
+            for record in records:
+                self._terminate_locked(
+                    record.addr, requested_by="spawn-failed", cascade=True,
+                    terminated=terminated, emit_events=False,
+                )
+        self._interrupt_engines(terminated)
+        for addr in terminated:
+            record = self.record_for(addr)
+            driver = record.driver
+            if driver is not None:
+                driver.stop(timeout=2.0)
+                if not driver.join(timeout=0):
+                    # Do not close resources under an in-flight turn.
+                    continue
+            engine = self._engine_for(record)
+            shutdown = getattr(engine, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    pass
+            if record.event_log is not None:
+                record.event_log.close()
 
     def dispatch_batch(
         self,
@@ -770,8 +807,7 @@ class Runtime:
                 body=body,
                 ts=time.time(),
             )
-            placed = record.inbox.put(env)
-            self._journal_send(placed)
+            placed = record.inbox.put(env, before_publish=self._journal_send)
             wakeup = record.wakeup
             if wakeup is not None:
                 wakeup.set()
@@ -1137,8 +1173,7 @@ class Runtime:
                 body=body,
                 ts=time.time(),
             )
-            stored = parent_record.inbox.put(env)
-            self._journal_send(stored)
+            stored = parent_record.inbox.put(env, before_publish=self._journal_send)
             wakeup = parent_record.wakeup
             if wakeup is not None:
                 wakeup.set()
@@ -1219,8 +1254,7 @@ class Runtime:
             body=body,
             ts=time.time(),
         )
-        stored = parent_record.inbox.put(env)
-        self._journal_send(stored)
+        stored = parent_record.inbox.put(env, before_publish=self._journal_send)
         wakeup = parent_record.wakeup
         if wakeup is not None:
             wakeup.set()

@@ -51,8 +51,7 @@ def _dispatch(
         ts=time.time(),
     )
     record = runtime.record_for(recipient)
-    stored = record.inbox.put(env)
-    runtime._journal_send(stored)
+    stored = record.inbox.put(env, before_publish=runtime._journal_send)
     if record.wakeup is not None:
         record.wakeup.set()
     return stored
@@ -126,59 +125,95 @@ def agent_map(
     items: Sequence[Any],
     *,
     timeout_s: float = 120.0,
+    max_concurrency: int | None = None,
 ) -> list[Any]:
-    """Spawn one worker per item; dispatch each item; gather replies.
+    """Map one worker per item, returning replies in input order.
 
-    ``spec_factory(item)`` is called for each item to build the worker's
-    spec. The worker receives a message ``{"item": item, "reply_to":
-    <collector-id>}``. The combinator collects one reply from each
-    worker and returns the result bodies in input order.
-
-    All workers and the collector are terminated before this function
-    returns.
+    ``max_concurrency`` bounds active workers; None preserves unlimited
+    fan-out. A slot is reused after a reply and the worker's turn finishes.
+    ``timeout_s`` is one deadline for spawning, dispatch and gathering the
+    entire map. Workers receive ``{"item": item, "reply_to": collector_id}``.
+    All workers and the collector are terminated on success or failure.
     """
+    if max_concurrency is not None and (
+        isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int)
+        or max_concurrency < 1
+    ):
+        raise ValueError("max_concurrency must be a positive integer or None")
     items_list = list(items)
     if not items_list:
         return []
-
+    limit = max_concurrency or len(items_list)
+    deadline = time.monotonic() + timeout_s
     collector = _spawn_collector(runtime, parent, label="map-collector")
     workers: list[Address] = []
+    results: list[Any] = [None] * len(items_list)
+    active: dict[Address, int] = {}
+    retiring: dict[Address, Any] = {}
+    next_index = received = cursor = 0
+
+    def timeout() -> Timeout:
+        return Timeout(
+            f"only {received}/{len(items_list)} replies received before timeout",
+            workers=[s.id for s in workers], received=received,
+            expected=len(items_list), partial=list(results),
+        )
+
     try:
-        # Build every spec, then spawn the whole batch in one lock
-        # acquisition. Previously this loop took the runtime lock N
-        # times in series — the dominant latency for fan-out before
-        # the first worker even saw work.
-        specs: list[AgentSpec] = []
-        for item in items_list:
-            base = spec_factory(item)
-            specs.append(
-                base.model_copy(
-                    update={"capabilities": list(base.capabilities) + [collector]}
-                )
+        inbox = runtime.record_for(collector).inbox
+        while received < len(items_list) or retiring:
+            # A worker can send its result before its engine turn ends. Reap
+            # finished turns without blocking slots freed by other workers.
+            for addr, driver in list(retiring.items()):
+                if driver.join(timeout=0):
+                    del retiring[addr]
+            if received == len(items_list) and not retiring:
+                break
+            if time.monotonic() >= deadline:
+                raise timeout()
+            count = min(limit - len(active) - len(retiring), len(items_list) - next_index)
+            if count:
+                specs = []
+                for item in items_list[next_index:next_index + count]:
+                    base = spec_factory(item)
+                    specs.append(base.model_copy(
+                        update={"capabilities": list(base.capabilities) + [collector]}
+                    ))
+                spawned = runtime._spawn_batch(parent=parent, specs=specs)
+                workers.extend(spawned)
+                deliveries = []
+                for offset, worker in enumerate(spawned):
+                    index = next_index + offset
+                    active[worker] = index
+                    deliveries.append((parent, worker, {
+                        "item": items_list[index], "reply_to": collector.id,
+                    }))
+                next_index += count
+                runtime.dispatch_batch(deliveries)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise timeout()
+            envelopes = inbox.read(
+                since_seq=cursor, max_n=max(1, len(active)),
+                timeout_s=min(remaining, 0.02) if retiring else remaining,
             )
-        workers = runtime._spawn_batch(parent=parent, specs=specs)
-        runtime.dispatch_batch(
-            [
-                (parent, worker, {"item": item, "reply_to": collector.id})
-                for worker, item in zip(workers, items_list)
-            ]
-        )
-        results = _collect(
-            runtime=runtime,
-            collector=collector,
-            expected_senders=workers,
-            timeout_s=timeout_s,
-        )
+            for env in envelopes:
+                cursor = env.seq
+                index = active.pop(env.from_, None)
+                if index is None:
+                    continue
+                results[index] = env.body
+                received += 1
+                if max_concurrency is not None:
+                    # Keep this slot occupied until the turn has cleaned up.
+                    runtime.terminate(env.from_, requested_by="oneshot", cascade=True)
+                    driver = runtime.record_for(env.from_).driver
+                    if driver is not None:
+                        retiring[env.from_] = driver
         return results
     finally:
-        # One coalesced supervision envelope to the parent rather than
-        # N per-child events at the tail of the fan-out. Collector goes
-        # away separately so the parent doesn't see its plumbing in the
-        # event payload.
         if workers:
-            runtime.terminate_batch(
-                workers, requested_by="map-cleanup", cascade=True
-            )
+            runtime.terminate_batch(workers, requested_by="map-cleanup", cascade=True)
         runtime.terminate(collector, requested_by="oneshot")
 
 

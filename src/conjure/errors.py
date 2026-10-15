@@ -81,3 +81,7 @@ class ModelDenied(ConjureError):
     """A spawn named a model that isn't in the session's model catalog,
     or that its ``models.allow`` policy excludes. Tools map it to
     ``code=model_denied``; the message lists what is allowed."""
+
+
+class IdempotencyConflict(ConjureError):
+    """A retry key was reused for a different message."""

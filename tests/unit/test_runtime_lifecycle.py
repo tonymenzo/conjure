@@ -354,3 +354,75 @@ def test_cleanup_spares_workers_that_delivered_their_reply():
     assert "slow" in interrupted
     release.set()
     rt.shutdown()
+
+
+@pytest.mark.parametrize("fail_listener", [False, True])
+def test_failed_batch_cleans_up_started_and_unstarted_children(tmp_path, fail_listener):
+    from conjure.event_log import EventLog
+    from conjure.tools._base import resolve_token
+    closed = []
+    class Engine:
+        def step(self, prompt):
+            return "ok"
+        def shutdown(self):
+            closed.append(self)
+    rt = Runtime(store_dir=tmp_path)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    def listener(rec):
+        rec.event_log = EventLog(tmp_path / (rec.addr.id + ".jsonl"))
+        if fail_listener and rec.spec.label == "fail":
+            raise RuntimeError("startup failed")
+    def factory(rec, runtime):
+        if not fail_listener and rec.spec.label == "fail":
+            raise RuntimeError("startup failed")
+        return Engine()
+    rt._spawn_listener = listener
+    rt._engine_factory = factory
+    try:
+        with pytest.raises(RuntimeError, match="startup failed"):
+            rt._spawn_batch(parent=root, specs=[
+                AgentSpec(role_prompt="worker", label=label)
+                for label in ("started", "fail", "unstarted")
+            ])
+        children = [rt.record_for(a) for a in rt.record_for(root).children]
+        assert len(children) == 3
+        assert all(r.status == "terminated" for r in children)
+        assert all(resolve_token(r.token) is None for r in children)
+        assert all(r.driver is None or r.driver.join(0) for r in children)
+        assert all(r.event_log is None or r.event_log.is_closed for r in children)
+        assert len(closed) == 1
+        rt._journal.flush()
+        replay = Runtime.replay(rt.session_dir)
+        assert all(replay.record_for(r.addr).status == "terminated" for r in children)
+        replay.shutdown()
+    finally:
+        rt.shutdown()
+
+
+def test_failed_driver_thread_start_cleans_up_batch(monkeypatch):
+    import threading
+    from conjure.tools._base import resolve_token
+    closed = []
+    class Engine:
+        def step(self, prompt):
+            return "ok"
+        def shutdown(self):
+            closed.append(self)
+    rt = Runtime()
+    root = rt.root(AgentSpec(role_prompt="root"))
+    rt._engine_factory = lambda *_: Engine()
+    original = threading.Thread.start
+    def start(thread):
+        if thread.name.startswith("driver-"):
+            raise RuntimeError("cannot start driver thread")
+        original(thread)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    try:
+        with pytest.raises(RuntimeError, match="cannot start driver thread"):
+            rt._spawn_batch(parent=root, specs=[AgentSpec(role_prompt="worker") for _ in range(2)])
+        children = [rt.record_for(a) for a in rt.record_for(root).children]
+        assert all(r.status == "terminated" for r in children)
+        assert all(resolve_token(r.token) is None for r in children)
+        assert len(closed) == 1
+    finally:
+        rt.shutdown()
