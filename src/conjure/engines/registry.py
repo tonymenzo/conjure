@@ -26,6 +26,7 @@ from conjure.tools._base import StatelessRuntimeTool
 from conjure.tools.combinators import COMBINATOR_TOOL_CLASSES
 from conjure.tools.filesystem import FILESYSTEM_TOOL_CLASSES
 from conjure.tools.primitives import PRIMITIVE_TOOL_CLASSES
+from conjure.tools.models import MODEL_TOOL_CLASSES
 from conjure.tools.toolkits import TOOLKIT_TOOL_CLASSES
 
 
@@ -37,11 +38,13 @@ DEFAULT_TOOL_GROUPS: ToolGroupRegistry = {
     "combinator": COMBINATOR_TOOL_CLASSES,
     "filesystem": tuple(FILESYSTEM_TOOL_CLASSES),
     "toolkit": TOOLKIT_TOOL_CLASSES,
+    "models": MODEL_TOOL_CLASSES,
     "all": (
         PRIMITIVE_TOOL_CLASSES
         + COMBINATOR_TOOL_CLASSES
         + tuple(FILESYSTEM_TOOL_CLASSES)
         + TOOLKIT_TOOL_CLASSES
+        + MODEL_TOOL_CLASSES
     ),
 }
 

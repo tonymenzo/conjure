@@ -342,3 +342,47 @@ def test_dispatch_rejects_unknown_engine(tmp_path):
     # supported set so the user knows what's wrong.
     msg = str(excinfo.value)
     assert "totally_made_up" in msg or "unknown engine" in msg
+
+
+def test_model_table_names_the_exact_model_before_any_reply(tmp_path, monkeypatch):
+    """The CLI's ``initialize`` model table resolves an agent's alias —
+    or, unpinned, ``default`` — to the exact model, so the UI can name
+    it before the first turn."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    import conjure.engines.claude_agent as ca
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
+
+    monkeypatch.setattr(ca, "_MODEL_MAP", {})
+    rt = Runtime(store_dir=tmp_path)
+
+    def engine(model):
+        addr = Address(id=f"ag-{model}", label="x")
+        rec = AgentRecord(
+            addr=addr, spec=AgentSpec(role_prompt="x"), inbox=Mailbox(),
+            capabilities=CapabilitySet(self_addr=addr), token="t", depth=0,
+        )
+        with patch("claude_agent_sdk.ClaudeSDKClient"):
+            return ca.ClaudeAgentEngine(record=rec, runtime=rt, sandbox_dir=tmp_path, model=model)
+
+    root, child = engine(None), engine("haiku")
+    assert root.model_info() == (None, "default")
+    assert child.model_info() == ("haiku", "configured")
+
+    ca._record_models({"models": [
+        {"value": "default", "resolvedModel": "claude-opus-5-5"},
+        {"value": "haiku", "resolvedModel": "claude-haiku-5-5"},
+        {"value": "broken"},
+    ]})
+    assert root.model_info() == ("claude-opus-5-5", "resolved")
+    assert child.model_name() == "claude-haiku-5-5"
+    assert ca.resolve_model_alias("broken") is None
+
+    child._observed_model = "claude-haiku-5-5-20260901"
+    assert child.model_info() == ("claude-haiku-5-5-20260901", "observed")
+    rt.shutdown()

@@ -240,6 +240,10 @@ class SkillInfo:
     slug: str
     description: str = ""
     bundle: str | None = None
+    # The guide (``skills/<slug>.md`` or ``skills/<slug>/SKILL.md``) and,
+    # for the directory form, the directory holding its supporting files.
+    doc: Path | None = None
+    root: Path | None = None
 
 
 @dataclass
@@ -253,6 +257,8 @@ class ToolkitInfo:
     # keys each one needs. Granting them is allowed (the tools will
     # simply not appear); the catalog flags them so a curator can tell.
     unavailable_bundles: dict[str, list[str]] = field(default_factory=dict)
+    # The installed toolkit's directory (skills are read from it).
+    path: Path | None = None
 
     @property
     def bundles(self) -> dict[str, list[str]]:
@@ -407,6 +413,7 @@ class ToolbaseHub:
         loadout: str | None = None,
         authority: Any = "loadout",
         call_timeout_s: float = 60.0,
+        prestart: bool = True,
         toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
         catalog_loader: CatalogLoader | None = None,
         server_factory: ServerFactory | None = None,
@@ -417,6 +424,7 @@ class ToolbaseHub:
         )
         self.loadout = loadout
         self.call_timeout_s = call_timeout_s
+        self.prestart = prestart
         # Session-only toolkit settings (``toolbase.config`` in conjure's
         # YAML), layered over toolbase's own config files.
         self.toolkit_config = {k: dict(v) for k, v in (toolkit_config or {}).items()}
@@ -480,6 +488,34 @@ class ToolbaseHub:
         if toolset:
             check_subset(toolset, authority, self.catalog())
 
+    def skills_for(self, toolset: Toolset) -> list[tuple[str, SkillInfo]]:
+        """The skills ``toolset`` covers, as ``(toolkit, skill)`` pairs,
+        minus those scoped to a bundle this session can't serve (the
+        guide would describe tools the agent doesn't have)."""
+        catalog = self.catalog()
+        out: list[tuple[str, SkillInfo]] = []
+        for kit, grant in sorted(toolset.items()):
+            info = catalog.get(kit)
+            if info is None:
+                continue
+            held = expand(kit, grant, catalog).skills
+            for slug in sorted(held):
+                skill = info.skills.get(slug)
+                if skill is None or skill.bundle in info.unavailable_bundles:
+                    continue
+                out.append((kit, skill))
+        return out
+
+    def find_skill(self, toolset: Toolset, name: str) -> tuple[str, SkillInfo] | None:
+        """``name`` (``<toolkit>__<skill>`` or a bare slug, if unique)
+        among the skills ``toolset`` covers."""
+        held = self.skills_for(toolset)
+        exact = [(k, s) for k, s in held if f"{k}__{s.slug}" == name]
+        if exact:
+            return exact[0]
+        bare = [(k, s) for k, s in held if s.slug == name]
+        return bare[0] if len(bare) == 1 else None
+
     # ----- serving -----
 
     def serve(self, toolset: Toolset, *, sandbox: Path | None) -> ToolbaseServing:
@@ -524,54 +560,190 @@ class ToolbaseMount:
     """One agent's view of its toolkits. Engines call :meth:`sync` at
     the top of every step; it returns the current tool list when the
     toolset changed since the last call (first call included) and
-    ``None`` otherwise."""
+    ``None`` otherwise.
+
+    With ``skills_dir`` (a harness's skill root: ``<sandbox>/.claude/skills``
+    for Claude Code, ``$CODEX_HOME/skills`` for Codex), each sync also
+    surfaces the toolset's skills there, ``<toolkit>__<skill>/SKILL.md``,
+    the layout ``tb connect`` writes, and removes the ones a changed
+    toolset no longer covers. Only directories this mount wrote are ever
+    removed: a skill the user surfaced themselves is left alone.
+
+    :meth:`prestart` starts the servers ahead of the first step, in the
+    background, so a fresh child's first turn doesn't wait on toolkit
+    boot."""
 
     def __init__(
         self,
         hub: ToolbaseHub,
         record: "AgentRecord",
         sandbox: Path | Callable[[], Path | None] | None,
+        *,
+        skills_dir: Path | Callable[[], Path | None] | None = None,
     ):
         # ``sandbox`` may be a thunk so agents that never get toolkits
         # never have a sandbox directory created on their behalf.
         self._hub = hub
         self._record = record
         self._sandbox = sandbox
+        self._skills_dir = skills_dir
         # ``""`` is the empty toolset's key: an agent with no toolkits
         # reports no change on its first sync instead of forcing its
         # engine to rebuild around an empty tool list.
         self._applied: str | None = ""
+        self._reported: str | None = ""   # key the engine last got from sync()
         self._serving: ToolbaseServing | None = None
+        self._skills: list[dict[str, str]] = []
+        self._owned_skills: set[str] = set()
+        self._skills_root: Path | None = None
         self._lock = threading.Lock()
+        self._closed = False
 
     def wanted(self) -> Toolset:
         return self._hub.toolset_of(self._record.spec)
 
     def sync(self) -> list[Any] | None:
         with self._lock:
-            toolset = self.wanted()
-            key = toolset_key(toolset)
-            if key == self._applied:
+            if self._closed:
                 return None
-            old, self._serving = self._serving, None
-            if old is not None:
-                old.close()
-            if toolset:
-                sandbox = self._sandbox() if callable(self._sandbox) else self._sandbox
-                self._serving = self._hub.serve(toolset, sandbox=sandbox)
-            self._applied = key
+            key = self._apply()
+            # Report a change relative to what the engine last saw, not
+            # to what's running: a prestart may already have applied it.
+            if key == self._reported:
+                return None
+            self._reported = key
             return list(self._serving.tools) if self._serving else []
+
+    def _apply(self) -> str:
+        """Bring servers and skills in line with the toolset; returns its
+        key. Caller holds the lock."""
+        toolset = self.wanted()
+        key = toolset_key(toolset)
+        if key == self._applied:
+            return key
+        old, self._serving = self._serving, None
+        if old is not None:
+            old.close()
+        if toolset:
+            sandbox = self._sandbox() if callable(self._sandbox) else self._sandbox
+            self._serving = self._hub.serve(toolset, sandbox=sandbox)
+        try:
+            self._sync_skills(toolset)
+        except Exception:
+            self._skills = []
+        self._applied = key
+        return key
+
+    def prestart(self) -> threading.Thread | None:
+        """Start this agent's toolkit servers now, on a background
+        thread, when it has any (and the hub's ``prestart`` is on). The
+        first step's :meth:`sync` then finds them running, or waits only
+        for the remainder, on the lock. A failure here is left for that
+        sync to retry and report."""
+        if not getattr(self._hub, "prestart", True):
+            return None
+        try:
+            if not self.wanted():
+                return None
+        except Exception:
+            return None
+
+        def run() -> None:
+            try:
+                with self._lock:
+                    if not self._closed:
+                        self._apply()
+            except Exception:
+                pass
+
+        t = threading.Thread(target=run, daemon=True, name=f"toolbase-warm-{self._record.addr.id}")
+        t.start()
+        return t
 
     @property
     def tools(self) -> list[Any]:
         return list(self._serving.tools) if self._serving else []
 
+    @property
+    def skills(self) -> list[dict[str, str]]:
+        """Surfaced skills: ``{"name", "description", "path"}`` each,
+        ``name`` being ``<toolkit>__<skill>``."""
+        return list(self._skills)
+
+    def skill_names(self) -> list[str]:
+        return [s["name"] for s in self._skills]
+
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             if self._serving is not None:
                 self._serving.close()
                 self._serving = None
+            self._remove_skills(set(self._owned_skills))
+            self._skills = []
             self._applied = ""
+            self._reported = ""
+
+    # ----- skills -----
+
+    def _sync_skills(self, toolset: Toolset) -> None:
+        if self._skills_dir is None:
+            return
+        try:
+            root = self._skills_dir() if callable(self._skills_dir) else self._skills_dir
+        except Exception:
+            root = None
+        if root is None:
+            return
+        root = Path(root)
+        self._skills_root = root
+        wanted = self._hub.skills_for(toolset) if toolset else []
+        names = {f"{kit}__{skill.slug}" for kit, skill in wanted}
+        self._remove_skills(self._owned_skills - names)
+        if not wanted:
+            self._skills = []
+            return
+        from toolbase.skills import SkillTarget, surface_skills
+
+        target = SkillTarget("conjure", root, layout="dir", keep_frontmatter=True)
+        catalog = self._hub.catalog()
+        by_kit: dict[str, set[str]] = {}
+        for kit, skill in wanted:
+            name = f"{kit}__{skill.slug}"
+            # Someone else's skill already sits at this path: leave it.
+            if name not in self._owned_skills and (root / name).exists():
+                continue
+            by_kit.setdefault(kit, set()).add(skill.slug)
+        for kit, slugs in by_kit.items():
+            info = catalog.get(kit)
+            if info is None or info.path is None:
+                continue
+            try:
+                done = surface_skills(kit, info.path, target, enabled_slugs=slugs)
+            except Exception:
+                continue
+            self._owned_skills.update(done)
+        self._skills = [
+            {
+                "name": f"{kit}__{skill.slug}",
+                "description": skill.description,
+                "path": str(root / f"{kit}__{skill.slug}" / "SKILL.md"),
+            }
+            for kit, skill in wanted
+            if (root / f"{kit}__{skill.slug}" / "SKILL.md").is_file()
+        ]
+
+    def _remove_skills(self, names: set[str]) -> None:
+        import shutil
+
+        root = self._skills_root
+        for name in names:
+            self._owned_skills.discard(name)
+            if root is None:
+                continue
+            path = root / name
+            if (path / ".toolbase-managed").exists():
+                shutil.rmtree(path, ignore_errors=True)
 
 
 # ---------- system-prompt guidance ----------
@@ -603,10 +775,85 @@ When a child's message has `"request": "toolkits"`, decide: grant it
 (`GrantToolkits`) if it serves the task and you hold it; if you don't
 hold it, `RequestToolkits` from your own parent first; otherwise reply
 explaining why not.
+
+Toolkits also ship **skills**: the author's guides to using their tools
+well. A grant carries the skills of what it covers (a bundle grant
+carries that bundle's skills). In Claude Code and Codex they're native
+skills named `<toolkit>__<skill>`; elsewhere, read one with
+`LoadSkill(name)`. When a skill's description matches your task, read it
+before using the tools it covers.
 """
 
 
 # ---------- catalog rendering (LLM-facing) ----------
+
+
+# How each engine's model sees a toolkit tool ``<kit>__<tool>``.
+CALL_PREFIX = {
+    "claude_agent": "mcp__toolbase__",
+    "codex": "mcp__conjure__",
+    "orchestral": "",
+}
+
+
+def servable_tools(toolset: Toolset, catalog: Catalog) -> dict[str, list[str]]:
+    """``{toolkit: [tool, ...]}`` that ``toolset`` actually serves:
+    tools in bundles this session can't serve (missing config) are left
+    out, since they won't appear."""
+    out: dict[str, list[str]] = {}
+    for kit, grant in sorted(toolset.items()):
+        info = catalog.get(kit)
+        if info is None:
+            continue
+        names = []
+        for name in sorted(expand(kit, grant, catalog).tools):
+            tool = info.tools.get(name)
+            bundles = tool.bundles if tool is not None else ()
+            if bundles and all(b in info.unavailable_bundles for b in bundles):
+                continue
+            names.append(name)
+        if names:
+            out[kit] = names
+    return out
+
+
+def toolkit_brief(hub: "ToolbaseHub", spec: "AgentSpec", engine: str) -> str:
+    """System-prompt section naming the toolkit tools this agent can
+    call, exactly as its engine shows them, and its skills. Empty when
+    it holds none. An agent that isn't told these exist tends to fall
+    back to shelling out to local executables."""
+    try:
+        toolset = hub.toolset_of(spec)
+        if not toolset:
+            return ""
+        catalog = hub.catalog()
+        tools = servable_tools(toolset, catalog)
+        skills = [f"{k}__{s.slug}" for k, s in hub.skills_for(toolset)]
+    except Exception:
+        return ""
+    if not tools and not skills:
+        return ""
+    prefix = CALL_PREFIX.get(engine, "")
+    lines = ["", "## Your toolkit tools", ""]
+    lines.append(
+        "You were granted these toolbase tools for your task. Call them "
+        "directly, by these names, rather than running the underlying "
+        "programs yourself: they carry the session's configuration, version "
+        "pins and logging. File paths you pass them are relative to your "
+        "working directory (the tools' base directory); prefer relative "
+        "paths. If one fails, report the failure (with its error) instead "
+        "of silently working around it."
+    )
+    lines.append("")
+    for kit, names in tools.items():
+        lines.append(f"- {kit}: " + ", ".join(f"`{prefix}{kit}__{n}`" for n in names))
+    if skills:
+        lines.append("")
+        lines.append(
+            "Skills (read the matching one before using its tools): "
+            + ", ".join(f"`{s}`" for s in skills)
+        )
+    return "\n".join(lines) + "\n"
 
 
 def describe_catalog(
@@ -614,6 +861,8 @@ def describe_catalog(
     authority: Toolset,
     *,
     toolkit: str | None = None,
+    served: Toolset | None = None,
+    prefix: str = "",
 ) -> dict[str, Any]:
     """Summarize what the caller may grant. Without ``toolkit``, one
     line per toolkit (description, bundles, counts) — cheap enough to
@@ -634,6 +883,7 @@ def describe_catalog(
                 "error": f"toolkit {toolkit!r} is not installed",
             }
         held = expand(toolkit, authority[toolkit], catalog)
+        callable_here = servable_tools(served or {}, catalog)
         return {
             "ok": True,
             "toolkit": toolkit,
@@ -649,6 +899,11 @@ def describe_catalog(
                     "name": t.name,
                     "bundles": list(t.bundles),
                     "description": _first_line(t.description),
+                    **(
+                        {"call_as": f"{prefix}{toolkit}__{t.name}"}
+                        if t.name in callable_here.get(toolkit, ())
+                        else {"callable": False}
+                    ),
                 }
                 for t in sorted(info.tools.values(), key=lambda t: t.name)
                 if t.name in held.tools
@@ -677,6 +932,7 @@ def describe_catalog(
                 "tools_held": len(held.tools),
                 "skills_held": len(held.skills),
                 "whole": authority[name].is_whole,
+                "tools_you_can_call": len(servable_tools(served or {}, catalog).get(name, [])),
             }
         )
     return {"ok": True, "toolkits": rows}
@@ -742,6 +998,7 @@ def load_toolbase_catalog(
                 or ""
             ),
             description=str(manifest.get("description") or ""),
+            path=Path(disc.path),
         )
         for entry in manifest.get("tools") or []:
             if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
@@ -769,6 +1026,8 @@ def load_toolbase_catalog(
                 slug=src.slug,
                 description=(fm.description if fm else "") or "",
                 bundle=fm.bundle if fm else None,
+                doc=src.doc,
+                root=src.root if src.is_dir else None,
             )
         info.unavailable_bundles = _unavailable_bundles(
             disc, resolve_kit_config(disc.name, project_root, toolkit_config)
@@ -939,6 +1198,7 @@ def build_hub_from_config(cfg: Any) -> ToolbaseHub | None:
         loadout=cfg.loadout,
         authority=cfg.authority,
         call_timeout_s=cfg.call_timeout_s,
+        prestart=getattr(cfg, "prestart", True),
         toolkit_config=cfg.config,
     )
 

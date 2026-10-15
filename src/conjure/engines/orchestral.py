@@ -73,6 +73,12 @@ CASE C — body contains an explicit ``reply_to`` field
   caller has routed the result somewhere specific (often a collector
   agent).
 
+WAITING ON WORKERS: messages are pushed to you between turns; during a
+turn they wait in your inbox. Wait for workers with ``wait_for`` /
+``recv``, not by reading their files. Any tool result may carry
+``"inbox": {{"unread": N, ...}}``: messages are waiting, so ``recv``
+them before going on, especially before a final answer.
+
 ================ DELEGATING TO A CHILD AGENT ================
 
 If your task genuinely needs a child agent (be conservative — most
@@ -162,6 +168,7 @@ class OrchestralEngine:
         self._display_hook = display_hook
         self._toolbase = toolbase_mount
         prompt = system_prompt or self._build_system_prompt(record, runtime)
+        self.system_prompt_text = prompt  # provenance
         self._agent = OrchestralAgent(
             llm=llm,
             tools=tools,
@@ -325,9 +332,14 @@ class OrchestralEngine:
             max_depth=getattr(runtime, "max_depth", 3),
         )
         if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE
+            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+            prompt += toolkit_brief(runtime.toolbase, record.spec, "orchestral")
+        if getattr(runtime, "models", None) is not None:
+            from conjure.models import MODEL_GUIDANCE
+
+            prompt += "\n" + MODEL_GUIDANCE
         return prompt
 
 
@@ -373,7 +385,16 @@ def make_orchestral_engine_factory(
                 raise KeyError(
                     f"LLM {llm_name!r} not configured (known: {sorted(llm_factories)})"
                 )
-            llm = llm_factories[llm_name]()
+            factory_fn = llm_factories[llm_name]
+            # A spec's model (resolved from the catalog: a gateway model,
+            # say) overrides the LLM entry's configured one.
+            # Only with a model catalog: without one, ``spec.model`` may be
+            # a Claude alias meant for another engine.
+            override = record.spec.model if getattr(runtime, "models", None) is not None else None
+            try:
+                llm = factory_fn(model=override) if override else factory_fn()
+            except TypeError:
+                llm = factory_fn()
         else:
             if llm_name not in llms:
                 raise KeyError(
@@ -386,6 +407,8 @@ def make_orchestral_engine_factory(
             # Toolkit curation (catalog, grant, request) rides along
             # whenever the runtime has toolbase configured.
             tool_names.append("toolkit")
+        if getattr(runtime, "models", None) is not None and "models" in registry and "models" not in tool_names:
+            tool_names.append("models")
         tools = build_tools(record.token, tool_names, registry)
         mount = None
         if hub is not None:
@@ -395,9 +418,12 @@ def make_orchestral_engine_factory(
             from conjure.toolbase import ToolbaseMount
             from conjure.tools.filesystem import _sandbox_for
 
+            # Orchestral has no native skills: no skills_dir, and the
+            # agent reads granted skills through ``LoadSkill``.
             mount = ToolbaseMount(
                 hub, record, lambda: _sandbox_for(record, runtime)
             )
+            mount.prestart()
 
         # When streaming, the engine emits chunks directly into the
         # agent's event log and the display hook MUST filter out

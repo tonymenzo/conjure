@@ -50,6 +50,22 @@ def _claude_agent_available() -> bool:
         return False
 
 
+def effective_engine(record, runtime) -> str:
+    """The engine ``record`` runs on: ``spec.engine``, with ``auto``
+    resolved. A child left on ``auto`` under a Codex parent stays on
+    Codex: ``auto`` otherwise means "Claude if available", which would
+    silently switch a Codex tree's children to another provider."""
+    name = record.spec.engine
+    if (not name or name == "auto") and record.parent is not None:
+        try:
+            parent = runtime.record_for(record.parent)
+        except Exception:
+            parent = None
+        if parent is not None and effective_engine(parent, runtime) == "codex":
+            return "codex"
+    return resolve_engine_name(name)
+
+
 def resolve_engine_name(name: str | None) -> str:
     """Map ``"auto"`` (or empty) to a concrete engine name.
 

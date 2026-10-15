@@ -48,6 +48,7 @@ from conjure.tools._base import register_token, unregister_token
 
 if TYPE_CHECKING:
     from conjure.agent import Engine
+    from conjure.models import ModelHub
     from conjure.toolbase import Toolset, ToolbaseHub
 
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
@@ -138,8 +139,14 @@ class Runtime:
         max_depth: int = 3,
         spawn_listener: Callable[[AgentRecord], None] | None = None,
         toolbase: "ToolbaseHub | None" = None,
+        models: "ModelHub | None" = None,
     ) -> None:
         self._lock = threading.RLock()
+        # Model catalog + policy (``conjure.models``): resolves each
+        # spec's model choice to engine / LLM / provider model and
+        # refuses what the session doesn't allow. ``None``: specs pass
+        # through as written.
+        self.models = models
         # Toolbase hub (``conjure.toolbase``): catalog, root authority,
         # server factory. ``None`` means toolbase isn't configured and
         # any spec asking for toolkits is refused.
@@ -389,6 +396,8 @@ class Runtime:
         The root has no parent. Its capability set is its own address
         plus any addresses listed in ``spec.capabilities``.
         """
+        if self.models is not None:
+            spec = self.models.resolve_spec(spec, parent_engine=None)
         if spec.toolkits:
             hub = self._require_toolbase()
             hub.check_grant(dict(spec.toolkits), hub.root_authority())
@@ -664,6 +673,13 @@ class Runtime:
         """
         if not specs:
             return []
+        if self.models is not None:
+            # Model choice → engine / LLM / provider model, checked
+            # against the session's policy; before any registry mutation.
+            from conjure.engines import effective_engine
+
+            parent_engine = effective_engine(self.record_for(parent), self)
+            specs = [self.models.resolve_spec(s, parent_engine=parent_engine) for s in specs]
         # Toolkit attenuation, before any registry mutation so a refused
         # grant leaves no half-spawned batch. Outside the lock: the
         # first check may read toolbase's cache from disk.
@@ -807,13 +823,20 @@ class Runtime:
         with self._lock:
             self._require_alive(target)
             record = self._records[target]
-            cur = record.parent
-            while cur is not None and cur != granter:
-                cur = self._records[cur].parent
-            if cur is None:
-                raise NotPermitted(
-                    f"{granter.id} is not an ancestor of {target.id}"
-                )
+            if granter == target:
+                # Only the root serves itself: its authority (from the
+                # config) is wider than what it's served (root.toolkits).
+                # Anyone else already calls everything it may grant.
+                if record.parent is not None:
+                    raise NotPermitted("only the root may grant toolkits to itself")
+            else:
+                cur = record.parent
+                while cur is not None and cur != granter:
+                    cur = self._records[cur].parent
+                if cur is None:
+                    raise NotPermitted(
+                        f"{granter.id} is not an ancestor of {target.id}"
+                    )
             merged = merge_toolsets(record.spec.toolkits, toolkits)
             record.spec = record.spec.model_copy(update={"toolkits": merged})
             self._journal.write(
@@ -842,12 +865,19 @@ class Runtime:
     # ----- Replay -----
 
     @classmethod
-    def replay(cls, session_dir: Path) -> "Runtime":
+    def replay(
+        cls, session_dir: Path, *, until: float | None = None
+    ) -> "Runtime":
         """Reconstruct a runtime from a persisted journal.
 
         ``session_dir`` is the per-session directory containing
         ``journal.jsonl`` — typically ``store_dir/sessions/{session_id}/``.
         Pass the directory itself, not the store root.
+
+        ``until`` (a journal timestamp) stops the replay at that
+        instant, reconstructing the session as it stood then — the web
+        UI's time scrubber. Replayed agents carry their journaled spawn
+        time in ``spawned_at``.
 
         The returned runtime is *not* attached to any journal — replay
         is intended for inspection and offline analysis, not for
@@ -857,14 +887,24 @@ class Runtime:
         for entry in Journal.read_all(session_dir):
             kind = entry["kind"]
             payload = entry["payload"]
+            ts = entry.get("ts")
+            if until is not None and isinstance(ts, (int, float)) and ts > until:
+                break
             if kind == "spawn":
                 rt._replay_spawn(payload)
+                if isinstance(ts, (int, float)):
+                    addr = Address.model_validate(payload["addr"])
+                    rt._records[addr].spawned_at = float(ts)
             elif kind == "send":
                 rt._replay_send(payload)
             elif kind == "terminate":
                 rt._replay_terminate(payload)
             elif kind == "toolkits":
                 rt._replay_toolkits(payload)
+            elif kind == "agent_meta":
+                addr = rt._addr_index.get(payload.get("addr", ""))
+                if addr is not None:
+                    rt._records[addr].meta.update(payload.get("meta") or {})
         return rt
 
     @staticmethod
@@ -1208,6 +1248,23 @@ class Runtime:
                 "spec": record.spec.model_dump(),
             },
         )
+
+    def note_agent_meta(self, addr: Address, meta: dict[str, Any]) -> None:
+        """Record what ``addr`` runs as (engine, model, system prompt,
+        ...). Journals only the keys that changed, so a session's
+        journal says which model each agent ran on and when that became
+        known."""
+        record = self._records.get(addr)
+        if record is None:
+            return
+        changed = {k: v for k, v in meta.items() if v is not None and record.meta.get(k) != v}
+        if not changed:
+            return
+        record.meta.update(changed)
+        try:
+            self._journal.write("agent_meta", {"addr": addr.id, "meta": changed})
+        except Exception:
+            pass
 
     def _journal_send(self, env: Envelope) -> None:
         self._journal.write("send", {"envelope": env.model_dump(by_alias=True)})

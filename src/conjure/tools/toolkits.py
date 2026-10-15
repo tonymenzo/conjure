@@ -59,11 +59,33 @@ def catalog_impl(
     if isinstance(hub, dict):
         return hub
     try:
+        from conjure.engines import effective_engine
+        from conjure.toolbase import CALL_PREFIX
+
         catalog = hub.catalog(refresh=bool(refresh))
         authority = hub.authority_of(runtime, caller)
-        return describe_catalog(catalog, authority, toolkit=toolkit or None)
+        record = runtime.record_for(caller)
+        served = hub.toolset_of(record.spec)
+        prefix = CALL_PREFIX.get(effective_engine(record, runtime), "")
+        out = describe_catalog(
+            catalog, authority, toolkit=toolkit or None, served=served, prefix=prefix
+        )
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
+    if out.get("ok"):
+        # Grantable and callable differ for the root: its authority comes
+        # from the config, its own served tools from root.toolkits.
+        out["note"] = (
+            "`tools_held` is what you may grant; `tools_you_can_call` (and "
+            "each tool's `call_as`) is what you can call yourself."
+        )
+        if record.parent is None and not served and authority:
+            out["note"] += (
+                " You hold these to grant but can't call any yet: to use one "
+                "yourself, GrantToolkits(child=\"self\", toolkits=[...]); it's "
+                "served to you from your next turn."
+            )
+    return out
 
 
 def grant_toolkits_impl(
@@ -75,7 +97,10 @@ def grant_toolkits_impl(
     runtime, caller = resolved
     if isinstance(_hub_or_err(runtime), dict):
         return _hub_or_err(runtime)
-    target = _resolve_addr(child, runtime, caller)
+    if child in ("self", caller.id):
+        target = caller
+    else:
+        target = _resolve_addr(child, runtime, caller)
     if target is None:
         return _err("no_such_address", f"unknown address: {child}")
     try:
@@ -94,6 +119,61 @@ def grant_toolkits_impl(
         "child": target.id,
         "toolkits": {k: v.model_dump(exclude_none=True) for k, v in merged.items()},
         "note": "takes effect at the child's next turn",
+    }
+
+
+def load_skill_impl(*, token: str, name: str, file: str = "") -> dict[str, Any]:
+    resolved = resolve_token(token)
+    if resolved is None:
+        return _err("no_runtime", "tool is not bound to a runtime")
+    runtime, caller = resolved
+    hub = _hub_or_err(runtime)
+    if isinstance(hub, dict):
+        return hub
+    toolset = hub.toolset_of(runtime.record_for(caller).spec)
+    try:
+        found = hub.find_skill(toolset, name.strip())
+    except ToolkitDenied as e:
+        return _err("toolkit_denied", str(e))
+    if found is None:
+        held = [f"{k}__{s.slug}" for k, s in hub.skills_for(toolset)]
+        return _err(
+            "no_such_skill",
+            f"you hold no skill {name!r}; yours: {', '.join(held) or '(none)'}",
+        )
+    kit, skill = found
+    files: list[str] = []
+    if skill.root is not None:
+        files = sorted(
+            str(p.relative_to(skill.root))
+            for p in skill.root.rglob("*")
+            if p.is_file() and p != skill.doc and not p.name.startswith(".")
+        )
+    if file:
+        if skill.root is None:
+            return _err("bad_args", f"{kit}__{skill.slug} has no supporting files")
+        target = (skill.root / file).resolve()
+        try:
+            target.relative_to(skill.root.resolve())
+        except ValueError:
+            return _err("bad_args", "file must be inside the skill's directory")
+        if not target.is_file():
+            return _err("bad_args", f"no file {file!r}; files: {', '.join(files) or '(none)'}")
+        path = target
+    else:
+        path = skill.doc
+    if path is None:
+        return _err("no_such_skill", f"{kit}__{skill.slug} has no guide on disk")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return _err("unreadable", f"{path.name}: {e}")
+    return {
+        "ok": True,
+        "name": f"{kit}__{skill.slug}",
+        "file": file or "SKILL.md",
+        "content": content,
+        "files": files,
     }
 
 
@@ -195,7 +275,9 @@ class GrantToolkitsTool(StatelessRuntimeTool):
     """Give a live descendant more toolbase toolkits. Additive, and
     bounded by your own: you can grant only what you hold. The child
     sees the new tools from its next turn, with its conversation
-    intact. Use this to answer a child's ``toolkit_request``.
+    intact. Use this to answer a child's ``toolkit_request``. The root
+    may also grant itself (``child="self"``) from what it may grant, to
+    call those tools directly.
 
     Error codes: ``toolkit_denied`` (you don't hold it / not installed),
     ``not_permitted`` (target isn't your descendant)."""
@@ -232,8 +314,24 @@ class RequestToolkitsTool(StatelessRuntimeTool):
         )
 
 
+class LoadSkillTool(StatelessRuntimeTool):
+    """Read one of your toolkits' skills: an author's how-to guide for
+    using its tools well. ``ToolCatalog(toolkit=...)`` lists the skills
+    you hold; load one when its description matches your task, before
+    using the tools it covers. ``file`` reads one of the skill's
+    supporting files (listed in ``files``)."""
+
+    name: str = RuntimeField(description="Skill name, `<toolkit>__<skill>` (or the bare skill name if unique).")
+    file: str = RuntimeField(default="", description="A supporting file of the skill; empty for its guide.")
+    runtime_token: str = StateField(description="(internal) caller token.")
+
+    def _run(self) -> dict[str, Any]:
+        return load_skill_impl(token=self.runtime_token, name=self.name, file=self.file or "")
+
+
 TOOLKIT_TOOL_CLASSES = (
     ToolCatalogTool,
     GrantToolkitsTool,
     RequestToolkitsTool,
+    LoadSkillTool,
 )

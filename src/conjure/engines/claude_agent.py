@@ -91,6 +91,52 @@ def _load_default_system_template() -> string.Template:
     return string.Template(text)
 
 
+# The CLI's model table: alias (``default``, ``opus``, ``haiku``, …) →
+# the exact model it resolves to for this account, from the
+# ``initialize`` handshake. Lets the UI name an agent's model before its
+# first reply — an unpinned root runs on ``default``, whose resolution
+# depends on the account. Filled by a one-off probe (a CLI startup, no
+# prompt, no tokens) and refreshed by every engine's own connect.
+_MODEL_MAP: dict[str, str] = {}
+_MODEL_PROBE_STARTED = False
+_MODEL_PROBE_LOCK = threading.Lock()
+
+
+def resolve_model_alias(alias: str | None) -> str | None:
+    """Exact model for ``alias`` (``None`` = the CLI default), if the
+    model table is known."""
+    return _MODEL_MAP.get(alias or "default")
+
+
+def _record_models(info: Any) -> None:
+    for entry in (info or {}).get("models") or []:
+        if not isinstance(entry, dict):
+            continue
+        alias, resolved = entry.get("value"), entry.get("resolvedModel")
+        if isinstance(alias, str) and isinstance(resolved, str) and resolved:
+            _MODEL_MAP[alias] = resolved
+            _MODEL_MAP.setdefault(resolved, resolved)
+
+
+async def _probe_models(env: dict[str, str]) -> None:
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+    global _MODEL_PROBE_STARTED
+    client = ClaudeSDKClient(ClaudeAgentOptions(env=env))
+    try:
+        await asyncio.wait_for(client.connect(), timeout=60)
+        _record_models(await client.get_server_info())
+    except Exception:
+        # Let a later engine try again; until then the UI shows the alias.
+        with _MODEL_PROBE_LOCK:
+            _MODEL_PROBE_STARTED = False
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
 class ClaudeAgentEngine:
     """Engine that runs each agent as a ``ClaudeSDKClient`` session."""
 
@@ -120,6 +166,8 @@ class ClaudeAgentEngine:
         self._runtime = runtime
         self._stream_emit = stream_emit
         self._toolbase = toolbase_mount
+        self._toolkits_synced = False
+        self._grant_note: str | None = None
         # Captured from each turn's ResultMessage; a toolkit change
         # reconnects with ``resume=`` this id so the conversation
         # survives the new tool list.
@@ -236,17 +284,18 @@ class ClaudeAgentEngine:
                 in_process_server = build_in_process_mcp_server(
                     record.token,
                     include_toolkits=getattr(runtime, "toolbase", None) is not None,
+                    include_models=getattr(runtime, "models", None) is not None,
                 )
             except Exception:
                 in_process_server = None
         if in_process_server is not None:
-            mcp_servers["spawn"] = in_process_server
+            mcp_servers["conjure"] = in_process_server
         elif mcp_socket is not None:
             import shutil
 
             from claude_agent_sdk.types import McpStdioServerConfig
             mcp_bin = shutil.which("conjure-mcp") or "conjure-mcp"
-            mcp_servers["spawn"] = McpStdioServerConfig(
+            mcp_servers["conjure"] = McpStdioServerConfig(
                 command=mcp_bin,
                 env={
                     "CONJURE_TOKEN": record.token,
@@ -293,6 +342,12 @@ class ClaudeAgentEngine:
 
                 bridged_tools.extend(
                     f"mcp__conjure__{short}" for short in TOOLKIT_TOOL_NAMES
+                )
+            if getattr(runtime, "models", None) is not None:
+                from conjure.mcp_in_process import MODEL_TOOL_NAMES
+
+                bridged_tools.extend(
+                    f"mcp__conjure__{short}" for short in MODEL_TOOL_NAMES
                 )
 
         # When the user is on a subscription, shadow ANTHROPIC_API_KEY
@@ -341,7 +396,10 @@ class ClaudeAgentEngine:
             model=model,
         )
         self._options = opts
+        self.system_prompt_text = opts.system_prompt  # provenance
+        self._base_setting_sources = opts.setting_sources
         self._client = ClaudeSDKClient(opts)
+        self._start_model_probe(sdk_env)
         self._last_context: tuple[int, int] | None = None
         self._context_fetch_in_flight: bool = False
         # Lazy connect: ``_client.connect()`` shells out to the ``claude``
@@ -368,15 +426,41 @@ class ClaudeAgentEngine:
         return self._cost_used
 
     def model_name(self) -> str | None:
-        """Best-effort model identifier. Prefers the value the SDK
-        actually reports on its last ``AssistantMessage`` (the real
-        model id, including version suffix) over the alias passed
-        to the options (e.g. ``"haiku"``). Falls back to the option
-        value, and finally ``None`` when neither is known."""
+        """The exact model this agent runs on. Prefers the id the SDK
+        reports on its last ``AssistantMessage``; before the first
+        reply, resolves the configured alias (or the CLI default)
+        through the CLI's model table; falls back to the alias itself,
+        and ``None`` only when nothing is known yet."""
+        return self.model_info()[0]
+
+    def model_info(self) -> tuple[str | None, str]:
+        """``(model, source)``: ``observed`` (named by a reply),
+        ``resolved`` (alias looked up in the CLI's model table),
+        ``configured`` (an alias not yet resolved), or ``default``
+        (unpinned, table not loaded yet)."""
         observed = getattr(self, "_observed_model", None)
         if isinstance(observed, str) and observed:
-            return observed
-        return getattr(self._options, "model", None) if hasattr(self, "_options") else None
+            return observed, "observed"
+        alias = getattr(self._options, "model", None) if hasattr(self, "_options") else None
+        resolved = resolve_model_alias(alias)
+        if resolved:
+            return resolved, "resolved"
+        if alias:
+            return alias, "configured"
+        return None, "default"
+
+    def _start_model_probe(self, env: dict[str, str]) -> None:
+        global _MODEL_PROBE_STARTED
+        if os.environ.get("CONJURE_MODEL_PROBE", "1") == "0":
+            return
+        with _MODEL_PROBE_LOCK:
+            if _MODEL_PROBE_STARTED or _MODEL_MAP:
+                return
+            _MODEL_PROBE_STARTED = True
+        try:
+            asyncio.run_coroutine_threadsafe(_probe_models(dict(env)), self._loop)
+        except Exception:
+            pass
 
     def context_usage(self) -> tuple[int, int] | None:
         """Non-blocking context fetch. Returns the cached value
@@ -499,6 +583,10 @@ class ClaudeAgentEngine:
         served = await asyncio.to_thread(self._toolbase.sync)
         if served is None:
             return
+        if self._toolkits_synced and served:
+            # A live grant: the system prompt only listed the first set.
+            self._grant_note = grant_note(served, "mcp__toolbase__", self._toolbase.skill_names())
+        self._toolkits_synced = True
         import dataclasses
 
         from claude_agent_sdk import ClaudeSDKClient
@@ -521,6 +609,11 @@ class ClaudeAgentEngine:
                 # through ``can_use_tool`` instead.
                 if explicit.get(name, "allow") == "allow":
                     allowed.append(name)
+        # Granted skills were surfaced into ``<sandbox>/.claude/skills``.
+        # Name them so the CLI allows exactly those, and load settings
+        # from the sandbox project only: ``user`` would pull in the
+        # human's own ~/.claude skills, settings and memory.
+        skills = self._toolbase.skill_names()
         if self._connected:
             await self._client.disconnect()
             self._connected = False
@@ -529,12 +622,15 @@ class ClaudeAgentEngine:
             mcp_servers=servers,
             allowed_tools=allowed,
             resume=self._session_id,
+            skills=skills or None,
+            setting_sources=["project"] if skills else self._base_setting_sources,
         )
         self._client = ClaudeSDKClient(self._options)
         self._emit_event(
             {
                 "kind": "toolkits",
                 "tools": [t.get_name() for t in served],
+                "skills": skills,
             }
         )
 
@@ -546,9 +642,16 @@ class ClaudeAgentEngine:
         )
 
         await self._sync_toolkits()
+        if self._grant_note:
+            prompt = f"{self._grant_note}\n\n{prompt}"
+            self._grant_note = None
         if not self._connected:
             await self._client.connect()
             self._connected = True
+            try:
+                _record_models(await self._client.get_server_info())
+            except Exception:
+                pass
 
         accumulated = ""
         pending_tool_calls: list[dict[str, Any]] = []
@@ -662,7 +765,9 @@ class ClaudeAgentEngine:
             pass
 
     @staticmethod
-    def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
+    def _build_system_prompt(
+        record: "AgentRecord", runtime: "Runtime", engine: str = "claude_agent"
+    ) -> str:
         template = _load_default_system_template()
         prompt = template.safe_substitute(
             addr_id=record.addr.id,
@@ -672,9 +777,14 @@ class ClaudeAgentEngine:
             max_depth=str(getattr(runtime, "max_depth", 3)),
         )
         if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE
+            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+            prompt += toolkit_brief(runtime.toolbase, record.spec, engine)
+        if getattr(runtime, "models", None) is not None:
+            from conjure.models import MODEL_GUIDANCE
+
+            prompt += "\n" + MODEL_GUIDANCE
         return prompt
 
 
@@ -828,3 +938,12 @@ def _stringify_tool_result(body: Any) -> str:
                 parts.append(entry)
         return "".join(parts)
     return str(body)
+
+
+def grant_note(served: list[Any], prefix: str, skills: list[str]) -> str:
+    """One line telling the agent which toolkit tools it holds now."""
+    names = ", ".join(f"{prefix}{t.get_name()}" for t in served)
+    note = f"[conjure] Toolkit tools now available to you (call them directly): {names}."
+    if skills:
+        note += f" Skills: {', '.join(skills)}."
+    return note

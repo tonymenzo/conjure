@@ -23,7 +23,7 @@ the caller's capability set before invoking the runtime's trusted
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from conjure.address import Address
 from conjure.envelope import Envelope
@@ -32,6 +32,7 @@ from conjure.errors import (
     MaxDepthExceeded,
     NoSuchAddress,
     Terminated,
+    ModelDenied,
     Timeout,
     ToolkitDenied,
 )
@@ -161,6 +162,8 @@ def spawn_impl(
 
     try:
         toolset = parse_toolkits(toolkits)
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
 
@@ -191,6 +194,8 @@ def spawn_impl(
         return _err("depth_exceeded", str(e))
     except BudgetExceeded as e:
         return _err("budget_exceeded", str(e))
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
 
@@ -529,6 +534,8 @@ def call_impl(
     template = spec or {}
     try:
         toolset = parse_toolkits(template.get("toolkits"))
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
     role_prompt = (template.get("role_prompt") or "") + _CALL_WORKER_SUFFIX
@@ -560,6 +567,8 @@ def call_impl(
             worker = runtime._spawn(parent=caller_addr, spec=worker_spec)
         except MaxDepthExceeded as e:
             return _err("depth_exceeded", str(e))
+        except ModelDenied as e:
+            return _err("model_denied", str(e))
         except ToolkitDenied as e:
             return _err("toolkit_denied", str(e))
         # Dispatch with ``sender=collector`` so the worker's ``"caller"``
@@ -681,10 +690,11 @@ class SpawnTool(StatelessRuntimeTool):
     engine: str = RuntimeField(
         default="auto",
         description=(
-            "Engine for the child agent: ``auto`` (default — picks "
-            "``claude_agent`` if the SDK + ``claude`` CLI are present, "
-            "else ``orchestral``), or pin to ``orchestral`` / "
-            "``claude_agent`` explicitly."
+            "Engine for the child agent: ``auto`` (default — your own "
+            "engine if you run on ``codex``; otherwise ``claude_agent`` "
+            "if the SDK + ``claude`` CLI are present, else "
+            "``orchestral``), or pin to ``orchestral`` / "
+            "``claude_agent`` / ``codex`` explicitly."
         ),
     )
     sandbox_dir: str | None = OptionalRuntimeField(
@@ -702,12 +712,12 @@ class SpawnTool(StatelessRuntimeTool):
     )
     model: str | None = OptionalRuntimeField(
         description=(
-            "Model for the child's claude_agent session — alias "
-            "(``haiku``, ``sonnet``, ``opus``) or full name "
-            "(``claude-sonnet-4-6``). Omit to default to a cheap "
-            "model (``haiku``) for the child; explicitly set "
-            "``sonnet`` or ``opus`` only when the task genuinely "
-            "needs more capability. Ignored by the orchestral engine."
+            "Model for the child: an id from ``ModelCatalog`` "
+            "(``claude/haiku``, ``codex/gpt-6-astra``, ``mag/<model>``) "
+            "— it picks the engine for you — or a bare alias / model "
+            "name when unique (``haiku``, ``sonnet``). Omit for the "
+            "session's default (Claude children: ``haiku``). Choose a "
+            "stronger model only when the task genuinely needs it."
         ),
     )
     oneshot: bool = RuntimeField(
@@ -798,6 +808,8 @@ class RecvTool(StatelessRuntimeTool):
     ``{"ok": True, "envelopes": [...], "next_seq": int}``.
     """
 
+    _shows_inbox: ClassVar[bool] = True
+
     thread_id: str = RuntimeField(default="", description="Filter by thread id.")
     from_: str = RuntimeField(default="", description="Filter by sender address id.")
     since_seq: int = RuntimeField(default=0, description="Return envelopes with seq > since_seq.")
@@ -823,6 +835,8 @@ class WaitForTool(StatelessRuntimeTool):
     the deadline elapsed; the agent can detect a short read by
     comparing ``len(envelopes)`` to ``max_n``). Use this for fan-in
     when you're expecting N replies from N workers."""
+
+    _shows_inbox: ClassVar[bool] = True
 
     predicate_kind: str = RuntimeField(default="any", description="One of 'thread', 'from', 'any'.")
     value: str = RuntimeField(default="", description="Predicate value (thread_id or sender id).")
@@ -884,6 +898,8 @@ class IntroduceTool(StatelessRuntimeTool):
 class ListInboxTool(StatelessRuntimeTool):
     """Return a summary of envelopes in your own inbox without
     consuming them (non-blocking)."""
+
+    _shows_inbox: ClassVar[bool] = True
 
     since_seq: int = RuntimeField(default=0, description="Return envelopes with seq > since_seq.")
     max_n: int = RuntimeField(default=50, description="Maximum envelopes to return.")
@@ -960,6 +976,8 @@ class PeekTool(StatelessRuntimeTool):
     target itself). ``address`` accepts ids and the label / `self` /
     `parent` shortcuts.
     """
+
+    _shows_inbox: ClassVar[bool] = True
 
     address: str = RuntimeField(
         description="Address id, label of a direct child, or 'self' / 'parent'.",

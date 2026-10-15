@@ -55,14 +55,24 @@ class LLMConfig(BaseModel):
     provider: str
     model: str | None = None
     api_key_env: str | None = None
+    # ``openai_compatible`` (a model access gateway, vLLM, LiteLLM, ...):
+    base_url: str | None = None
+    # Extra request headers; values may name env vars as ``${VAR}``.
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_s: float | None = None
+    # List the endpoint's models (``GET <base_url>/models``) into the
+    # model catalog, so agents can spawn on any of them.
+    discover: bool = False
+    # A note shown to agents in ModelCatalog (what this LLM is for).
+    note: str | None = None
 
 
 class RootConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role_prompt: str
     # See ``conjure.engines.resolve_engine_name`` for ``"auto"``
-    # semantics. Override with ``"orchestral"`` or ``"claude_agent"``
-    # to pin a specific surface.
+    # semantics. Override with ``"orchestral"``, ``"claude_agent"`` or
+    # ``"codex"`` to pin a specific surface.
     engine: str = "auto"
     llm: str = "default"
     tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
@@ -74,6 +84,10 @@ class RootConfig(BaseModel):
     # Per-tool permission decisions, e.g. ``{Bash: ask, Write: allow}``.
     # ``ask`` blocks the tool until the UI banner resolves it.
     permissions: dict[str, str] = Field(default_factory=dict)
+    # Model for a claude_agent root — alias (``opus`` / ``sonnet`` /
+    # ``haiku``) or full id. ``None`` uses the ``claude`` CLI's default,
+    # which isn't known until the first reply names it.
+    model: str | None = None
     # Toolbase toolkits the root itself is served, in ``tb activate``
     # grammar (``[heptapod/llp, calculator]``) or the mapping form.
     # Must fall within ``toolbase.authority``.
@@ -81,6 +95,23 @@ class RootConfig(BaseModel):
     # An existing toolbase loadout to serve the root, merged with
     # ``toolkits``.
     toolbase_loadout: str | None = None
+
+
+class ModelsConfig(BaseModel):
+    """``models:`` — which models agents may spawn on, and guidance.
+    Ids are ``<source>/<model>``: ``<llms entry>/<model>`` for API models
+    (a gateway with ``discover: true`` lists all of its own),
+    ``claude/<alias>`` and ``codex/<slug>`` for subscriptions.
+    ``ModelCatalog`` shows agents the allowed ones."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Glob patterns over ids, e.g. ``["mag/*", "codex/gpt-6-astra"]``.
+    allow: list[str] = Field(default_factory=lambda: ["*"])
+    # Model for a child spawned without one (an id). ``None``: the
+    # engine's own default (haiku for Claude children, Codex's default).
+    default: str | None = None
+    # Guidance per id, shown in ModelCatalog ("cheap; literature search").
+    notes: dict[str, str] = Field(default_factory=dict)
 
 
 class ToolbaseConfig(BaseModel):
@@ -100,11 +131,30 @@ class ToolbaseConfig(BaseModel):
     # grammar as ``root.toolkits`` (e.g. ``[heptapod]``).
     authority: str | list[str] | dict[str, Any] = "loadout"
     call_timeout_s: float = 60.0
+    # Start a child's toolkit servers when it's spawned, in the
+    # background, so its first turn doesn't wait for them to boot.
+    prestart: bool = True
     # Per-toolkit settings for this session only, layered over toolbase's
     # own config (user → project → private), e.g.
     # ``{heptapod: {mg5_path: /opt/MG5_aMC}}``. Unlocks config-gated
     # bundles without touching ~/.toolbase.
     config: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class CodexConfig(BaseModel):
+    """``codex:`` — settings for agents on ``engine: codex`` (the Codex
+    CLI, logged in with ``codex login``)."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Codex's sandbox for the agent's own shell commands and edits:
+    # ``workspace-write`` (writes confined to the agent's sandbox dir),
+    # ``read-only``, or ``danger-full-access``.
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "workspace-write"
+    # ``-m`` for children that don't name a model (the root uses
+    # ``root.model``). ``None``: Codex's default.
+    child_model: str | None = None
+    reasoning_effort: str | None = None
+    bin: str | None = None  # path to ``codex``; default: from PATH
 
 
 class Config(BaseModel):
@@ -113,6 +163,8 @@ class Config(BaseModel):
     llms: dict[str, LLMConfig]
     root: RootConfig
     toolbase: ToolbaseConfig | None = None
+    codex: CodexConfig = Field(default_factory=CodexConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     mode: Literal["repl", "one-shot"] = "repl"
     initial_task: str | None = None
 

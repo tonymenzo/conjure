@@ -67,6 +67,23 @@ copy-pasting opaque ids.
 > `reply_to`, or just tell the worker to reply with `Send(to=
 > "caller", ...)` and omit the field entirely.
 
+**When messages reach you.** Messages are pushed to you between
+turns. While you're in a turn, new ones wait in your inbox, so a
+worker's result can sit there until you finish. Two rules:
+
+- **Wait on workers through your inbox, not their files.** After
+  dispatching work, `WaitFor` (or `Recv`) their messages. Don't poll a
+  worker's sandbox with `ls` / `cat`: you can read a half-written
+  directory, and you'll miss what they tell you.
+- **Watch for `inbox` on tool results.** Any conjure tool result can
+  carry `"inbox": {"unread": N, "latest": [...]}`, meaning messages are
+  waiting. `Recv` them before going on, especially before you give a
+  final answer.
+
+Steering works the same way: a message you send a busy worker reaches
+it at its next turn, after whatever it's doing now. Say in the task
+itself what's required and what's optional, and when to stop.
+
 ## Message-body shape
 
 `body` on `Send` (and the body field on any combinator dispatch) is
@@ -99,7 +116,7 @@ them to read, modify, and run code.
 ### Spawn orchestration (MCP-bridged)
 
 These let you grow and coordinate the agent graph. They appear in your
-tool list as `mcp__spawn__<Name>` (PascalCase, matching the
+tool list as `mcp__conjure__<Name>` (PascalCase, matching the
 built-in tool convention); the chat UI renders them as the bare name.
 
 **Reach for `Call` first.** For most one-off "evaluate worker(body)

@@ -75,3 +75,9 @@ class ToolkitDenied(ConjureError):
     Grants attenuate like budgets: a child's toolset must be covered by
     its parent's. Raised by spawn and by live grants; tools map it to
     ``code=toolkit_denied``."""
+
+
+class ModelDenied(ConjureError):
+    """A spawn named a model that isn't in the session's model catalog,
+    or that its ``models.allow`` policy excludes. Tools map it to
+    ``code=model_denied``; the message lists what is allowed."""

@@ -54,7 +54,11 @@ def build_runtime(
     # Capture each LLM config as a default arg so the lambda closes
     # over the right value (avoid the classic late-binding bug).
     llm_factories = {
-        name: (lambda c=cfg.model_dump(): build_llm(c))
+        name: (
+            lambda model=None, c=cfg.model_dump(): build_llm(
+                {**c, "model": model} if model else c
+            )
+        )
         for name, cfg in config.llms.items()
     }
 
@@ -66,7 +70,14 @@ def build_runtime(
     )
 
     def dispatch(record: AgentRecord, runtime: Runtime):
-        engine_name = resolve_engine_name(record.spec.engine)
+        engine_name = _engine_for(record, runtime)
+        if engine_name == "codex":
+            return _build_codex_engine(
+                record=record,
+                runtime=runtime,
+                event_log_router=event_log_router,
+                codex_config=config.codex,
+            )
         if engine_name == "orchestral":
             return orchestral_factory(record, runtime)
         if engine_name == "claude_agent":
@@ -78,11 +89,13 @@ def build_runtime(
             )
         raise ValueError(
             f"unknown engine {engine_name!r} on agent {record.addr.id}; "
-            f"supported: 'orchestral', 'claude_agent', 'auto'"
+            f"supported: 'orchestral', 'claude_agent', 'codex', 'auto'"
         )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
     hub = build_hub_from_config(config.toolbase)
+    from conjure.models import build_model_hub
+
     runtime = Runtime(
         store_dir=store_dir,
         session_id=session_id,
@@ -91,6 +104,7 @@ def build_runtime(
         max_depth=config.runtime.max_depth,
         spawn_listener=spawn_listener,
         toolbase=hub,
+        models=build_model_hub(config),
     )
 
     root_spec = AgentSpec(
@@ -101,11 +115,66 @@ def build_runtime(
         label=config.root.label,
         sandbox_dir=config.root.sandbox_dir,
         permissions=config.root.permissions,
+        model=config.root.model,
         toolkits=parse_toolkits(config.root.toolkits) or None,
         toolbase_loadout=config.root.toolbase_loadout,
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
+
+
+def _engine_for(record: AgentRecord, runtime: Runtime) -> str:
+    from conjure.engines import effective_engine
+
+    return effective_engine(record, runtime)
+
+
+def _build_codex_engine(
+    *,
+    record: AgentRecord,
+    runtime: Runtime,
+    event_log_router: Callable[[AgentRecord], Any] | None,
+    codex_config: Any,
+):
+    """A ``CodexEngine`` for ``record``: its sandbox is Codex's working
+    root, and its ``CODEX_HOME`` (auth link, sessions, surfaced skills)
+    lives beside the sandboxes in the store."""
+    import tempfile
+
+    from conjure.engines.codex import CodexEngine
+    from conjure.tools.filesystem import _sandbox_for
+
+    stream_emit = None
+    if event_log_router is not None:
+        event_log = event_log_router(record)
+        if event_log is not None:
+            stream_emit = event_log.emit
+    sandbox = _sandbox_for(record, runtime)
+    if sandbox is None:
+        sandbox = Path(tempfile.mkdtemp(prefix=f"conjure-{record.addr.id}-"))
+    if runtime.store_dir is not None:
+        home = Path(runtime.store_dir).expanduser() / "codex_homes" / record.addr.id
+    else:
+        home = sandbox.parent / f".codex_home-{record.addr.id}"
+    model = record.spec.model or (codex_config.child_model if record.parent is not None else None)
+    mount = None
+    if runtime.toolbase is not None:
+        from conjure.toolbase import ToolbaseMount
+
+        mount = ToolbaseMount(runtime.toolbase, record, sandbox, skills_dir=home / "skills")
+        mount.prestart()
+    return CodexEngine(
+        record=record,
+        runtime=runtime,
+        sandbox_dir=sandbox,
+        codex_home=home,
+        stream_emit=stream_emit,
+        model=model,
+        sandbox_mode=codex_config.sandbox,
+        reasoning_effort=codex_config.reasoning_effort,
+        toolbase_mount=mount,
+        codex_bin=codex_config.bin,
+    )
 
 
 def _build_claude_agent_engine(
@@ -135,7 +204,15 @@ def _build_claude_agent_engine(
     if runtime.toolbase is not None:
         from conjure.toolbase import ToolbaseMount
 
-        mount = ToolbaseMount(runtime.toolbase, record, sandbox)
+        # Claude Code reads skills from ``<cwd>/.claude/skills``; the
+        # cwd is the sandbox.
+        mount = ToolbaseMount(
+            runtime.toolbase,
+            record,
+            sandbox,
+            skills_dir=(sandbox / ".claude" / "skills") if sandbox is not None else None,
+        )
+        mount.prestart()
     return ClaudeAgentEngine(
         record=record,
         runtime=runtime,

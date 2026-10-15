@@ -895,6 +895,7 @@ def _build_tool_registry() -> dict[str, type]:
         TerminateTool,
         WaitForTool,
     )
+    from conjure.tools.models import ModelCatalogTool
     from conjure.tools.toolkits import (
         GrantToolkitsTool,
         RequestToolkitsTool,
@@ -924,6 +925,7 @@ def _build_tool_registry() -> dict[str, type]:
         "tool_catalog": ToolCatalogTool,
         "grant_toolkits": GrantToolkitsTool,
         "request_toolkits": RequestToolkitsTool,
+        "model_catalog": ModelCatalogTool,
     }
 
 

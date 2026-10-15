@@ -1,0 +1,3 @@
+KaTeX 0.16.11 (MIT, see LICENSE), from the npm tarball: dist/katex.min.js,
+dist/fonts/*.woff2, and dist/katex.min.css with the woff/ttf fallbacks removed
+from each @font-face (only woff2 is vendored).

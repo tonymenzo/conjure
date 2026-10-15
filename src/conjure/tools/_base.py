@@ -18,7 +18,7 @@ unregisters it when terminating.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from orchestral.tools.base.field_utils import (
     RuntimeField,
@@ -92,7 +92,34 @@ class StatelessRuntimeTool(BaseTool):
     State fields (token, configuration set at construction) are
     preserved. Required runtime fields with no default are left alone
     so BaseTool's own missing-field check can fire.
+
+    Every subclass's ``_run`` result also carries an ``inbox`` notice
+    when messages are waiting that the caller hasn't seen (see
+    ``inbox_notice``), whichever surface ran it: orchestral, the
+    in-process or HTTP MCP servers, or the daemon behind the stdio
+    bridge.
     """
+
+    # Tools whose result already is the inbox.
+    _shows_inbox: ClassVar[bool] = False
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        run = cls.__dict__.get("_run")
+        if run is None or getattr(run, "_adds_inbox", False):
+            return
+
+        def _run(self, *args, **kw):
+            out = run(self, *args, **kw)
+            if isinstance(out, dict) and "inbox" not in out and not type(self)._shows_inbox:
+                notice = inbox_notice(getattr(self, "runtime_token", "") or "")
+                if notice:
+                    out["inbox"] = notice
+            return out
+
+        _run._adds_inbox = True  # type: ignore[attr-defined]
+        _run.__doc__ = run.__doc__
+        cls._run = _run  # type: ignore[method-assign]
 
     def execute(self, stream_callback=None, **kwargs):
         for field_name, field_info in type(self).model_fields.items():
@@ -107,3 +134,52 @@ class StatelessRuntimeTool(BaseTool):
                 continue
             setattr(self, field_name, default)
         return super().execute(stream_callback=stream_callback, **kwargs)
+
+
+def inbox_notice(token: str, *, limit: int = 3) -> dict | None:
+    """Messages waiting for the agent behind ``token`` that it hasn't
+    seen: arrived after its current turn started (the driver's cursor)
+    and not read with ``recv`` / ``wait_for``. ``None`` when there are
+    none. An agent mid-turn doesn't get pushed messages until the turn
+    ends, so without this a parent busy in a long turn can miss its
+    workers' results entirely."""
+    resolved = resolve_token(token) if token else None
+    if resolved is None:
+        return None
+    runtime, caller = resolved
+    try:
+        record = runtime.record_for(caller)
+        cursor = getattr(record.driver, "_cursor", 0) or 0
+        waiting = [
+            e for e in record.inbox.read(since_seq=cursor, max_n=200, timeout_s=0.0)
+            if e.seq not in record.pulled
+        ]
+    except Exception:
+        return None
+    if not waiting:
+        return None
+
+    def preview(env) -> dict:
+        body = env.body
+        if not isinstance(body, str):
+            import json
+
+            try:
+                body = json.dumps(body, default=str)
+            except Exception:
+                body = str(body)
+        sender = env.from_.label or env.from_.id
+        item = {"from": sender, "seq": env.seq, "preview": body[:200]}
+        kind = (env.headers or {}).get("kind")
+        if kind:
+            item["kind"] = kind
+        return item
+
+    return {
+        "unread": len(waiting),
+        "latest": [preview(e) for e in waiting[-limit:]],
+        "hint": (
+            "Messages are waiting. Read them now with Recv (or WaitFor); "
+            "otherwise they reach you only after this turn ends."
+        ),
+    }

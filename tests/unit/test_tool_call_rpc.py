@@ -34,6 +34,7 @@ def test_bridge_tools_expose_pascalcase_display_names():
         "AgentMap", "AgentFold", "AgentFilter", "AgentFixedPoint",
         "AgentRace", "AgentEnsemble", "AgentCritic", "AgentSupervisor",
         "ToolCatalog", "GrantToolkits", "RequestToolkits",
+        "ModelCatalog",
     ]
 
 

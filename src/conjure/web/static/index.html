@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>conjure</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2300FF41'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand"><span class="dot pulse-green"></span>conjure</div>
+    <div id="session-name" class="dim"></div>
+    <span id="mode-badge" class="badge"></span>
+    <nav id="views" role="tablist">
+      <button data-view="chat" class="active" title="Chat (1)">chat</button>
+      <button data-view="graph" title="Graph (2)">graph</button>
+      <button data-view="timeline" title="Timeline (3)">timeline</button>
+      <button data-view="files" title="Files (4)">files</button>
+    </nav>
+    <div class="spacer"></div>
+    <div id="stats" class="dim"></div>
+    <button id="auto-toggle" class="toggle" title="Auto-approve permission requests (F6)">auto <b>off</b></button>
+    <button id="run-toggle" class="small-btn" title="Run record: config, versions, per-agent totals; export (r)">run</button>
+    <button id="theme-toggle" class="icon" title="Toggle theme">◐</button>
+    <button id="help-toggle" class="icon" title="Keyboard shortcuts (?)">?</button>
+    <span id="conn" class="conn" title="Connection"></span>
+  </header>
+
+  <aside id="sidebar">
+    <section class="pane" id="tree-pane">
+      <h2 class="pane-title">agents <span id="agent-count" class="dim"></span></h2>
+      <div class="pane-tools">
+        <label class="toggle small" title="Show internal agents (combinator workers)"><input type="checkbox" id="show-internal"> internal</label>
+      </div>
+      <div id="tree" tabindex="0"></div>
+    </section>
+    <section class="pane" id="activity-pane">
+      <h2 class="pane-title">activity</h2>
+      <div id="activity"></div>
+    </section>
+  </aside>
+  <div id="resizer" title="Drag to resize"></div>
+
+  <main id="main">
+    <section id="view-chat" class="view active">
+      <div id="chat-columns"></div>
+    </section>
+    <section id="view-graph" class="view">
+      <div class="view-toolbar">
+        <label class="toggle"><input type="checkbox" id="edge-spawn" checked> <span class="legend spawn"></span> spawn</label>
+        <label class="toggle"><input type="checkbox" id="edge-message" checked> <span class="legend message"></span> messages</label>
+        <label class="toggle"><input type="checkbox" id="edge-capability" checked> <span class="legend capability"></span> introductions</label>
+        <span class="dim small">click an agent to inspect · double-click to open its chat</span>
+      </div>
+      <div id="graph-wrap"><svg id="graph" role="img" aria-label="Agent graph"></svg></div>
+      <aside id="graph-inspector" class="inspector"></aside>
+    </section>
+    <section id="view-timeline" class="view">
+      <div class="view-toolbar">
+        <span class="legend-item"><span class="legend turn"></span> turn</span>
+        <span class="legend-item"><span class="legend tool"></span> tool call</span>
+        <span class="legend-item"><span class="legend fail"></span> failed</span>
+        <span class="legend-item"><span class="legend msg"></span> message in</span>
+        <span class="spacer"></span>
+        <button id="tl-fit" class="small-btn">fit</button>
+        <label class="toggle small" title="Keep the newest activity in view"><input type="checkbox" id="tl-follow" checked> follow</label>
+        <span class="dim small">wheel: zoom · drag: pan</span>
+      </div>
+      <div id="timeline-wrap"><svg id="timeline" role="img" aria-label="Agent timeline"></svg></div>
+      <div id="tl-tip" class="tip"></div>
+    </section>
+    <section id="view-files" class="view">
+      <div id="files-side">
+        <div class="files-head"><span id="files-agent"></span></div>
+        <div id="files-crumbs" class="crumbs"></div>
+        <div id="files-list"></div>
+        <h3 class="sub">recently modified</h3>
+        <div id="files-recent"></div>
+      </div>
+      <div id="files-content"><div class="empty">select a file</div></div>
+    </section>
+  </main>
+
+  <footer id="scrubber" hidden>
+    <button id="scrub-play" class="icon" title="Play (space)">▶</button>
+    <select id="scrub-speed" title="Playback speed">
+      <option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="600">600×</option>
+    </select>
+    <input type="range" id="scrub-range" min="0" max="1000" value="1000" step="1">
+    <span id="scrub-time" class="mono"></span>
+    <button id="scrub-end" class="small-btn" title="Jump to end">end</button>
+  </footer>
+</div>
+
+<div id="toasts"></div>
+<div id="help" class="overlay" hidden>
+  <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <header class="help-head">
+      <h2 id="help-title">Keyboard shortcuts</h2>
+      <button class="help-close" id="help-close" aria-label="Close">✕</button>
+    </header>
+    <div class="help-grid">
+      <section>
+        <h3>Views</h3>
+        <dl>
+          <dt><kbd>1</kbd></dt><dd>Chat</dd>
+          <dt><kbd>2</kbd></dt><dd>Graph</dd>
+          <dt><kbd>3</kbd></dt><dd>Timeline</dd>
+          <dt><kbd>4</kbd></dt><dd>Files</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Agents</h3>
+        <dl>
+          <dt><kbd>j</kbd><kbd>k</kbd></dt><dd>Next / previous agent</dd>
+          <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Same, with arrows</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Open chat and focus its input</dd>
+          <dt><kbd>s</kbd></dt><dd>Open in a new column, side by side</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Chat</h3>
+        <dl>
+          <dt><kbd>Enter</kbd></dt><dd>Send message</dd>
+          <dt><kbd>Shift</kbd><kbd>Enter</kbd></dt><dd>New line</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Leave the input</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Session</h3>
+        <dl>
+          <dt><kbd>F6</kbd></dt><dd>Toggle auto-approve</dd>
+          <dt><kbd>Ctrl</kbd><kbd>G</kbd></dt><dd>Same</dd>
+          <dt><kbd>r</kbd></dt><dd>Run record &amp; export</dd>
+          <dt><kbd>Space</kbd></dt><dd>Replay: play / pause</dd>
+          <dt><kbd>?</kbd></dt><dd>Show / hide this panel</dd>
+        </dl>
+      </section>
+      <section class="wide">
+        <h3>Mouse</h3>
+        <dl>
+          <dt>Graph</dt><dd>Click an agent to inspect it, double-click to open its chat</dd>
+          <dt>Timeline</dt><dd>Wheel to zoom, drag to pan</dd>
+          <dt>Columns</dt><dd>Click a column to focus it; the next agent you pick opens there</dd>
+        </dl>
+      </section>
+    </div>
+    <footer class="help-foot">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</footer>
+  </div>
+</div>
+<div id="run" class="overlay" hidden>
+  <div class="help-card run-card" role="dialog" aria-modal="true" aria-labelledby="run-title">
+    <header class="help-head">
+      <h2 id="run-title">Run record</h2>
+      <div class="run-actions">
+        <button id="run-export" class="small-btn" title="Download this session as a portable, read-only export (.tar.gz)">export</button>
+        <button class="help-close" id="run-close" aria-label="Close">✕</button>
+      </div>
+    </header>
+    <div id="run-body" class="run-body"><p class="dim">loading…</p></div>
+  </div>
+</div>
+
+<div id="gate" class="overlay" hidden>
+  <div class="overlay-card pane">
+    <h2 class="pane-title">token required</h2>
+    <p>Open the URL that <code>conjure web</code> printed — it carries this session's token.</p>
+    <p class="dim">Lost it? <code>conjure web --attach</code> prints it again.</p>
+  </div>
+</div>
+<script src="/static/vendor/katex/katex.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

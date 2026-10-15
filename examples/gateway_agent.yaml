@@ -1,0 +1,46 @@
+# Example configuration: agents on API models behind a model access
+# gateway (MAG), or any other OpenAI-compatible endpoint (vLLM,
+# LiteLLM, an institutional proxy).
+#
+# The gateway is an `openai_compatible` LLM. With `discover: true` the
+# session lists every model the endpoint serves (GET <base_url>/models)
+# into the model catalog, so agents can spawn children on any of them:
+# ModelCatalog() shows the allowed ones, Spawn(model="mag/<model>")
+# picks one. Keys are read from the environment, never from this file.
+#
+# Setup:
+#   export MAG_API_KEY=...            # or put it in ~/.config/conjure/.env
+#   conjure web examples/gateway_agent.yaml
+
+runtime:
+  store_dir: ./.conjure/store
+  max_depth: 3
+
+llms:
+  mag:
+    provider: openai_compatible
+    base_url: https://mag.example.gov/v1     # your gateway's OpenAI-compatible base URL
+    api_key_env: MAG_API_KEY                 # sent as "Authorization: Bearer <key>"
+    # headers: {X-Project: "${MAG_PROJECT}"} # extra headers; ${VAR} reads the env
+    discover: true                           # list the gateway's models
+    model: llama-4-405b                      # the root's model, and this entry's default
+    note: Government gateway; tokens are metered per project.
+    # timeout_s: 600
+
+models:
+  # What any agent in the session may use. Without this, subscription
+  # models (claude/*, codex/*) on this machine would be allowed too.
+  allow: ["mag/*"]
+  default: mag/llama-4-405b                  # for children spawned without a model
+  notes:
+    mag/llama-4-405b: strongest; planning and synthesis
+    # mag/<small-model>: cheap; literature search and extraction
+
+root:
+  label: root
+  engine: orchestral
+  llm: mag
+  tools: [primitive, combinator]
+  role_prompt: |
+    You coordinate specialist agents. Check ModelCatalog and give each
+    child the cheapest model that can do its task well.
