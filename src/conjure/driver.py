@@ -75,6 +75,24 @@ class Driver:
     # ----- internals -----
 
     def _loop(self) -> None:
+        try:
+            self._run_loop()
+        finally:
+            # The loop only exits once any in-flight step has returned,
+            # so this can't pull tools out from under a running turn.
+            # Toolkit servers are per-agent subprocesses; without this a
+            # finished fan-out worker would hold them until shutdown.
+            engine = getattr(self.agent, "engine", None)
+            close = getattr(engine, "close_toolkits", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.exception(
+                        "closing toolkits for %s", self.agent.record.addr
+                    )
+
+    def _run_loop(self) -> None:
         record = self.agent.record
         while not self._stop_requested:
             record.wakeup.wait()
@@ -89,6 +107,15 @@ class Driver:
             if not envelopes:
                 continue
             self._cursor = envelopes[-1].seq
+            # Skip what the agent already consumed itself (recv /
+            # wait_for) during an earlier turn — pushing it again would
+            # read as a second, new message and invite a second reply.
+            pulled = record.pulled
+            if pulled:
+                envelopes = [e for e in envelopes if e.seq not in pulled]
+                pulled.difference_update([s for s in list(pulled) if s <= self._cursor])
+                if not envelopes:
+                    continue
             # Budget gate: when a ceiling anywhere on this agent's
             # ancestor chain is spent, skip the step (the messages are
             # consumed but never reach the engine — no further tokens

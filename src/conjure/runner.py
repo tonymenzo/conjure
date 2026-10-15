@@ -23,6 +23,7 @@ from conjure.engines.orchestral import make_orchestral_engine_factory
 from conjure.llm import build_llm
 from conjure.record import AgentRecord, AgentSpec
 from conjure.runtime import Runtime
+from conjure.toolbase import build_hub_from_config, parse_toolkits
 
 
 def build_runtime(
@@ -81,6 +82,7 @@ def build_runtime(
         )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
+    hub = build_hub_from_config(config.toolbase)
     runtime = Runtime(
         store_dir=store_dir,
         session_id=session_id,
@@ -88,6 +90,7 @@ def build_runtime(
         max_workers=config.runtime.max_workers,
         max_depth=config.runtime.max_depth,
         spawn_listener=spawn_listener,
+        toolbase=hub,
     )
 
     root_spec = AgentSpec(
@@ -98,6 +101,8 @@ def build_runtime(
         label=config.root.label,
         sandbox_dir=config.root.sandbox_dir,
         permissions=config.root.permissions,
+        toolkits=parse_toolkits(config.root.toolkits) or None,
+        toolbase_loadout=config.root.toolbase_loadout,
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
@@ -126,6 +131,11 @@ def _build_claude_agent_engine(
             stream_emit = event_log.emit
     sandbox = _sandbox_for(record, runtime)
     model = _resolve_model(record)
+    mount = None
+    if runtime.toolbase is not None:
+        from conjure.toolbase import ToolbaseMount
+
+        mount = ToolbaseMount(runtime.toolbase, record, sandbox)
     return ClaudeAgentEngine(
         record=record,
         runtime=runtime,
@@ -134,6 +144,7 @@ def _build_claude_agent_engine(
         stream_emit=stream_emit,
         mcp_socket=control_socket,
         model=model,
+        toolbase_mount=mount,
     )
 
 

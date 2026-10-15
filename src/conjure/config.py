@@ -74,6 +74,37 @@ class RootConfig(BaseModel):
     # Per-tool permission decisions, e.g. ``{Bash: ask, Write: allow}``.
     # ``ask`` blocks the tool until the UI banner resolves it.
     permissions: dict[str, str] = Field(default_factory=dict)
+    # Toolbase toolkits the root itself is served, in ``tb activate``
+    # grammar (``[heptapod/llp, calculator]``) or the mapping form.
+    # Must fall within ``toolbase.authority``.
+    toolkits: list[str] | dict[str, Any] | None = None
+    # An existing toolbase loadout to serve the root, merged with
+    # ``toolkits``.
+    toolbase_loadout: str | None = None
+
+
+class ToolbaseConfig(BaseModel):
+    """``toolbase:`` — lets agents curate toolkits for the agents they
+    spawn. Needs ``conjure-agents[toolbase]`` (Python >= 3.12)."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    # Project whose toolbase loadout supplies version pins and the
+    # ``serve.yaml`` blocklists. ``None`` discovers from the cwd, like
+    # ``tb serve``.
+    project_root: str | None = None
+    loadout: str | None = None
+    # What the root may grant: ``loadout`` (default — the project's
+    # active toolbase loadout, i.e. what you've ``tb activate``-d),
+    # ``all`` (every installed toolkit; opt-in), or a toolset in the same
+    # grammar as ``root.toolkits`` (e.g. ``[heptapod]``).
+    authority: str | list[str] | dict[str, Any] = "loadout"
+    call_timeout_s: float = 60.0
+    # Per-toolkit settings for this session only, layered over toolbase's
+    # own config (user → project → private), e.g.
+    # ``{heptapod: {mg5_path: /opt/MG5_aMC}}``. Unlocks config-gated
+    # bundles without touching ~/.toolbase.
+    config: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class Config(BaseModel):
@@ -81,6 +112,7 @@ class Config(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     llms: dict[str, LLMConfig]
     root: RootConfig
+    toolbase: ToolbaseConfig | None = None
     mode: Literal["repl", "one-shot"] = "repl"
     initial_task: str | None = None
 

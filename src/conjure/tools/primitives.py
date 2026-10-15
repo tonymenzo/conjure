@@ -33,6 +33,7 @@ from conjure.errors import (
     NoSuchAddress,
     Terminated,
     Timeout,
+    ToolkitDenied,
 )
 from conjure.ids import new_message_id
 from conjure.record import AgentSpec
@@ -131,7 +132,10 @@ def spawn_impl(
     model: str | None = None,
     oneshot: bool = False,
     budget: float | None = None,
+    toolkits: Any = None,
 ) -> dict[str, Any]:
+    from conjure.toolbase import parse_toolkits
+
     resolved = _resolve(token)
     if isinstance(resolved, dict):
         return resolved
@@ -155,6 +159,11 @@ def spawn_impl(
             )
         cap_addrs.append(cap_addr)
 
+    try:
+        toolset = parse_toolkits(toolkits)
+    except ToolkitDenied as e:
+        return _err("toolkit_denied", str(e))
+
     spec = AgentSpec(
         role_prompt=role_prompt,
         label=label,
@@ -169,6 +178,7 @@ def spawn_impl(
         sandbox_dir=sandbox_dir,
         permissions=permissions or {},
         budget=budget,
+        toolkits=toolset or None,
     )
 
     try:
@@ -181,12 +191,20 @@ def spawn_impl(
         return _err("depth_exceeded", str(e))
     except BudgetExceeded as e:
         return _err("budget_exceeded", str(e))
+    except ToolkitDenied as e:
+        return _err("toolkit_denied", str(e))
 
     # Optionally send the initial message right away.
     if initial_message:
         runtime.send_external(to=child_addr, body=initial_message, sender="system")
 
-    return {"ok": True, "address": child_addr.id, "label": child_addr.label}
+    out: dict[str, Any] = {"ok": True, "address": child_addr.id, "label": child_addr.label}
+    if toolset:
+        # Echo the grant (same shape GrantToolkits returns) so the caller
+        # can confirm what the child holds without another round trip.
+        # Tools are served from the child's first turn.
+        out["toolkits"] = {k: v.model_dump(exclude_none=True) for k, v in toolset.items()}
+    return out
 
 
 def send_impl(
@@ -246,6 +264,7 @@ def send_impl(
     )
     stored = target_record.inbox.put(env)
     runtime._journal_send(stored)
+    runtime.note_delivery(caller_addr, target_addr)
     # Reciprocal capability: the recipient may now reply to the sender.
     # Without this, common request/response patterns require explicit
     # introductions for every reply path, which doesn't scale across a
@@ -311,6 +330,7 @@ def recv_impl(
         from_id=from_,
         timeout_s=timeout_s,
     )
+    record.pulled.update(e.seq for e in envelopes)
     return {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
@@ -366,6 +386,7 @@ def wait_for_impl(
         if remaining <= 0:
             break
 
+    record.pulled.update(e.seq for e in collected)
     return {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in collected],
@@ -503,7 +524,13 @@ def call_impl(
         return resolved
     runtime, caller_addr = resolved
 
+    from conjure.toolbase import parse_toolkits
+
     template = spec or {}
+    try:
+        toolset = parse_toolkits(template.get("toolkits"))
+    except ToolkitDenied as e:
+        return _err("toolkit_denied", str(e))
     role_prompt = (template.get("role_prompt") or "") + _CALL_WORKER_SUFFIX
     base_spec = AgentSpec(
         role_prompt=role_prompt,
@@ -513,6 +540,7 @@ def call_impl(
         llm=template.get("llm", "default"),
         model=template.get("model"),
         oneshot=True,
+        toolkits=toolset or None,
     )
 
     try:
@@ -532,6 +560,8 @@ def call_impl(
             worker = runtime._spawn(parent=caller_addr, spec=worker_spec)
         except MaxDepthExceeded as e:
             return _err("depth_exceeded", str(e))
+        except ToolkitDenied as e:
+            return _err("toolkit_denied", str(e))
         # Dispatch with ``sender=collector`` so the worker's ``"caller"``
         # shortcut routes its reply back into the collector's inbox
         # (clean private channel) rather than the caller's inbox.
@@ -691,6 +721,17 @@ class SpawnTool(StatelessRuntimeTool):
             "child in ``status=\"error\"`` for inspection / retry."
         ),
     )
+    toolkits: str | list[str] | dict[str, Any] | None = OptionalRuntimeField(
+        description=(
+            "Toolbase toolkits to serve the child, drawn from what you "
+            "hold (see ToolCatalog). `tb activate` grammar: "
+            "[\"heptapod\", \"heptapod/llp\", \"calculator__add\"] — "
+            "whole toolkit, one bundle, one tool — or a mapping "
+            "{toolkit: {bundles, tools, skills}}. Give only what the "
+            "task needs; the child can RequestToolkits later. Omit for "
+            "none."
+        ),
+    )
     budget: float | None = OptionalRuntimeField(
         description=(
             "USD cost ceiling for the child plus its entire subtree. "
@@ -721,6 +762,7 @@ class SpawnTool(StatelessRuntimeTool):
             model=self.model,
             oneshot=bool(self.oneshot),
             budget=self.budget,
+            toolkits=self.toolkits,
         )
 
 
@@ -879,7 +921,7 @@ class CallTool(StatelessRuntimeTool):
             "Worker spec template — same shape as the combinator "
             "tools' ``spec``: ``role_prompt`` (required), plus "
             "optional ``label``, ``tools``, ``engine``, ``llm``, "
-            "``model``. The runtime adds ``oneshot=True`` and a "
+            "``model``, ``toolkits``. The runtime adds ``oneshot=True`` and a "
             "reply-with-Send suffix to the role_prompt."
         ),
     )

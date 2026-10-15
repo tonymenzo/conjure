@@ -36,7 +36,9 @@ from conjure.errors import (
     ConjureError,
     MaxDepthExceeded,
     NoSuchAddress,
+    NotPermitted,
     Terminated,
+    ToolkitDenied,
 )
 from conjure.ids import new_agent_id, new_message_id, new_runtime_token
 from conjure.mailbox import Mailbox
@@ -46,6 +48,7 @@ from conjure.tools._base import register_token, unregister_token
 
 if TYPE_CHECKING:
     from conjure.agent import Engine
+    from conjure.toolbase import Toolset, ToolbaseHub
 
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
 
@@ -134,8 +137,13 @@ class Runtime:
         max_workers: int = 32,
         max_depth: int = 3,
         spawn_listener: Callable[[AgentRecord], None] | None = None,
+        toolbase: "ToolbaseHub | None" = None,
     ) -> None:
         self._lock = threading.RLock()
+        # Toolbase hub (``conjure.toolbase``): catalog, root authority,
+        # server factory. ``None`` means toolbase isn't configured and
+        # any spec asking for toolkits is refused.
+        self.toolbase = toolbase
         self._records: dict[Address, AgentRecord] = {}
         self._tokens: dict[str, Address] = {}
         # Reverse index: address id string → Address. ``address_by_id``
@@ -196,6 +204,9 @@ class Runtime:
         # when no budgets exist anywhere (the common case) the check
         # is a single attribute read with no lock.
         self._budgets_in_use = False
+        # Combinator collectors (``mark_collector``): a send to one is a
+        # worker delivering its result.
+        self._collectors: set[Address] = set()
         self._install_sentinels()
 
     @property
@@ -378,6 +389,9 @@ class Runtime:
         The root has no parent. Its capability set is its own address
         plus any addresses listed in ``spec.capabilities``.
         """
+        if spec.toolkits:
+            hub = self._require_toolbase()
+            hub.check_grant(dict(spec.toolkits), hub.root_authority())
         with self._lock:
             self._require_not_shutdown()
             if self._root_addr is not None:
@@ -650,6 +664,11 @@ class Runtime:
         """
         if not specs:
             return []
+        # Toolkit attenuation, before any registry mutation so a refused
+        # grant leaves no half-spawned batch. Outside the lock: the
+        # first check may read toolbase's cache from disk.
+        if any(s.toolkits or s.toolbase_loadout for s in specs):
+            self._check_toolkit_specs(parent, specs)
         records: list[AgentRecord] = []
         addrs: list[Address] = []
         with self._lock:
@@ -743,6 +762,83 @@ class Runtime:
             stored.append(placed)
         return stored
 
+    # ----- Toolkits -----
+
+    def _require_toolbase(self) -> "ToolbaseHub":
+        if self.toolbase is None:
+            raise ToolkitDenied(
+                "toolbase is not configured for this runtime (install "
+                "conjure-agents[toolbase] and add a `toolbase:` section)"
+            )
+        return self.toolbase
+
+    def _check_toolkit_specs(
+        self, parent: Address, specs: list[AgentSpec]
+    ) -> None:
+        hub = self._require_toolbase()
+        authority = hub.authority_of(self, parent)
+        for spec in specs:
+            if spec.toolbase_loadout:
+                # A named loadout is the user's curation; only the root
+                # (whose authority the user configured) may hand one out.
+                if self.record_for(parent).parent is not None:
+                    raise ToolkitDenied(
+                        "only the root may grant a named toolbase loadout; "
+                        "pass `toolkits` instead"
+                    )
+            hub.check_grant(hub.toolset_of(spec), authority)
+
+    def grant_toolkits(
+        self, *, granter: Address, target: Address, toolkits: "Toolset"
+    ) -> "Toolset":
+        """Add ``toolkits`` to a live descendant's toolset.
+
+        The granter must be an ancestor of ``target`` and hold every
+        grant itself. Grants are additive — a child's authority only
+        widens, within its ancestor's — so the subset invariant holds
+        down the whole tree without touching grandchildren. The
+        target's engine picks the change up at its next step.
+        Returns the target's new toolset.
+        """
+        from conjure.toolbase import merge_toolsets
+
+        hub = self._require_toolbase()
+        hub.check_grant(toolkits, hub.authority_of(self, granter))
+        with self._lock:
+            self._require_alive(target)
+            record = self._records[target]
+            cur = record.parent
+            while cur is not None and cur != granter:
+                cur = self._records[cur].parent
+            if cur is None:
+                raise NotPermitted(
+                    f"{granter.id} is not an ancestor of {target.id}"
+                )
+            merged = merge_toolsets(record.spec.toolkits, toolkits)
+            record.spec = record.spec.model_copy(update={"toolkits": merged})
+            self._journal.write(
+                "toolkits",
+                {
+                    "addr": target.model_dump(),
+                    "granted_by": granter.model_dump(),
+                    "toolkits": {k: v.model_dump() for k, v in merged.items()},
+                },
+            )
+        return merged
+
+    def _replay_toolkits(self, payload: dict[str, Any]) -> None:
+        addr = Address.model_validate(payload["addr"])
+        record = self._records.get(addr)
+        if record is None:
+            return
+        record.spec = record.spec.model_copy(
+            update={
+                "toolkits": AgentSpec.model_validate(
+                    {"role_prompt": "", "toolkits": payload.get("toolkits")}
+                ).toolkits
+            }
+        )
+
     # ----- Replay -----
 
     @classmethod
@@ -767,6 +863,8 @@ class Runtime:
                 rt._replay_send(payload)
             elif kind == "terminate":
                 rt._replay_terminate(payload)
+            elif kind == "toolkits":
+                rt._replay_toolkits(payload)
         return rt
 
     @staticmethod
@@ -925,6 +1023,20 @@ class Runtime:
         self._interrupt_engines(terminated)
         return terminated
 
+    def mark_collector(self, addr: Address) -> None:
+        """Register ``addr`` as a combinator collector (see
+        ``note_delivery``)."""
+        with self._lock:
+            self._collectors.add(addr)
+
+    def note_delivery(self, sender: Address, target: Address) -> None:
+        """Record that ``sender`` just sent to ``target``; a send to a
+        collector marks the sender as having delivered its result."""
+        if target in self._collectors:
+            record = self._records.get(sender)
+            if record is not None:
+                record.delivered = True
+
     def _interrupt_engines(self, addrs: list[Address]) -> None:
         """Best-effort: ask each terminated agent's engine to abort
         its in-flight LLM call so termination takes effect now instead
@@ -935,6 +1047,9 @@ class Runtime:
         for addr in addrs:
             with self._lock:
                 record = self._records.get(addr)
+            if record is not None and record.delivered:
+                # Its result is already in; let the turn wind down.
+                continue
             engine = self._engine_for(record) if record is not None else None
             fn = getattr(engine, "interrupt", None)
             if callable(fn):

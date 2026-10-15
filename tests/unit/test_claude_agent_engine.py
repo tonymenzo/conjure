@@ -236,11 +236,12 @@ def test_preapproved_tools_default_ask_set_held_back(tmp_path):
     assert "Bash" not in allowed
 
 
-def test_toolbase_profile_adds_second_mcp_server(tmp_path):
-    """When ``spec.toolbase_profile`` is set, the engine wires a second
-    MCP server entry (``toolbase``) alongside the existing ``spawn``
-    one — so the child sees the toolbase profile's tools in its tool
-    list. ``--no-tui`` is required: serving with the TUI breaks stdio.
+def test_toolbase_loadout_stdio_fallback(tmp_path):
+    """Without a toolbase hub (toolbase not importable here), a named
+    loadout is still served by the ``toolbase`` CLI over stdio — with
+    ``--loadout``: toolbase 0.12 renamed profiles to loadouts and
+    ``serve --profile`` now exits with "No such option". The legacy
+    ``toolbase_profile`` key still validates, so old journals replay.
     """
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
@@ -280,14 +281,12 @@ def test_toolbase_profile_adds_second_mcp_server(tmp_path):
     # The SDK's McpStdioServerConfig is a typed dict; accept either
     # the .args attribute or ["args"] indexing.
     args = getattr(tb_cfg, "args", None) or tb_cfg["args"]
-    assert "serve" in args
-    assert "--profile" in args
-    assert "research" in args
-    assert "--no-tui" in args
+    assert args == ["serve", "--loadout", "research"]
+    assert record.spec.toolbase_loadout == "research"
 
 
-def test_toolbase_profile_absent_means_no_toolbase_server(tmp_path):
-    """No ``toolbase_profile`` ⇒ no toolbase MCP server (default
+def test_toolbase_loadout_absent_means_no_toolbase_server(tmp_path):
+    """No ``toolbase_loadout`` ⇒ no toolbase MCP server (default
     behavior; toolbase is strictly opt-in)."""
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch

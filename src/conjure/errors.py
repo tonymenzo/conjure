@@ -66,3 +66,12 @@ class BudgetExceeded(ConjureError):
     Raised on spawn attempts under an exhausted subtree. Drivers don't
     raise it — they skip the step and emit a ``budget_exceeded``
     supervision event to the parent instead."""
+
+
+class ToolkitDenied(ConjureError):
+    """A toolkit grant exceeds the granter's own toolkits, names
+    something not installed, or toolbase isn't configured.
+
+    Grants attenuate like budgets: a child's toolset must be covered by
+    its parent's. Raised by spawn and by live grants; tools map it to
+    ``code=toolkit_denied``."""

@@ -299,3 +299,58 @@ def test_terminated_agent_error_does_not_notify_parent():
     rt.notify_child_errored(kid, "interrupted mid-step")
     assert len(rt.read_inbox(root)) == before
     rt.shutdown()
+
+
+def test_cleanup_spares_workers_that_delivered_their_reply():
+    """A worker whose reply a collector already holds is finishing, not
+    working: terminating it must not interrupt the turn (the claude CLI
+    reports an interrupted reply call to the model as a user refusal).
+    Workers that never replied — race losers, timeouts — still are."""
+    import threading
+
+    from conjure import AgentSpec, Runtime
+    from conjure.combinators import agent_race
+    from conjure.tools.primitives import call_impl, send_impl
+
+    interrupted: list[str] = []
+    release = threading.Event()
+
+    class Engine:
+        def __init__(self, record):
+            self.record = record
+
+        def step(self, prompt):
+            role = self.record.spec.role_prompt
+            if role.startswith("fast") or role.startswith("caller"):
+                env = self.record.inbox.read(since_seq=0, max_n=1, timeout_s=0)[-1]
+                to = env.body["reply_to"] if isinstance(env.body, dict) else "caller"
+                send_impl(token=self.record.token, to=to, body="done")
+            elif role.startswith("slow"):
+                release.wait(5)  # never replies in time
+            return ""
+
+        def interrupt(self):
+            interrupted.append(self.record.spec.label)
+
+    rt = Runtime(engine_factory=lambda record, runtime: Engine(record))
+    root = rt.root(AgentSpec(role_prompt="idle", lazy=True))
+
+    out = call_impl(
+        token=rt.record_for(root).token,
+        spec={"role_prompt": "caller", "label": "call-worker"},
+        body="go",
+        timeout_s=5,
+    )
+    assert out["ok"] and out["result"] == "done"
+    assert "call-worker" not in interrupted
+
+    idx, body = agent_race(
+        rt, root,
+        [AgentSpec(role_prompt="fast", label="fast"), AgentSpec(role_prompt="slow", label="slow")],
+        "go", timeout_s=5,
+    )
+    assert (idx, body) == (0, "done")
+    assert "fast" not in interrupted
+    assert "slow" in interrupted
+    release.set()
+    rt.shutdown()

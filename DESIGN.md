@@ -92,6 +92,16 @@ Capability passing is the natural choice for an FP-flavored system because
 addresses behave like function references — values that compose, can be
 passed in, and grant capability by possession.
 
+The same rule governs **tools**. With toolbase configured, an agent's
+toolkits are both what it can call and the most it can hand to a child.
+A spawn (or a later `GrantToolkits`) may pass on any subset and nothing
+more. The root draws on a configured authority, by default the project's
+active toolbase loadout (installing a toolkit isn't activating it). Curation is therefore part of how a parent closes
+over its child (§5.3): it decides which tools travel with each child.
+`RequestToolkits` covers the case where a parent under-provisions: the
+child asks, and the request climbs the tree until some ancestor can
+grant it.
+
 ## 4. Why Functional Programming?
 
 FP, stripped to essentials, cares about three things:
@@ -276,7 +286,10 @@ ordinary code using these primitives. No new vocabulary required.
 - **Inbox semantics:** ordered per-sender? Globally ordered?
   Acknowledgements? Read receipts?
 - **Capability revocation:** can a parent un-introduce two siblings
-  without terminating either?
+  without terminating either? The same question applies to toolkit
+  grants, which today are additive only. Narrowing a child's toolkits
+  would have to cascade to its descendants to keep the subset
+  invariant.
 - **Termination cascade:** terminating an agent cascades to its
   children? (v0.1 default: yes — supervisor-tree style.)
 - **Persistence across sessions:** do agents survive process restart? If

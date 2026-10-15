@@ -45,6 +45,11 @@ from conjure.tools.primitives import (
     TerminateTool,
     WaitForTool,
 )
+from conjure.tools.toolkits import (
+    GrantToolkitsTool,
+    RequestToolkitsTool,
+    ToolCatalogTool,
+)
 
 
 # Display-name → tool-class map. The PascalCase name is what the LLM
@@ -71,6 +76,15 @@ _TOOL_TARGETS: list[tuple[str, type]] = [
     ("AgentSupervisor", AgentSupervisorTool),
 ]
 
+# Toolkit curation tools — served only when the runtime has toolbase
+# configured, so agents without it don't carry three dead tools.
+_TOOLKIT_TARGETS: list[tuple[str, type]] = [
+    ("ToolCatalog", ToolCatalogTool),
+    ("GrantToolkits", GrantToolkitsTool),
+    ("RequestToolkits", RequestToolkitsTool),
+]
+TOOLKIT_TOOL_NAMES: tuple[str, ...] = tuple(n for n, _ in _TOOLKIT_TARGETS)
+
 
 # Fields present on every conjure tool that the LLM must NOT see —
 # state fields (token plumbing) plus BaseTool's accounting hooks. Kept
@@ -79,7 +93,9 @@ _TOOL_TARGETS: list[tuple[str, type]] = [
 _HIDDEN_FIELDS = frozenset({"runtime_token", "cost"})
 
 
-def build_in_process_mcp_server(token: str) -> Any | None:
+def build_in_process_mcp_server(
+    token: str, *, include_toolkits: bool = False
+) -> Any | None:
     """Return an ``McpSdkServerConfig`` (the SDK's in-process server
     handle) for conjure's orchestration tools, bound to ``token``.
 
@@ -91,8 +107,9 @@ def build_in_process_mcp_server(token: str) -> Any | None:
     except ImportError:
         return None
 
+    targets = _TOOL_TARGETS + (_TOOLKIT_TARGETS if include_toolkits else [])
     tools: list[Any] = []
-    for display_name, tool_cls in _TOOL_TARGETS:
+    for display_name, tool_cls in targets:
         schema = _build_input_schema(tool_cls)
         description = (tool_cls.__doc__ or display_name).strip()
         handler = _make_handler(tool_cls, token)
@@ -174,3 +191,43 @@ def _content(payload: dict[str, Any], *, is_error: bool) -> dict[str, Any]:
     if is_error:
         out["is_error"] = True
     return out
+
+
+def build_toolbase_sdk_server(tools: list[Any]) -> Any:
+    """Serve toolbase proxy tools (orchestral ``BaseTool``\\ s named
+    ``<toolkit>__<tool>``) to a ``ClaudeSDKClient`` as an in-process MCP
+    server named ``toolbase`` — the model sees
+    ``mcp__toolbase__<toolkit>__<tool>``. Calls hop to a worker thread:
+    a proxy call blocks on the toolkit subprocess."""
+    from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
+
+    sdk_tools = []
+    for tool in tools:
+        spec = tool.get_tool_spec()
+        sdk_tools.append(
+            SdkMcpTool(
+                name=spec.name,
+                description=spec.description or spec.name,
+                input_schema=tool.get_input_schema()
+                or {"type": "object", "properties": {}},
+                handler=_make_proxy_handler(tool),
+            )
+        )
+    return create_sdk_mcp_server(name="toolbase", tools=sdk_tools)
+
+
+def _make_proxy_handler(tool: Any):
+    async def handler(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(tool.execute, **(args or {}))
+        except Exception as exc:
+            return {
+                "content": [
+                    {"type": "text", "text": f"{type(exc).__name__}: {exc}"}
+                ],
+                "is_error": True,
+            }
+        text = result if isinstance(result, str) else json.dumps(result, default=str)
+        return {"content": [{"type": "text", "text": text}]}
+
+    return handler
