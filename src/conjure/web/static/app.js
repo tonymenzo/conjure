@@ -766,6 +766,9 @@
         h("dt", { text: "toolkits" }), h("dd", null, kits.length
           ? h("div", { class: "chips" }, kits.map(([k, g]) => h("span", { class: "chip kit", title: JSON.stringify(g), text: g.bundles || g.tools ? `${k}: ${[...(g.bundles || []).map((b) => "/" + b), ...(g.tools || [])].join(" ")}` : k })))
           : h("span", { class: "dim", text: d.toolbase_loadout ? `loadout ${d.toolbase_loadout}` : "none" })),
+        d.may_grant ? [h("dt", { text: "may grant" }), h("dd", null, d.may_grant.length
+          ? h("div", { class: "chips" }, d.may_grant.map((k) => h("span", { class: "chip kit", text: k })), h("span", { class: "dim small", text: ` (${d.authority_mode})` }))
+          : h("span", { class: "dim", text: `nothing (${d.authority_mode}) — set toolbase.authority or tb activate` }))] : null,
         d.tools?.length ? [h("dt", { text: "tools" }), h("dd", { text: d.tools.join(", ") })] : null,
         Object.keys(d.permissions || {}).length ? [h("dt", { text: "permissions" }), h("dd", { text: Object.entries(d.permissions).map(([k, v]) => `${k}: ${v}`).join(", ") })] : null,
       ),

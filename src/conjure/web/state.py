@@ -270,6 +270,15 @@ class SessionView:
                 if self.until is None or e.ts <= self.until
             ],
         }
+        hub = getattr(self.runtime, "toolbase", None)
+        if hub is not None and rec.parent is None:
+            # The root's grantable set — the boundary on every toolkit
+            # in the tree.
+            try:
+                out["may_grant"] = toolkit_items(hub.root_authority())
+            except Exception:
+                out["may_grant"] = []
+            out["authority_mode"] = getattr(hub, "authority_mode", None)
         if self.live:
             ctx = self.control._context_usage_for(addr.id)  # noqa: SLF001
             if ctx is not None:
