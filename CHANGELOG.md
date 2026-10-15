@@ -8,6 +8,19 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-15
+
+### Fixed
+
+- **Every conjure tool call failed on the orchestral engine** in 0.2.1
+  ("Tool 'catalog' not found!"). 0.2.1 renamed orchestral tools to
+  match the prompt (`ToolCatalog`), but orchestral builds the tool list
+  sent to the model with its own naming, so the model was offered
+  `catalog`, `spawn` and `waitfor` while calls were routed under the
+  new names. The tool list now carries the routed name. A new test
+  drives a real tool call through an OpenAI-compatible gateway. Claude
+  and Codex agents were not affected.
+
 ## [0.2.1] — 2026-10-15
 
 Fixes from running on a model access gateway: requests capped and
@@ -259,7 +272,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/tonymenzo/conjure/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tonymenzo/conjure/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tonymenzo/conjure/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/tonymenzo/conjure/compare/v0.1.1...v0.1.2
