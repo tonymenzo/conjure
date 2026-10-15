@@ -11,8 +11,9 @@
   and addresses: a child's toolset must be covered by its parent's.
   This is enforced in ``Runtime._spawn_batch`` before any registry
   mutation, so a refused grant leaves no half-spawned batch. The root's
-  authority is ``toolbase.authority`` (default: every installed
-  toolkit).
+  authority is ``toolbase.authority`` (default: the project's active
+  toolbase loadout — what you've ``tb activate``-d; ``all`` opts in to
+  every installed toolkit).
 - New tools, served when the runtime has toolbase configured:
   ``ToolCatalog`` (what you hold, with descriptions; ``refresh`` re-reads
   the cache), ``GrantToolkits`` (additive, ancestor-only, journaled and

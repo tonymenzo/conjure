@@ -149,7 +149,7 @@ the same way addresses and budgets work.
 
 ```yaml
 toolbase:
-  authority: all          # the root may grant any installed toolkit
+  authority: [heptapod]   # what the root may grant; default: your active toolbase loadout
 root:
   role_prompt: ...
   toolkits: [heptapod/units]   # the root's own tools (optional)

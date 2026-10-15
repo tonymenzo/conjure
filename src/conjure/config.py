@@ -94,9 +94,11 @@ class ToolbaseConfig(BaseModel):
     # ``tb serve``.
     project_root: str | None = None
     loadout: str | None = None
-    # What the root may grant: ``all`` (every installed toolkit) or a
-    # toolset in the same grammar as ``root.toolkits``.
-    authority: str | list[str] | dict[str, Any] = "all"
+    # What the root may grant: ``loadout`` (default — the project's
+    # active toolbase loadout, i.e. what you've ``tb activate``-d),
+    # ``all`` (every installed toolkit; opt-in), or a toolset in the same
+    # grammar as ``root.toolkits`` (e.g. ``[heptapod]``).
+    authority: str | list[str] | dict[str, Any] = "loadout"
     call_timeout_s: float = 60.0
     # Per-toolkit settings for this session only, layered over toolbase's
     # own config (user → project → private), e.g.

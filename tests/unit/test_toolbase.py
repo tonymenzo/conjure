@@ -682,3 +682,34 @@ def test_toolkits_schema_is_typed_for_clients():
     for cls in (SpawnTool, GrantToolkitsTool, RequestToolkitsTool):
         types = {a.get("type") for a in _build_input_schema(cls)["properties"]["toolkits"]["anyOf"]}
         assert {"string", "array", "object"} <= types, cls
+
+
+def test_default_authority_is_the_active_loadout_not_everything_installed():
+    """Installing a toolkit isn't activating it: by default the root may
+    grant only what the project's active loadout selects."""
+    def hub(**kw):
+        return ToolbaseHub(catalog_loader=_catalog, server_factory=FakeServers(), **kw)
+
+    active = hub(loadout_resolver=lambda name: parse_toolkits(["hep/llp"]))
+    assert active.authority_mode == "loadout"
+    rt = Runtime(toolbase=active)
+    root = rt.root(AgentSpec(role_prompt="r"))
+    rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", toolkits=parse_toolkits(["hep__Pythia"])))
+    with pytest.raises(ToolkitDenied):  # installed, not activated
+        rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", toolkits=parse_toolkits(["calc"])))
+    with pytest.raises(ToolkitDenied):  # activated bundle only
+        rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", toolkits=parse_toolkits(["hep/mg5"])))
+    rt.shutdown()
+
+    def no_loadout(name):
+        raise RuntimeError("no active loadout")
+
+    assert hub(loadout_resolver=no_loadout).root_authority() == {}
+    assert set(hub(authority="all").root_authority()) == {"hep", "calc"}
+    assert set(hub(authority=["hep"]).root_authority()) == {"hep"}
+
+
+def test_config_default_authority_is_loadout():
+    from conjure.config import ToolbaseConfig
+
+    assert ToolbaseConfig().authority == "loadout"

@@ -23,10 +23,14 @@ llms:
     provider: anthropic
 
 toolbase:
-  # What the root may grant: ``all`` installed toolkits (re-read on
-  # ``ToolCatalog(refresh=true)``, so a toolkit installed mid-session
-  # becomes grantable), or a toolset like ``[heptapod/llp, calculator]``.
-  authority: all
+  # What the root may grant:
+  #   loadout (default) — the project's active toolbase loadout, i.e.
+  #                       what you've `tb activate`-d
+  #   all               — every installed toolkit (opt-in; re-read on
+  #                       ToolCatalog(refresh=true), so a toolkit
+  #                       installed mid-session becomes grantable)
+  #   [heptapod, calculator/basic] — exactly these
+  authority: loadout
   # Version pins and serve.yaml blocklists come from this project's
   # toolbase loadout (default: discovered from the cwd, like tb serve).
   # Toolkit config (and so which config-gated bundles are served) is

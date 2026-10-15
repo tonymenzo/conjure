@@ -385,8 +385,15 @@ class ToolbaseHub:
     """Per-runtime toolbase state: anchor project, root authority,
     catalog cache, and how to start servers.
 
-    ``authority`` is the root's grantable set: ``"all"`` (every
-    installed toolkit, re-read on each catalog refresh) or a toolset.
+    ``authority`` is the root's grantable set:
+
+    - ``"loadout"`` (default) — the anchor project's active toolbase
+      loadout (``self.loadout`` if named): what you've ``tb activate``-d,
+      re-read on each catalog refresh. Toolbase's own rule — installing
+      a toolkit isn't activating it — holds for agents too.
+    - ``"all"`` — every installed toolkit. An explicit opt-in.
+    - a toolset (``["heptapod", "calculator/basic"]`` or the mapping
+      form) — exactly that.
     ``catalog_loader`` / ``server_factory`` default to the real toolbase
     implementations and exist so tests (and future remote deployments)
     can substitute their own.
@@ -397,7 +404,7 @@ class ToolbaseHub:
         *,
         project_root: str | Path | None = None,
         loadout: str | None = None,
-        authority: Any = "all",
+        authority: Any = "loadout",
         call_timeout_s: float = 60.0,
         toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
         catalog_loader: CatalogLoader | None = None,
@@ -412,9 +419,13 @@ class ToolbaseHub:
         # Session-only toolkit settings (``toolbase.config`` in conjure's
         # YAML), layered over toolbase's own config files.
         self.toolkit_config = {k: dict(v) for k, v in (toolkit_config or {}).items()}
-        self._authority_all = authority in (None, "all", "*")
+        self._authority_mode = (
+            "all" if authority in ("all", "*")
+            else "loadout" if authority in (None, "loadout")
+            else "explicit"
+        )
         self._authority: Toolset = (
-            {} if self._authority_all else parse_toolkits(authority)
+            parse_toolkits(authority) if self._authority_mode == "explicit" else {}
         )
         self._catalog_loader = catalog_loader or (
             lambda: load_toolbase_catalog(self.project_root, self.toolkit_config)
@@ -434,9 +445,20 @@ class ToolbaseHub:
 
     # ----- authority -----
 
+    @property
+    def authority_mode(self) -> str:
+        return self._authority_mode
+
     def root_authority(self) -> Toolset:
-        if self._authority_all:
+        if self._authority_mode == "all":
             return {name: ToolkitGrant() for name in self.catalog().toolkits}
+        if self._authority_mode == "loadout":
+            try:
+                return self._loadout_resolver(self.loadout)
+            except Exception:
+                # No active loadout: the root may grant nothing until one
+                # exists (``tb activate …``) or authority is set explicitly.
+                return {}
         return dict(self._authority)
 
     def toolset_of(self, spec: "AgentSpec") -> Toolset:
@@ -469,7 +491,7 @@ class ToolbaseHub:
             toolkit_config=self.toolkit_config,
         )
 
-    def _resolve_named_loadout(self, name: str) -> Toolset:
+    def _resolve_named_loadout(self, name: str | None) -> Toolset:
         from toolbase.serve.loadouts import resolve_loadout
 
         resolved = resolve_loadout(self.project_root, cli_loadout=name)

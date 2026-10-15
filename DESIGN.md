@@ -95,8 +95,8 @@ passed in, and grant capability by possession.
 The same rule governs **tools**. With toolbase configured, an agent's
 toolkits are both what it can call and the most it can hand to a child.
 A spawn (or a later `GrantToolkits`) may pass on any subset and nothing
-more. The root draws on a configured authority, by default every
-installed toolkit. Curation is therefore part of how a parent closes
+more. The root draws on a configured authority, by default the project's
+active toolbase loadout (installing a toolkit isn't activating it). Curation is therefore part of how a parent closes
 over its child (§5.3): it decides which tools travel with each child.
 `RequestToolkits` covers the case where a parent under-provisions: the
 child asks, and the request climbs the tree until some ancestor can
