@@ -98,18 +98,19 @@
       .join(", ");
   }
   const shortModel = (m) => String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
-  const ENGINE_NAMES = { claude_agent: "claude", orchestral: "orchestral", scripted: "scripted" };
+  const ENGINE_NAMES = { claude_agent: "claude", codex: "codex", orchestral: "orchestral", scripted: "scripted" };
   /** The model chip: what the agent runs on, and how sure we are. */
   function modelChip(info, { withEngine = true } = {}) {
     if (!info) return null;
     const engine = ENGINE_NAMES[info.engine] || info.engine || "";
     const src = info.model_source || (info.model ? "observed" : "default");
-    const label = info.model ? shortModel(info.model) : info.engine === "claude_agent" ? "CLI default model" : "model unknown";
+    const cli = { claude_agent: "claude", codex: "codex" }[info.engine];
+    const label = info.model ? shortModel(info.model) : cli ? "CLI default model" : "model unknown";
     const title = {
       observed: `Running on ${info.model}`,
       resolved: `${info.model} — what this agent's model setting resolves to on the claude CLI`,
       configured: `Configured as ${info.model}; the exact version shows after its first reply`,
-      default: "Not pinned: uses the claude CLI's default model, which shows after the first reply. Set root.model in the config to choose one.",
+      default: `Not pinned: uses the ${cli || "engine"} CLI's default model, which shows after the first reply. Set root.model in the config to choose one.`,
     }[src];
     return h("span", { class: `chip model ${src}`, title }, withEngine && engine ? `${engine} · ` : "", h("b", { text: label }));
   }

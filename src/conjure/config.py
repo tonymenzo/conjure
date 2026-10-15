@@ -61,8 +61,8 @@ class RootConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role_prompt: str
     # See ``conjure.engines.resolve_engine_name`` for ``"auto"``
-    # semantics. Override with ``"orchestral"`` or ``"claude_agent"``
-    # to pin a specific surface.
+    # semantics. Override with ``"orchestral"``, ``"claude_agent"`` or
+    # ``"codex"`` to pin a specific surface.
     engine: str = "auto"
     llm: str = "default"
     tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
@@ -114,12 +114,29 @@ class ToolbaseConfig(BaseModel):
     config: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+class CodexConfig(BaseModel):
+    """``codex:`` — settings for agents on ``engine: codex`` (the Codex
+    CLI, logged in with ``codex login``)."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Codex's sandbox for the agent's own shell commands and edits:
+    # ``workspace-write`` (writes confined to the agent's sandbox dir),
+    # ``read-only``, or ``danger-full-access``.
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "workspace-write"
+    # ``-m`` for children that don't name a model (the root uses
+    # ``root.model``). ``None``: Codex's default.
+    child_model: str | None = None
+    reasoning_effort: str | None = None
+    bin: str | None = None  # path to ``codex``; default: from PATH
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     llms: dict[str, LLMConfig]
     root: RootConfig
     toolbase: ToolbaseConfig | None = None
+    codex: CodexConfig = Field(default_factory=CodexConfig)
     mode: Literal["repl", "one-shot"] = "repl"
     initial_task: str | None = None
 

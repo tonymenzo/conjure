@@ -56,6 +56,34 @@
   ``conjure.session.start_session``, shared by tmux and web modes.
 - ``conjure quit`` no longer needs libtmux when no daemon is tracked.
 
+## Unreleased — Codex engine
+
+- **``engine: codex``**: agents run on the Codex CLI under your ChatGPT
+  subscription (``codex login``); ``OPENAI_API_KEY`` is withheld from
+  the CLI.
+  - Each turn is a ``codex exec --json`` run: the first one starts a
+    thread in the agent's sandbox, and later ones resume it.
+  - Each agent has its own ``CODEX_HOME`` under the store, containing a
+    link to ``auth.json`` and nothing else from ``~/.codex``: no
+    ``AGENTS.md``, personal MCP servers or ChatGPT connectors.
+  - Codex's shell and edits run in its ``workspace-write`` sandbox by
+    default (``codex.sandbox``).
+  - Events appear as conjure's own (replies, tool calls and results,
+    usage). The model and context window come from Codex's session
+    file, so the web UI shows ``codex · <model>`` and a context bar.
+  - Children left on ``auto`` stay on Codex.
+  - Granted toolkit skills appear as native Codex skills.
+  - ``codex exec`` can't ask for approval, so Codex agents have no
+    permission panel yet.
+- **Loopback MCP server** (``conjure.mcp_http``): one streamable-HTTP
+  endpoint per runtime on ``127.0.0.1``, started on first use. Each
+  request carries the calling agent's token (passed to Codex by env
+  var, never on the command line). It serves conjure's tools, run as
+  that agent, plus that agent's own toolkit tools. Unknown tokens see
+  nothing.
+- New ``codex:`` config section (``sandbox``, ``child_model``,
+  ``reasoning_effort``, ``bin``) and ``examples/codex_agent.yaml``.
+
 ## Unreleased — agent-curated toolkits
 
 ### Toolbase

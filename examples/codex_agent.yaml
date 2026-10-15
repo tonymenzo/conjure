@@ -1,0 +1,48 @@
+# Example configuration: root agent on the Codex CLI.
+#
+# Each agent is a Codex thread (``codex exec --json``, resumed turn to
+# turn) running under your ChatGPT subscription: OPENAI_API_KEY is
+# withheld from the CLI. Children spawned with engine ``auto`` stay on
+# Codex. conjure's tools (Spawn, Send, Call, the combinators, toolbase
+# curation) and each agent's granted toolkits reach Codex through a
+# loopback MCP server, authenticated per agent.
+#
+# Each agent gets its own CODEX_HOME under the store, holding a link to
+# your auth.json and nothing else of ~/.codex (no AGENTS.md, personal
+# MCP servers or connectors). Granted toolkit skills appear there as
+# native Codex skills.
+#
+# Setup:
+#   codex login               # ChatGPT account
+#   conjure web examples/codex_agent.yaml
+#
+# Codex's own shell commands and edits run in its sandbox
+# (``codex.sandbox``, default workspace-write: writes stay in the
+# agent's sandbox directory). ``codex exec`` can't ask for approval,
+# so Codex agents don't use the permission panel.
+
+runtime:
+  store_dir: ./.conjure/store
+  max_depth: 3
+
+llms:
+  # Required by the schema; the codex engine doesn't use it.
+  default:
+    provider: openai
+
+codex:
+  sandbox: workspace-write
+  # child_model: gpt-6.1-sol   # -m for children that don't pick one
+  # reasoning_effort: medium
+
+# toolbase:
+#   authority: [heptapod]
+
+root:
+  label: root
+  engine: codex
+  # model: gpt-6.1-sol          # omitted: Codex's default
+  role_prompt: |
+    You coordinate specialist agents. For anything beyond a quick
+    answer, spawn children and give each one only the tools its task
+    needs. Keep your own replies short.

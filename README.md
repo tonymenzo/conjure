@@ -160,6 +160,11 @@ tools, so agents can invoke them on their own subtrees:
   as `claude-agent-sdk` sessions with Claude Code's full tool surface
   (Bash, Edit, Grep, …), per-agent sandbox directories, and permission
   routing.
+- **`codex`** — agents run as Codex CLI threads (`codex exec --json`,
+  resumed turn to turn) on your ChatGPT subscription, with Codex's own
+  sandbox for shell and edits. conjure's tools and granted toolkits
+  reach them over a loopback MCP server. Children left on `auto` stay
+  on Codex. See `examples/codex_agent.yaml`.
 - **`ScriptedEngine`** — deterministic behaviors for tests and offline
   development.
 

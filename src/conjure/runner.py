@@ -66,7 +66,14 @@ def build_runtime(
     )
 
     def dispatch(record: AgentRecord, runtime: Runtime):
-        engine_name = resolve_engine_name(record.spec.engine)
+        engine_name = _engine_for(record, runtime)
+        if engine_name == "codex":
+            return _build_codex_engine(
+                record=record,
+                runtime=runtime,
+                event_log_router=event_log_router,
+                codex_config=config.codex,
+            )
         if engine_name == "orchestral":
             return orchestral_factory(record, runtime)
         if engine_name == "claude_agent":
@@ -107,6 +114,70 @@ def build_runtime(
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
+
+
+def _engine_for(record: AgentRecord, runtime: Runtime) -> str:
+    """``spec.engine``, with ``auto`` resolved. A child left on
+    ``auto`` under a Codex parent stays on Codex: ``auto`` otherwise
+    means "Claude if available", which would silently switch a Codex
+    tree's children to another provider."""
+    name = record.spec.engine
+    if (not name or name == "auto") and record.parent is not None:
+        try:
+            parent = runtime.record_for(record.parent)
+        except Exception:
+            parent = None
+        if parent is not None and _engine_for(parent, runtime) == "codex":
+            return "codex"
+    return resolve_engine_name(name)
+
+
+def _build_codex_engine(
+    *,
+    record: AgentRecord,
+    runtime: Runtime,
+    event_log_router: Callable[[AgentRecord], Any] | None,
+    codex_config: Any,
+):
+    """A ``CodexEngine`` for ``record``: its sandbox is Codex's working
+    root, and its ``CODEX_HOME`` (auth link, sessions, surfaced skills)
+    lives beside the sandboxes in the store."""
+    import tempfile
+
+    from conjure.engines.codex import CodexEngine
+    from conjure.tools.filesystem import _sandbox_for
+
+    stream_emit = None
+    if event_log_router is not None:
+        event_log = event_log_router(record)
+        if event_log is not None:
+            stream_emit = event_log.emit
+    sandbox = _sandbox_for(record, runtime)
+    if sandbox is None:
+        sandbox = Path(tempfile.mkdtemp(prefix=f"conjure-{record.addr.id}-"))
+    if runtime.store_dir is not None:
+        home = Path(runtime.store_dir).expanduser() / "codex_homes" / record.addr.id
+    else:
+        home = sandbox.parent / f".codex_home-{record.addr.id}"
+    model = record.spec.model or (codex_config.child_model if record.parent is not None else None)
+    mount = None
+    if runtime.toolbase is not None:
+        from conjure.toolbase import ToolbaseMount
+
+        mount = ToolbaseMount(runtime.toolbase, record, sandbox, skills_dir=home / "skills")
+        mount.prestart()
+    return CodexEngine(
+        record=record,
+        runtime=runtime,
+        sandbox_dir=sandbox,
+        codex_home=home,
+        stream_emit=stream_emit,
+        model=model,
+        sandbox_mode=codex_config.sandbox,
+        reasoning_effort=codex_config.reasoning_effort,
+        toolbase_mount=mount,
+        codex_bin=codex_config.bin,
+    )
 
 
 def _build_claude_agent_engine(

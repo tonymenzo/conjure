@@ -593,6 +593,7 @@ def _engine_kind(engine: Any, spec: Any) -> str:
     name = type(engine).__name__
     return {
         "ClaudeAgentEngine": "claude_agent",
+        "CodexEngine": "codex",
         "OrchestralEngine": "orchestral",
         "ScriptedEngine": "scripted",
     }.get(name, spec.engine)

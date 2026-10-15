@@ -681,10 +681,11 @@ class SpawnTool(StatelessRuntimeTool):
     engine: str = RuntimeField(
         default="auto",
         description=(
-            "Engine for the child agent: ``auto`` (default — picks "
-            "``claude_agent`` if the SDK + ``claude`` CLI are present, "
-            "else ``orchestral``), or pin to ``orchestral`` / "
-            "``claude_agent`` explicitly."
+            "Engine for the child agent: ``auto`` (default — your own "
+            "engine if you run on ``codex``; otherwise ``claude_agent`` "
+            "if the SDK + ``claude`` CLI are present, else "
+            "``orchestral``), or pin to ``orchestral`` / "
+            "``claude_agent`` / ``codex`` explicitly."
         ),
     )
     sandbox_dir: str | None = OptionalRuntimeField(
@@ -707,7 +708,9 @@ class SpawnTool(StatelessRuntimeTool):
             "(``claude-sonnet-4-6``). Omit to default to a cheap "
             "model (``haiku``) for the child; explicitly set "
             "``sonnet`` or ``opus`` only when the task genuinely "
-            "needs more capability. Ignored by the orchestral engine."
+            "needs more capability. On the codex engine, a Codex model "
+            "name; omitted, Codex's default. Ignored by the orchestral "
+            "engine."
         ),
     )
     oneshot: bool = RuntimeField(
