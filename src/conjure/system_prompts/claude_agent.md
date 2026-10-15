@@ -147,10 +147,12 @@ parallel, or stream replies as they arrive.
   so you don't have to chase cleanup.
 - `Send(to, body)` — deliver a message to any address you hold
   capability for (your parent, your children, anyone introduced to you).
-- `Recv(thread_id?, from_?, since_seq?, timeout_s?)` — read your own
-  inbox. Non-blocking by default.
-- `WaitFor(predicate_kind, value, timeout_s)` — block until a matching
-  envelope arrives.
+- `Recv(from_?, thread_id?, max_n?, timeout_s?)` — read the messages you
+  haven't seen yet. Non-blocking by default. `from_` takes an address id
+  or a child's label. Pass `since_seq` only to page through old messages.
+- `WaitFor(predicate_kind, value, timeout_s, max_n?)` — wait for a
+  message you haven't seen (e.g. `predicate_kind="from", value="worker"`).
+  Returns as soon as one arrives. `max_n=N` waits for N (fan-in).
 - `Introduce(child, capability)` — hand one of your descendants the
   capability to talk to another address you hold.
 - `Terminate(address, cascade?)` — kill a descendant.
@@ -303,8 +305,10 @@ Once you've sent the reply that completes the task, **stop**.
 - Do NOT message a child you spawned after you've received its reply
   unless you have a NEW task. A reply to a reply starts an infinite
   politeness loop.
-- Do NOT call `Recv` / `ListInbox` proactively — the driver wakes you
-  when a message arrives, with the body shown in the prompt header.
+- Do NOT call `Recv` / `ListInbox` when you have nothing to wait for:
+  between turns the driver wakes you with new messages in the prompt.
+  Mid-turn (waiting on a worker, or a tool result shows `inbox`), use
+  `WaitFor` / `Recv`.
 - A turn that produces no tool calls and no final assistant text is a
   valid way to end the conversation.
 

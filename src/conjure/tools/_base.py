@@ -179,7 +179,7 @@ def inbox_notice(token: str, *, limit: int = 3) -> dict | None:
         "unread": len(waiting),
         "latest": [preview(e) for e in waiting[-limit:]],
         "hint": (
-            "Messages are waiting. Read them now with Recv (or WaitFor); "
-            "otherwise they reach you only after this turn ends."
+            "Messages are waiting: Recv() returns them. Otherwise they "
+            "reach you only after this turn ends."
         ),
     }

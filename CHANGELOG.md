@@ -30,6 +30,21 @@ this file as its notes.
 - `openai_compatible` clients leave retries to conjure (one visible
   layer), instead of the OpenAI SDK's silent ones.
 
+### Fixed
+
+- **`Recv` and `WaitFor` could hang an agent.**
+  - `Recv()` with no arguments always returned the inbox's first
+    message, often the agent's own original task, so an agent waiting
+    for results looped on it.
+  - `WaitFor()` waited out its whole timeout even after the reply had
+    arrived, and returned old messages along with new ones.
+  - Both now return only messages the agent hasn't seen, and `WaitFor`
+    returns as soon as one arrives (`max_n=N` still waits for N, for
+    fan-in). Sender filters accept a child's label, `parent` or
+    `caller`, and an unknown name fails at once instead of waiting
+    out the timeout. Passing `since_seq` still pages through the whole
+    inbox.
+
 ### Removed
 
 - The design document is no longer part of the repository.
