@@ -107,6 +107,15 @@ class Driver:
             if not envelopes:
                 continue
             self._cursor = envelopes[-1].seq
+            # Skip what the agent already consumed itself (recv /
+            # wait_for) during an earlier turn — pushing it again would
+            # read as a second, new message and invite a second reply.
+            pulled = record.pulled
+            if pulled:
+                envelopes = [e for e in envelopes if e.seq not in pulled]
+                pulled.difference_update([s for s in list(pulled) if s <= self._cursor])
+                if not envelopes:
+                    continue
             # Budget gate: when a ceiling anywhere on this agent's
             # ancestor chain is spent, skip the step (the messages are
             # consumed but never reach the engine — no further tokens

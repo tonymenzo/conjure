@@ -153,3 +153,8 @@ class AgentRecord:
     # would abort the reply tool call mid-acknowledgement, which the
     # claude CLI reports to the model as a user refusal.
     delivered: bool = False
+    # Inbox seqs this agent already consumed through ``recv`` /
+    # ``wait_for`` (the pull path). The driver skips them so a message
+    # the agent read mid-turn isn't pushed to it again as new on its
+    # next turn. Pruned as the driver's cursor passes them.
+    pulled: set[int] = field(default_factory=set)

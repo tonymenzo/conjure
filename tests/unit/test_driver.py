@@ -310,3 +310,50 @@ def test_shutdown_stops_all_drivers():
         assert record.status == "terminated"
         assert record.driver is not None
         assert record.driver.join(timeout=2.0)
+
+
+def test_driver_skips_messages_the_agent_already_pulled():
+    """A reply the agent consumed mid-turn with WaitFor / Recv must not
+    be pushed to it again as a new message on its next turn."""
+    import threading
+
+    from conjure import AgentSpec, Runtime
+    from conjure.tools.primitives import send_impl, wait_for_impl
+
+    prompts: list[str] = []
+    got_reply = threading.Event()
+
+    class Engine:
+        def __init__(self, record):
+            self.record = record
+
+        def step(self, prompt):
+            role = self.record.spec.role_prompt
+            if role == "parent":
+                prompts.append(prompt)
+                if len(prompts) == 1:
+                    send_impl(token=self.record.token, to="kid", body="work")
+                    out = wait_for_impl(token=self.record.token, predicate_kind="from", value=kid_addr["id"], timeout_s=3, max_n=1)
+                    assert out["envelopes"], "no reply collected"
+                    got_reply.set()
+            elif role == "kid":
+                send_impl(token=self.record.token, to="parent", body="result")
+            return ""
+
+    kid_addr: dict = {}
+    rt = Runtime(engine_factory=lambda record, runtime: Engine(record))
+    root = rt.root(AgentSpec(role_prompt="parent"))
+    kid_addr["id"] = rt._spawn(parent=root, spec=AgentSpec(role_prompt="kid", label="kid")).id
+    rt.send_external(to=root, body="start")
+    assert got_reply.wait(3)
+    # A later, genuinely new message wakes the parent again …
+    import time as _t
+    _t.sleep(0.3)
+    rt.send_external(to=root, body="next")
+    deadline = _t.monotonic() + 3
+    while len(prompts) < 2 and _t.monotonic() < deadline:
+        _t.sleep(0.02)
+    rt.shutdown()
+    # … and the kid's already-collected reply is not in it.
+    assert len(prompts) == 2
+    assert "result" not in prompts[1] and "next" in prompts[1]

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,13 +91,15 @@ def parse_toolkits(raw: Any) -> Toolset:
     """
     if raw is None:
         return {}
+    original = raw
     if isinstance(raw, str):
-        raw = [raw]
+        raw = _parse_toolkits_string(raw)
     out: Toolset = {}
     if isinstance(raw, Mapping):
         for kit, value in raw.items():
             if not isinstance(kit, str) or not kit:
-                raise ToolkitDenied(f"toolkit names must be strings: {kit!r}")
+                raise _unreadable(original, f"key {kit!r} is not a toolkit name")
+            _check_names(original, kit)
             if value is None or value == "*" or value is True:
                 _merge(out, kit, ToolkitGrant())
             elif isinstance(value, ToolkitGrant):
@@ -110,26 +113,62 @@ def parse_toolkits(raw: Any) -> Toolset:
                 for item in value:
                     _merge_item(out, kit, str(item))
             else:
-                raise ToolkitDenied(
-                    f"grant for {kit!r} must be null, '*', a list or a mapping"
+                raise _unreadable(
+                    original, f"the grant for {kit!r} must be null, '*', a list or a mapping"
                 )
         return out
     if isinstance(raw, (list, tuple)):
         for item in raw:
-            if not isinstance(item, str) or not item:
-                raise ToolkitDenied(f"toolkit items must be strings: {item!r}")
+            if not isinstance(item, str) or not item.strip():
+                raise _unreadable(original, f"item {item!r} is not a name")
+            item = item.strip()
             if "/" in item:
                 kit, bundle = item.split("/", 1)
+                _check_names(original, kit, bundle)
                 _merge(out, kit, ToolkitGrant(bundles=[bundle]))
             elif "__" in item:
                 kit, tool = item.split("__", 1)
+                _check_names(original, kit, tool)
                 _merge(out, kit, ToolkitGrant(tools=[tool]))
             else:
+                _check_names(original, item)
                 _merge(out, item, ToolkitGrant())
         return out
-    raise ToolkitDenied(
-        f"toolkits must be a list or a mapping, got {type(raw).__name__}"
-    )
+    raise _unreadable(original, f"got a {type(raw).__name__}")
+
+
+_TOOLKITS_EXPECTED = (
+    'expected a list like ["heptapod/mg5", "heptapod__ValidateProcess", '
+    '"calculator"], a mapping {"heptapod": {"bundles": ["mg5"]}}, or one '
+    "such name as a string"
+)
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+
+
+def _unreadable(raw: Any, why: str) -> ToolkitDenied:
+    shown = raw if isinstance(raw, str) else repr(raw)
+    if len(shown) > 200:
+        shown = shown[:199] + "…"
+    return ToolkitDenied(f"couldn't read toolkits {shown!r} ({why}); {_TOOLKITS_EXPECTED}")
+
+
+def _check_names(raw: Any, *names: str) -> None:
+    for name in names:
+        if not _NAME_RE.match(name):
+            raise _unreadable(raw, f"{name!r} isn't a toolkit, bundle or tool name")
+
+
+def _parse_toolkits_string(text: str) -> Any:
+    """Tool-call clients sometimes send structured arguments as text:
+    accept JSON (a list or mapping), else a comma/space-separated list
+    of names."""
+    stripped = text.strip()
+    if stripped[:1] in ("[", "{"):
+        try:
+            return json.loads(stripped)
+        except ValueError as exc:
+            raise _unreadable(text, f"not valid JSON: {exc.msg}") from exc
+    return [part for part in re.split(r"[,\s]+", stripped) if part]
 
 
 def _merge_item(out: Toolset, kit: str, item: str) -> None:

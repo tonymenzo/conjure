@@ -198,7 +198,13 @@ def spawn_impl(
     if initial_message:
         runtime.send_external(to=child_addr, body=initial_message, sender="system")
 
-    return {"ok": True, "address": child_addr.id, "label": child_addr.label}
+    out: dict[str, Any] = {"ok": True, "address": child_addr.id, "label": child_addr.label}
+    if toolset:
+        # Echo the grant (same shape GrantToolkits returns) so the caller
+        # can confirm what the child holds without another round trip.
+        # Tools are served from the child's first turn.
+        out["toolkits"] = {k: v.model_dump(exclude_none=True) for k, v in toolset.items()}
+    return out
 
 
 def send_impl(
@@ -324,6 +330,7 @@ def recv_impl(
         from_id=from_,
         timeout_s=timeout_s,
     )
+    record.pulled.update(e.seq for e in envelopes)
     return {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
@@ -379,6 +386,7 @@ def wait_for_impl(
         if remaining <= 0:
             break
 
+    record.pulled.update(e.seq for e in collected)
     return {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in collected],
@@ -713,7 +721,7 @@ class SpawnTool(StatelessRuntimeTool):
             "child in ``status=\"error\"`` for inspection / retry."
         ),
     )
-    toolkits: Any = OptionalRuntimeField(
+    toolkits: str | list[str] | dict[str, Any] | None = OptionalRuntimeField(
         description=(
             "Toolbase toolkits to serve the child, drawn from what you "
             "hold (see ToolCatalog). `tb activate` grammar: "

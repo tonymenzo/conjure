@@ -201,7 +201,7 @@ class GrantToolkitsTool(StatelessRuntimeTool):
     ``not_permitted`` (target isn't your descendant)."""
 
     child: str = RuntimeField(description="Address id or label of the descendant.")
-    toolkits: Any = RuntimeField(description=_TOOLKITS_FIELD_HELP)
+    toolkits: str | list[str] | dict[str, Any] = RuntimeField(description=_TOOLKITS_FIELD_HELP)
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
@@ -217,7 +217,7 @@ class RequestToolkitsTool(StatelessRuntimeTool):
     Sends a ``toolkit_request`` message; if granted, the tools appear at
     your next turn. Say why in ``reason`` — the parent decides."""
 
-    toolkits: Any = RuntimeField(description=_TOOLKITS_FIELD_HELP)
+    toolkits: str | list[str] | dict[str, Any] = RuntimeField(description=_TOOLKITS_FIELD_HELP)
     reason: str = RuntimeField(
         default="",
         description="What you need the tools for.",

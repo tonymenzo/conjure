@@ -633,3 +633,52 @@ def test_kit_config_resolves_against_the_session_project(tmp_path, monkeypatch):
     assert resolve_kit_config("hep", project) == {"mg5_path": "/opt/mg5", "cache": True}
     assert resolve_kit_config("hep", project, {"hep": {"mg5_path": "/other"}})["mg5_path"] == "/other"
     assert resolve_kit_config("other", project, {"hep": {"x": 1}}) == {}
+
+
+# ---------- feedback from a live root agent ----------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["hep/llp", "hep__Units"],
+        '["hep/llp", "hep__Units"]',            # list sent as JSON text
+        '{"hep": {"bundles": ["llp"], "tools": ["Units"]}}',
+        "hep/llp, hep__Units",
+        "hep/llp hep__Units",
+    ],
+)
+def test_spawn_toolkits_accepts_every_shape_a_client_sends(raw):
+    from conjure.tools.primitives import spawn_impl
+
+    rt = _rt()
+    root = rt.root(AgentSpec(role_prompt="r"))
+    out = spawn_impl(token=rt.record_for(root).token, role_prompt="c", toolkits=raw)
+    assert out["ok"], out
+    # The grant is echoed back.
+    assert out["toolkits"] == {"hep": {"bundles": ["llp"], "tools": ["Units"]}}
+    rt.shutdown()
+
+
+def test_unreadable_toolkits_say_what_arrived_and_what_was_expected():
+    from conjure.tools.primitives import spawn_impl
+
+    rt = _rt()
+    root = rt.root(AgentSpec(role_prompt="r"))
+    tok = rt.record_for(root).token
+    for raw in ['["hep/llp", ', ['["hep/llp'], {"hep": 3}]:
+        out = spawn_impl(token=tok, role_prompt="c", toolkits=raw)
+        assert out["code"] == "toolkit_denied"
+        assert "couldn't read toolkits" in out["error"] and "expected" in out["error"]
+        assert "not installed" not in out["error"]
+    rt.shutdown()
+
+
+def test_toolkits_schema_is_typed_for_clients():
+    from conjure.mcp_in_process import _build_input_schema
+    from conjure.tools.primitives import SpawnTool
+    from conjure.tools.toolkits import GrantToolkitsTool, RequestToolkitsTool
+
+    for cls in (SpawnTool, GrantToolkitsTool, RequestToolkitsTool):
+        types = {a.get("type") for a in _build_input_schema(cls)["properties"]["toolkits"]["anyOf"]}
+        assert {"string", "array", "object"} <= types, cls
