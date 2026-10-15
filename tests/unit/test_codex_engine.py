@@ -260,3 +260,28 @@ def test_interrupt_kills_the_running_turn_without_an_error(tmp_path):
     assert result == [""]
     engine.shutdown()
     rt.shutdown()
+
+
+def test_unpinned_agents_show_codexs_default_before_their_first_reply(tmp_path, monkeypatch):
+    real = tmp_path / "real-codex"
+    real.mkdir()
+    (real / "models_cache.json").write_text(json.dumps({"models": [
+        {"slug": "gpt-big", "priority": 2, "visibility": "list"},
+        {"slug": "gpt-hidden", "priority": 0, "visibility": "hide"},
+        {"slug": "gpt-default", "priority": 1, "visibility": "list"},
+    ]}))
+    monkeypatch.setenv("CODEX_HOME", str(real))
+    rt, rec, engine, events, calls = _engine(tmp_path)
+    try:
+        assert engine.model_info() == ("gpt-default", "resolved")
+        engine.step("hi")
+        assert engine.model_info() == ("gpt-test-1", "observed")
+    finally:
+        engine.shutdown()
+        rt.shutdown()
+    rt, rec, engine, events, calls = _engine(tmp_path / "pinned", model="gpt-big") if (tmp_path / "pinned").mkdir() is None else None
+    try:
+        assert engine.model_info() == ("gpt-big", "configured")
+    finally:
+        engine.shutdown()
+        rt.shutdown()

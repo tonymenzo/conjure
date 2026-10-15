@@ -140,6 +140,10 @@ class CodexEngine:
                 item = ev.get("item") or {}
                 if kind == "thread.started" and ev.get("thread_id"):
                     self.thread_id = ev["thread_id"]
+                if self._observed_model is None and self.thread_id:
+                    # The session file names the model from the turn's
+                    # start; don't make the UI wait for the turn to end.
+                    self._read_session_meta()
                 elif kind == "item.completed" and item.get("type") == "agent_message":
                     text = item.get("text") or ""
                     if not text:
@@ -197,10 +201,16 @@ class CodexEngine:
         return self.model_info()[0]
 
     def model_info(self) -> tuple[str | None, str]:
+        """``observed`` once Codex's session file names the model (from
+        the first turn's start); before that the configured ``-m``, or,
+        unpinned, the default Codex would pick (``resolved``)."""
         if self._observed_model:
             return self._observed_model, "observed"
         if self._model:
             return self._model, "configured"
+        default = codex_default_model(self._home)
+        if default:
+            return default, "resolved"
         return None, "default"
 
     def context_usage(self) -> tuple[int, int] | None:
@@ -317,6 +327,27 @@ class CodexEngine:
             self._emit_fn(event)
         except Exception:
             pass
+
+
+def codex_default_model(home: Path | None = None) -> str | None:
+    """The model Codex picks when none is set: the listed model with the
+    lowest ``priority`` in its models cache (the agent's own home first,
+    then the user's)."""
+    homes = [home] if home is not None else []
+    homes.append(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"))
+    for h in homes:
+        try:
+            data = json.loads((Path(h) / "models_cache.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        models = data.get("models") if isinstance(data, dict) else None
+        listed = [
+            m for m in models or []
+            if isinstance(m, dict) and m.get("slug") and m.get("visibility", "list") == "list"
+        ]
+        if listed:
+            return min(listed, key=lambda m: m.get("priority", 1 << 30))["slug"]
+    return None
 
 
 def _tool_call(item: dict[str, Any]) -> dict[str, Any] | None:
