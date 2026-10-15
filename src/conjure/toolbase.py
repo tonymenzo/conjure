@@ -9,9 +9,10 @@ may hand to a child.
 Grants attenuate exactly like budgets and addresses: a child's toolset
 must be a subset of its parent's, checked once per spawn at the runtime
 choke point (``Runtime._spawn_batch``) and once per live grant. The root
-draws on the hub's configured authority — by default every installed
-toolkit, so a toolkit authored and installed mid-session becomes
-grantable after a catalog refresh.
+draws on the hub's configured authority — by default the project's
+active toolbase loadout (installing a toolkit isn't activating it);
+``authority: all`` opts in to every installed toolkit, so one authored
+and installed mid-session becomes grantable after a catalog refresh.
 
 Three pieces:
 
