@@ -550,13 +550,21 @@ def _ref(addr: Address | None) -> dict[str, str] | None:
 def model_info(engine: Any, spec: Any) -> tuple[str | None, str]:
     """Which model an agent runs on, and how sure we are.
 
-    ``observed`` — the engine has seen the model answer (claude_agent
-    records it from each reply; orchestral calls the model it was built
-    with). ``configured`` — an alias or id from the spec, not yet
+    Engines that know better say so via ``model_info()`` (claude_agent
+    also reports ``resolved``: an alias looked up in the CLI's model
+    table, exact before the first reply). Otherwise: ``observed`` — the
+    engine has seen the model answer (orchestral calls the model it was
+    built with). ``configured`` — an alias or id from the spec, not yet
     confirmed by a reply. ``default`` — nothing pinned; a claude_agent
     root runs on the ``claude`` CLI's default, which is only known
     after its first reply.
     """
+    info = getattr(engine, "model_info", None)
+    if callable(info):
+        try:
+            return info()
+        except Exception:
+            pass
     observed = getattr(engine, "_observed_model", None)
     if isinstance(observed, str) and observed:
         return observed, "observed"

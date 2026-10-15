@@ -91,6 +91,52 @@ def _load_default_system_template() -> string.Template:
     return string.Template(text)
 
 
+# The CLI's model table: alias (``default``, ``opus``, ``haiku``, …) →
+# the exact model it resolves to for this account, from the
+# ``initialize`` handshake. Lets the UI name an agent's model before its
+# first reply — an unpinned root runs on ``default``, whose resolution
+# depends on the account. Filled by a one-off probe (a CLI startup, no
+# prompt, no tokens) and refreshed by every engine's own connect.
+_MODEL_MAP: dict[str, str] = {}
+_MODEL_PROBE_STARTED = False
+_MODEL_PROBE_LOCK = threading.Lock()
+
+
+def resolve_model_alias(alias: str | None) -> str | None:
+    """Exact model for ``alias`` (``None`` = the CLI default), if the
+    model table is known."""
+    return _MODEL_MAP.get(alias or "default")
+
+
+def _record_models(info: Any) -> None:
+    for entry in (info or {}).get("models") or []:
+        if not isinstance(entry, dict):
+            continue
+        alias, resolved = entry.get("value"), entry.get("resolvedModel")
+        if isinstance(alias, str) and isinstance(resolved, str) and resolved:
+            _MODEL_MAP[alias] = resolved
+            _MODEL_MAP.setdefault(resolved, resolved)
+
+
+async def _probe_models(env: dict[str, str]) -> None:
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+    global _MODEL_PROBE_STARTED
+    client = ClaudeSDKClient(ClaudeAgentOptions(env=env))
+    try:
+        await asyncio.wait_for(client.connect(), timeout=60)
+        _record_models(await client.get_server_info())
+    except Exception:
+        # Let a later engine try again; until then the UI shows the alias.
+        with _MODEL_PROBE_LOCK:
+            _MODEL_PROBE_STARTED = False
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
 class ClaudeAgentEngine:
     """Engine that runs each agent as a ``ClaudeSDKClient`` session."""
 
@@ -342,6 +388,7 @@ class ClaudeAgentEngine:
         )
         self._options = opts
         self._client = ClaudeSDKClient(opts)
+        self._start_model_probe(sdk_env)
         self._last_context: tuple[int, int] | None = None
         self._context_fetch_in_flight: bool = False
         # Lazy connect: ``_client.connect()`` shells out to the ``claude``
@@ -368,15 +415,41 @@ class ClaudeAgentEngine:
         return self._cost_used
 
     def model_name(self) -> str | None:
-        """Best-effort model identifier. Prefers the value the SDK
-        actually reports on its last ``AssistantMessage`` (the real
-        model id, including version suffix) over the alias passed
-        to the options (e.g. ``"haiku"``). Falls back to the option
-        value, and finally ``None`` when neither is known."""
+        """The exact model this agent runs on. Prefers the id the SDK
+        reports on its last ``AssistantMessage``; before the first
+        reply, resolves the configured alias (or the CLI default)
+        through the CLI's model table; falls back to the alias itself,
+        and ``None`` only when nothing is known yet."""
+        return self.model_info()[0]
+
+    def model_info(self) -> tuple[str | None, str]:
+        """``(model, source)``: ``observed`` (named by a reply),
+        ``resolved`` (alias looked up in the CLI's model table),
+        ``configured`` (an alias not yet resolved), or ``default``
+        (unpinned, table not loaded yet)."""
         observed = getattr(self, "_observed_model", None)
         if isinstance(observed, str) and observed:
-            return observed
-        return getattr(self._options, "model", None) if hasattr(self, "_options") else None
+            return observed, "observed"
+        alias = getattr(self._options, "model", None) if hasattr(self, "_options") else None
+        resolved = resolve_model_alias(alias)
+        if resolved:
+            return resolved, "resolved"
+        if alias:
+            return alias, "configured"
+        return None, "default"
+
+    def _start_model_probe(self, env: dict[str, str]) -> None:
+        global _MODEL_PROBE_STARTED
+        if os.environ.get("CONJURE_MODEL_PROBE", "1") == "0":
+            return
+        with _MODEL_PROBE_LOCK:
+            if _MODEL_PROBE_STARTED or _MODEL_MAP:
+                return
+            _MODEL_PROBE_STARTED = True
+        try:
+            asyncio.run_coroutine_threadsafe(_probe_models(dict(env)), self._loop)
+        except Exception:
+            pass
 
     def context_usage(self) -> tuple[int, int] | None:
         """Non-blocking context fetch. Returns the cached value
@@ -549,6 +622,10 @@ class ClaudeAgentEngine:
         if not self._connected:
             await self._client.connect()
             self._connected = True
+            try:
+                _record_models(await self._client.get_server_info())
+            except Exception:
+                pass
 
         accumulated = ""
         pending_tool_calls: list[dict[str, Any]] = []

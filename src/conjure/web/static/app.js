@@ -107,6 +107,7 @@
     const label = info.model ? shortModel(info.model) : info.engine === "claude_agent" ? "CLI default model" : "model unknown";
     const title = {
       observed: `Running on ${info.model}`,
+      resolved: `${info.model} — what this agent's model setting resolves to on the claude CLI`,
       configured: `Configured as ${info.model}; the exact version shows after its first reply`,
       default: "Not pinned: uses the claude CLI's default model, which shows after the first reply. Set root.model in the config to choose one.",
     }[src];
