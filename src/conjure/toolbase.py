@@ -360,6 +360,7 @@ class ToolbaseHub:
         loadout: str | None = None,
         authority: Any = "all",
         call_timeout_s: float = 60.0,
+        toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
         catalog_loader: CatalogLoader | None = None,
         server_factory: ServerFactory | None = None,
         loadout_resolver: Callable[[str], Toolset] | None = None,
@@ -369,12 +370,15 @@ class ToolbaseHub:
         )
         self.loadout = loadout
         self.call_timeout_s = call_timeout_s
+        # Session-only toolkit settings (``toolbase.config`` in conjure's
+        # YAML), layered over toolbase's own config files.
+        self.toolkit_config = {k: dict(v) for k, v in (toolkit_config or {}).items()}
         self._authority_all = authority in (None, "all", "*")
         self._authority: Toolset = (
             {} if self._authority_all else parse_toolkits(authority)
         )
         self._catalog_loader = catalog_loader or (
-            lambda: load_toolbase_catalog(self.project_root)
+            lambda: load_toolbase_catalog(self.project_root, self.toolkit_config)
         )
         self._server_factory = server_factory or _default_server_factory
         self._loadout_resolver = loadout_resolver or self._resolve_named_loadout
@@ -423,6 +427,7 @@ class ToolbaseHub:
             project_root=self.project_root,
             loadout=self.loadout,
             call_timeout_s=self.call_timeout_s,
+            toolkit_config=self.toolkit_config,
         )
 
     def _resolve_named_loadout(self, name: str) -> Toolset:
@@ -645,7 +650,10 @@ def toolbase_available() -> bool:
     return True
 
 
-def load_toolbase_catalog(project_root: Path | None = None) -> Catalog:
+def load_toolbase_catalog(
+    project_root: Path | None = None,
+    toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Catalog:
     """Read every installed toolkit from toolbase's cache.
 
     Tool names are the served names (``display_name`` or the class name
@@ -700,7 +708,9 @@ def load_toolbase_catalog(project_root: Path | None = None) -> Catalog:
                 description=(fm.description if fm else "") or "",
                 bundle=fm.bundle if fm else None,
             )
-        info.unavailable_bundles = _unavailable_bundles(disc)
+        info.unavailable_bundles = _unavailable_bundles(
+            disc, resolve_kit_config(disc.name, project_root, toolkit_config)
+        )
         catalog.toolkits[info.name] = info
     return catalog
 
@@ -715,16 +725,41 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _unavailable_bundles(disc: Any) -> dict[str, list[str]]:
+def _unavailable_bundles(disc: Any, config: dict[str, Any]) -> dict[str, list[str]]:
     # Best-effort: toolbase keeps bundle gating private. A failure here
     # only costs the catalog its "needs config" annotations.
     try:
         from toolbase.serve.orchestrator import _resolve_bundle_availability
 
-        availability, _ = _resolve_bundle_availability(disc)
+        availability, _ = _resolve_bundle_availability(disc, config)
         return {b: list(miss) for b, miss in availability.dropped_bundles.items()}
     except Exception:
         return {}
+
+
+def resolve_kit_config(
+    kit: str,
+    project_root: Path | None,
+    session_config: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """A toolkit's effective config for this session: toolbase's own
+    user → project → private layers, resolved against the *session's*
+    project (toolbase alone would resolve against the process's cwd),
+    then the session's ``toolbase.config.<kit>`` overrides on top."""
+    resolved: dict[str, Any] = {}
+    try:
+        from toolbase.envs.config import resolve_toolkit_config
+
+        root = project_root
+        if root is None:
+            from toolbase.envs import default_project_root
+
+            root = default_project_root()
+        resolved = dict(resolve_toolkit_config(kit, Path(root)))
+    except Exception:
+        resolved = {}
+    resolved.update(dict((session_config or {}).get(kit) or {}))
+    return resolved
 
 
 def _default_server_factory(
@@ -734,16 +769,25 @@ def _default_server_factory(
     project_root: Path | None,
     loadout: str | None,
     call_timeout_s: float,
+    toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> ToolbaseServing:
-    """Start toolbase's per-toolkit servers for ``toolset``, in-process.
+    """Start toolbase's servers for ``toolset``, in-process.
+
+    One toolbase orchestrator per toolkit, started in parallel, each
+    given that toolkit's config (resolved for the session's project,
+    session overrides on top) plus ``base_directory`` = the agent's
+    sandbox. toolbase applies its overrides to every toolkit an
+    orchestrator serves, so sharing one would let two toolkits' keys
+    collide. The config also drives bundle gating: a bundle whose
+    ``requires:`` key (``mg5_path``, …) the session's project sets is
+    served even when the cwd's project doesn't set it.
 
     The anchor project's loadout supplies version pins and the
-    ``serve.yaml`` blocklists; the toolkit selection is replaced by
-    ``toolset``. Nothing is written to disk — two children with
-    different toolsets never contend over a loadout file. File-aware
-    tools are scoped to the agent's sandbox via ``base_directory``.
+    ``serve.yaml`` blocklists; the toolkit selection is replaced by the
+    grant. Nothing is written to disk.
     """
     import inspect
+    from concurrent.futures import ThreadPoolExecutor
 
     from rich.console import Console
     from toolbase.serve.loadouts import (
@@ -763,39 +807,62 @@ def _default_server_factory(
         versions, disabled_toolkits, disabled_tools = {}, [], []
 
     sel_params = inspect.signature(ToolkitSelection).parameters
-    selections = {}
-    for kit, grant in toolset.items():
-        kwargs: dict[str, Any] = {
-            "bundles": grant.bundles,
-            "enabled_tools": grant.tools,
-        }
+    takes_overrides = "config_overrides" in inspect.signature(Orchestrator).parameters
+
+    def start(kit: str, grant: ToolkitGrant) -> Any:
+        kwargs: dict[str, Any] = {"bundles": grant.bundles, "enabled_tools": grant.tools}
         if "enabled_skills" in sel_params:
             kwargs["enabled_skills"] = grant.skills
-        selections[kit] = ToolkitSelection(**kwargs)
-    resolved = ResolvedLoadout(
-        name="conjure",
-        source="conjure grant",
-        toolkits=selections,
-        versions={k: v for k, v in versions.items() if k in selections},
-        disabled_toolkits=disabled_toolkits,
-        disabled_tools=disabled_tools,
-    )
-    orch_kwargs: dict[str, Any] = {
-        "console": Console(file=io.StringIO()),
-        "loadout": resolved,
-        "call_timeout_s": call_timeout_s,
-    }
-    if sandbox is not None and "config_overrides" in inspect.signature(
-        Orchestrator
-    ).parameters:
-        orch_kwargs["config_overrides"] = {"base_directory": str(sandbox)}
-    orch = Orchestrator(**orch_kwargs)
-    try:
-        tools = orch.start()
-    except Exception:
-        orch.shutdown()
-        raise
-    return ToolbaseServing(tools, close=orch.shutdown)
+        resolved = ResolvedLoadout(
+            name=f"conjure:{kit}",
+            source="conjure grant",
+            toolkits={kit: ToolkitSelection(**kwargs)},
+            versions={kit: versions[kit]} if kit in versions else {},
+            disabled_toolkits=disabled_toolkits,
+            disabled_tools=disabled_tools,
+        )
+        orch_kwargs: dict[str, Any] = {
+            "console": Console(file=io.StringIO()),
+            "loadout": resolved,
+            "call_timeout_s": call_timeout_s,
+        }
+        if takes_overrides:
+            overrides = resolve_kit_config(kit, project_root, toolkit_config)
+            if sandbox is not None:
+                overrides["base_directory"] = str(sandbox)
+            orch_kwargs["config_overrides"] = overrides
+        orch = Orchestrator(**orch_kwargs)
+        try:
+            return orch, list(orch.start())
+        except Exception:
+            orch.shutdown()
+            raise
+
+    kits = list(toolset.items())
+    orchs: list[Any] = []
+    tools: list[Any] = []
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(kits))) as pool:
+        futures = [(kit, pool.submit(start, kit, grant)) for kit, grant in kits]
+        for kit, fut in futures:
+            try:
+                orch, served = fut.result()
+                orchs.append(orch)
+                tools.extend(served)
+            except Exception as exc:
+                errors.append(f"{kit}: {exc}")
+
+    def close() -> None:
+        for orch in orchs:
+            try:
+                orch.shutdown()
+            except Exception:
+                pass
+
+    if errors:
+        close()
+        raise RuntimeError("toolbase could not start " + "; ".join(errors))
+    return ToolbaseServing(tools, close=close)
 
 
 def build_hub_from_config(cfg: Any) -> ToolbaseHub | None:
@@ -810,6 +877,7 @@ def build_hub_from_config(cfg: Any) -> ToolbaseHub | None:
         loadout=cfg.loadout,
         authority=cfg.authority,
         call_timeout_s=cfg.call_timeout_s,
+        toolkit_config=cfg.config,
     )
 
 

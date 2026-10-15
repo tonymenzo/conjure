@@ -29,8 +29,15 @@ toolbase:
   authority: all
   # Version pins and serve.yaml blocklists come from this project's
   # toolbase loadout (default: discovered from the cwd, like tb serve).
+  # Toolkit config (and so which config-gated bundles are served) is
+  # resolved against this project too — e.g. the project whose
+  # .toolbase/config/heptapod.yaml sets mg5_path.
   # project_root: .
   # loadout: default
+  # Session-only toolkit settings, layered over toolbase's config files:
+  # config:
+  #   heptapod:
+  #     mg5_path: /path/to/MG5_aMC
 
 root:
   role_prompt: |

@@ -98,6 +98,11 @@ class ToolbaseConfig(BaseModel):
     # toolset in the same grammar as ``root.toolkits``.
     authority: str | list[str] | dict[str, Any] = "all"
     call_timeout_s: float = 60.0
+    # Per-toolkit settings for this session only, layered over toolbase's
+    # own config (user → project → private), e.g.
+    # ``{heptapod: {mg5_path: /opt/MG5_aMC}}``. Unlocks config-gated
+    # bundles without touching ~/.toolbase.
+    config: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class Config(BaseModel):

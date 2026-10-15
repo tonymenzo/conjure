@@ -616,3 +616,20 @@ def test_config_builds_root_toolkits(monkeypatch):
 def test_legacy_toolbase_profile_key_still_validates():
     spec = AgentSpec.model_validate({"role_prompt": "r", "toolbase_profile": "old"})
     assert spec.toolbase_loadout == "old"
+
+
+def test_kit_config_resolves_against_the_session_project(tmp_path, monkeypatch):
+    """Toolkit config (and so bundle gating) comes from the session's
+    project, not the process's cwd; session overrides win."""
+    pytest.importorskip("toolbase.envs.config")
+    from conjure.toolbase import resolve_kit_config
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no user layer
+    project = tmp_path / "proj"
+    (project / ".toolbase" / "config").mkdir(parents=True)
+    (project / ".toolbase" / "config" / "hep.yaml").write_text("mg5_path: /opt/mg5\ncache: true\n")
+    monkeypatch.chdir(tmp_path)  # cwd is NOT the project
+
+    assert resolve_kit_config("hep", project) == {"mg5_path": "/opt/mg5", "cache": True}
+    assert resolve_kit_config("hep", project, {"hep": {"mg5_path": "/other"}})["mg5_path"] == "/other"
+    assert resolve_kit_config("other", project, {"hep": {"x": 1}}) == {}
