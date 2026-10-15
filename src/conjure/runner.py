@@ -136,7 +136,15 @@ def _build_claude_agent_engine(
     if runtime.toolbase is not None:
         from conjure.toolbase import ToolbaseMount
 
-        mount = ToolbaseMount(runtime.toolbase, record, sandbox)
+        # Claude Code reads skills from ``<cwd>/.claude/skills``; the
+        # cwd is the sandbox.
+        mount = ToolbaseMount(
+            runtime.toolbase,
+            record,
+            sandbox,
+            skills_dir=(sandbox / ".claude" / "skills") if sandbox is not None else None,
+        )
+        mount.prestart()
     return ClaudeAgentEngine(
         record=record,
         runtime=runtime,

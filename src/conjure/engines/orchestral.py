@@ -395,9 +395,12 @@ def make_orchestral_engine_factory(
             from conjure.toolbase import ToolbaseMount
             from conjure.tools.filesystem import _sandbox_for
 
+            # Orchestral has no native skills: no skills_dir, and the
+            # agent reads granted skills through ``LoadSkill``.
             mount = ToolbaseMount(
                 hub, record, lambda: _sandbox_for(record, runtime)
             )
+            mount.prestart()
 
         # When streaming, the engine emits chunks directly into the
         # agent's event log and the display hook MUST filter out

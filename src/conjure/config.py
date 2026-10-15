@@ -104,6 +104,9 @@ class ToolbaseConfig(BaseModel):
     # grammar as ``root.toolkits`` (e.g. ``[heptapod]``).
     authority: str | list[str] | dict[str, Any] = "loadout"
     call_timeout_s: float = 60.0
+    # Start a child's toolkit servers when it's spawned, in the
+    # background, so its first turn doesn't wait for them to boot.
+    prestart: bool = True
     # Per-toolkit settings for this session only, layered over toolbase's
     # own config (user → project → private), e.g.
     # ``{heptapod: {mg5_path: /opt/MG5_aMC}}``. Unlocks config-gated

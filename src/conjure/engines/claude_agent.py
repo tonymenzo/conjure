@@ -286,13 +286,13 @@ class ClaudeAgentEngine:
             except Exception:
                 in_process_server = None
         if in_process_server is not None:
-            mcp_servers["spawn"] = in_process_server
+            mcp_servers["conjure"] = in_process_server
         elif mcp_socket is not None:
             import shutil
 
             from claude_agent_sdk.types import McpStdioServerConfig
             mcp_bin = shutil.which("conjure-mcp") or "conjure-mcp"
-            mcp_servers["spawn"] = McpStdioServerConfig(
+            mcp_servers["conjure"] = McpStdioServerConfig(
                 command=mcp_bin,
                 env={
                     "CONJURE_TOKEN": record.token,
@@ -387,6 +387,7 @@ class ClaudeAgentEngine:
             model=model,
         )
         self._options = opts
+        self._base_setting_sources = opts.setting_sources
         self._client = ClaudeSDKClient(opts)
         self._start_model_probe(sdk_env)
         self._last_context: tuple[int, int] | None = None
@@ -594,6 +595,11 @@ class ClaudeAgentEngine:
                 # through ``can_use_tool`` instead.
                 if explicit.get(name, "allow") == "allow":
                     allowed.append(name)
+        # Granted skills were surfaced into ``<sandbox>/.claude/skills``.
+        # Name them so the CLI allows exactly those, and load settings
+        # from the sandbox project only: ``user`` would pull in the
+        # human's own ~/.claude skills, settings and memory.
+        skills = self._toolbase.skill_names()
         if self._connected:
             await self._client.disconnect()
             self._connected = False
@@ -602,12 +608,15 @@ class ClaudeAgentEngine:
             mcp_servers=servers,
             allowed_tools=allowed,
             resume=self._session_id,
+            skills=skills or None,
+            setting_sources=["project"] if skills else self._base_setting_sources,
         )
         self._client = ClaudeSDKClient(self._options)
         self._emit_event(
             {
                 "kind": "toolkits",
                 "tools": [t.get_name() for t in served],
+                "skills": skills,
             }
         )
 

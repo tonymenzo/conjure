@@ -644,7 +644,8 @@
           return;
         case "toolkits":
           this.block(h("div", { class: "metablk" }, "⚒ toolkits now: ",
-            h("span", { class: "kits", text: (ev.tools || []).join(", ") || "(none)" })), ev.ts);
+            h("span", { class: "kits", text: (ev.tools || []).join(", ") || "(none)" }),
+            ev.skills?.length ? h("div", null, "✦ skills: ", h("span", { class: "kits", text: ev.skills.join(", ") })) : null), ev.ts);
           return;
         default: return; // user (driver-wrapped prompt), perm_probe, spawned, unknown
       }

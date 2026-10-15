@@ -1093,6 +1093,10 @@ def _format_event(
         row = Text()
         row.append("· toolkits ", style="dim")
         row.append(", ".join(tools) if tools else "(none)", style="dim cyan")
+        skills = event.get("skills") or []
+        if skills:
+            row.append("\n· skills ", style="dim")
+            row.append(", ".join(skills), style="dim cyan")
         return (row, ())
 
     # ``user`` is the noisy driver-wrapped prompt; skip silently.

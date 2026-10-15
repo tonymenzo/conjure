@@ -93,8 +93,30 @@
   ``root.toolbase_loadout``. New ``[toolbase]`` extra (Python ≥ 3.12).
   See ``examples/toolbase_agent.yaml``.
 
+- **Skills travel with grants.** A grant carries the skills of what it
+  covers: a bundle grant carries that bundle's skills, and toolkit-wide
+  skills come with any grant. Skills scoped to a bundle the session
+  can't serve are withheld. Claude Code children get them as native
+  skills, surfaced into ``<sandbox>/.claude/skills/<toolkit>__<skill>/``
+  in the layout ``tb connect`` writes. The session names exactly those
+  (``skills=``) and loads settings from the sandbox project only, never
+  the human's ``~/.claude``. A live grant re-surfaces them, and terminating
+  the agent removes them. Folders conjure didn't write are never
+  overwritten or removed. Orchestral agents read skills with the new
+  ``LoadSkill(name, file=)`` tool.
+- **Toolkit servers start at spawn.** A child's servers boot in the
+  background as it's spawned, so its first turn no longer waits for
+  them (``toolbase.prestart: false`` turns this off). Servers aren't
+  shared between agents with identical grants: each one's
+  ``base_directory`` is its own sandbox.
+
 ### Fixed
 
+- The claude_agent engine registered its in-process tool server as
+  ``spawn`` but pre-approved ``mcp__conjure__*``, so none of the
+  orchestration tools were actually pre-approved. They were only
+  allowed through the permission callback's default. The server is now
+  ``conjure``, matching the allowlist and the chat UI.
 - **The toolbase hook served nothing.** ``toolbase_profile`` launched
   ``toolbase serve --profile <name> --no-tui``. toolbase 0.12 renamed
   profiles to loadouts, so the command now exits with ``No such option:

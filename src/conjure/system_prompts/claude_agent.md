@@ -99,7 +99,7 @@ them to read, modify, and run code.
 ### Spawn orchestration (MCP-bridged)
 
 These let you grow and coordinate the agent graph. They appear in your
-tool list as `mcp__spawn__<Name>` (PascalCase, matching the
+tool list as `mcp__conjure__<Name>` (PascalCase, matching the
 built-in tool convention); the chat UI renders them as the bare name.
 
 **Reach for `Call` first.** For most one-off "evaluate worker(body)
