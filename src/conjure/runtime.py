@@ -842,12 +842,19 @@ class Runtime:
     # ----- Replay -----
 
     @classmethod
-    def replay(cls, session_dir: Path) -> "Runtime":
+    def replay(
+        cls, session_dir: Path, *, until: float | None = None
+    ) -> "Runtime":
         """Reconstruct a runtime from a persisted journal.
 
         ``session_dir`` is the per-session directory containing
         ``journal.jsonl`` — typically ``store_dir/sessions/{session_id}/``.
         Pass the directory itself, not the store root.
+
+        ``until`` (a journal timestamp) stops the replay at that
+        instant, reconstructing the session as it stood then — the web
+        UI's time scrubber. Replayed agents carry their journaled spawn
+        time in ``spawned_at``.
 
         The returned runtime is *not* attached to any journal — replay
         is intended for inspection and offline analysis, not for
@@ -857,8 +864,14 @@ class Runtime:
         for entry in Journal.read_all(session_dir):
             kind = entry["kind"]
             payload = entry["payload"]
+            ts = entry.get("ts")
+            if until is not None and isinstance(ts, (int, float)) and ts > until:
+                break
             if kind == "spawn":
                 rt._replay_spawn(payload)
+                if isinstance(ts, (int, float)):
+                    addr = Address.model_validate(payload["addr"])
+                    rt._records[addr].spawned_at = float(ts)
             elif kind == "send":
                 rt._replay_send(payload)
             elif kind == "terminate":

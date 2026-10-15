@@ -145,6 +145,10 @@ class Driver:
             prompt = self._build_prompt(envelopes)
             errored = False
             engine_exc: Exception | None = None
+            # Engine-agnostic turn boundaries for the event log — the
+            # web timeline draws turns from these. Renderers that don't
+            # know the kinds skip them.
+            self._emit_event({"kind": "turn_start"})
             try:
                 self.agent.step(prompt)
             except Exception as exc:
@@ -158,6 +162,7 @@ class Driver:
                     "engine raised in driver for %s", record.addr
                 )
             finally:
+                self._emit_event({"kind": "turn_end", "errored": errored})
                 if record.status != "terminated":
                     # Sticky ``error`` between turns so the tree's red
                     # dot persists until the agent successfully
@@ -194,6 +199,15 @@ class Driver:
                     )
                 except Exception:
                     pass
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        event_log = getattr(self.agent.record, "event_log", None)
+        if event_log is None:
+            return
+        try:
+            event_log.emit(event)
+        except Exception:
+            pass
 
     def _emit_engine_error(self, exc: Exception) -> None:
         event_log = getattr(self.agent.record, "event_log", None)

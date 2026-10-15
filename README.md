@@ -74,6 +74,29 @@ conjure repl agent.yaml                       # single-pane REPL, no tmux needed
 conjure run agent.yaml                        # tmux cockpit (requires the [ui] extra)
 ```
 
+Or skip tmux and use the browser (no extra dependencies):
+
+```bash
+conjure web agent.yaml                        # opens http://127.0.0.1:8765/?token=…
+conjure web agent.yaml --detach               # as a daemon; `conjure web --attach` reprints the URL
+conjure web --replay <session>                # read-only replay of a journaled session
+conjure run agent.yaml --web                  # tmux cockpit and web UI on one session
+```
+
+The web UI has the cockpit's layout: an agent tree, an activity feed, and
+streaming chat, with permission requests you can approve. It adds a few
+views tmux can't show:
+
+- side-by-side chats;
+- a **graph** of spawn, message and introduction edges;
+- a **timeline** of each agent's turns, tool calls and incoming messages;
+- a sandbox **file browser**.
+
+`--replay` reopens any journaled session with a time scrubber, so you can
+watch it unfold again. The server binds to loopback, and every API call
+needs the session token printed in the URL. On a remote host, use
+`ssh -L 8765:localhost:8765`.
+
 In tmux mode the session is daemonized: window 0 is your prompt to the
 root agent, every spawned agent gets its own live window, and `Ctrl+B M`
 opens a meta-view popup (spawn tree + inboxes + cost). Detach with

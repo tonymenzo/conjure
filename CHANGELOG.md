@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased — web UI
+
+### Web
+
+- **``conjure web``: a browser UI that needs no tmux.** It runs a session
+  and serves it at ``http://127.0.0.1:8765/?token=…``. Use ``--detach`` to
+  run it as a daemon (``conjure quit`` stops it, ``conjure web --attach``
+  reprints the URL). ``conjure run --web`` adds the web UI next to the
+  tmux cockpit, on the same runtime. It needs only the standard library
+  and vanilla JS, with no build step and no new dependencies.
+- It keeps the cockpit's layout and look: agent tree with pulsing status
+  dots, activity feed, streaming chat (turn headers, tool calls you can
+  expand), and the amber permission panel. Approvals for agents whose
+  chat isn't open appear as toasts. It also adds:
+  - several agent chats **side by side**, with inter-agent messages and
+    supervision events interleaved into each chat by time;
+  - an **agent inspector**: role prompt, budget against subtree cost,
+    capabilities, toolkit grants;
+  - a **graph** of spawn, message (counted, animated while recent) and
+    introduction edges;
+  - a **timeline** with one lane per agent: turns, tool-call durations,
+    failures and incoming messages; wheel zooms, drag pans;
+  - a sandbox **file browser**;
+  - deep links (``#timeline/<agent>``), a light theme, and a narrow
+    layout.
+- **Replay**: ``conjure web --replay <session>`` serves any journaled
+  session read-only, with a scrubber that rebuilds the session at each
+  instant (``Runtime.replay(until=…)``).
+- Security: every ``/api`` call needs the session token, sent in a custom
+  header. A cross-site page can't attach that header without a CORS
+  preflight, and the server never answers preflights. The ``Host`` header
+  must name the server, which defeats DNS rebinding. The server binds to
+  loopback by default, the URL file is mode 600, and a replay refuses
+  every write.
+
+### Runtime
+
+- The driver writes ``turn_start`` / ``turn_end`` around every step for
+  any engine; the timeline draws turns from them. Renderers that don't
+  recognize them skip them.
+- ``Runtime.replay(session_dir, until=ts)`` stops at a given instant.
+  Replayed agents now carry their journaled ``spawned_at``.
+- Session bring-up (event logs plus control server) moved to
+  ``conjure.session.start_session``, shared by tmux and web modes.
+- ``conjure quit`` no longer needs libtmux when no daemon is tracked.
+
 ## Unreleased — agent-curated toolkits
 
 ### Toolbase

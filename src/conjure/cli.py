@@ -10,6 +10,11 @@ Subcommands:
 - ``conjure run --attach``   — attach to the most-recent
                                   ``conjure-*`` tmux session.
 - ``conjure run --attach <name>`` — attach to a specific session.
+- ``conjure run <config> --web`` — the same, plus the browser UI.
+- ``conjure web <config>``   — browser UI, no tmux (``--detach`` to
+                                  daemonize, ``--replay <session>`` for
+                                  a read-only replay, ``--attach`` to
+                                  reprint a running session's URL).
 - ``conjure repl <config>``  — single-pane REPL mode (no tmux);
                                   useful for scripting and tests.
 - ``conjure check <config>`` — validate config + report key
@@ -41,20 +46,15 @@ from rich.rule import Rule
 from conjure import _ui
 from conjure.address import USER, Address
 from conjure.config import load_config
-from conjure.control import ControlServer
 from conjure.daemon import (
     daemonize,
     is_daemon_running,
     list_session_names,
     log_path_for,
     pid_path_for,
-    socket_path_for,
     stop_daemon,
 )
-from conjure.event_log import EventLog
-from conjure.events import make_system_prompt_event
 from conjure.profiling import profile_session
-from conjure.record import AgentRecord
 from conjure.runner import build_runtime
 from conjure.runtime import Runtime
 try:
@@ -87,6 +87,50 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="SESSION",
         help="Attach to an existing conjure session (newest if name omitted).",
+    )
+    run_p.add_argument(
+        "--web",
+        nargs="?",
+        type=int,
+        const=8765,
+        default=None,
+        metavar="PORT",
+        help="Also serve the web UI (default port 8765).",
+    )
+
+    web_p = sub.add_parser(
+        "web",
+        help="Browser UI: run a session, replay one, or reopen one's URL.",
+    )
+    web_p.add_argument("config", type=Path, nargs="?", help="Path to a YAML config file.")
+    web_p.add_argument("--port", type=int, default=8765)
+    web_p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default loopback; reach remote hosts via ssh -L).",
+    )
+    web_p.add_argument("--no-browser", action="store_true", help="Don't open a browser.")
+    web_p.add_argument(
+        "--detach", action="store_true", help="Run as a daemon (`conjure quit` stops it)."
+    )
+    web_p.add_argument(
+        "--replay",
+        metavar="SESSION",
+        help="Replay a journaled session (name or directory), read-only.",
+    )
+    web_p.add_argument(
+        "--store",
+        type=Path,
+        default=Path("./.conjure/store"),
+        help="Store dir to look up --replay session names in.",
+    )
+    web_p.add_argument(
+        "--attach",
+        nargs="?",
+        const="__most_recent__",
+        default=None,
+        metavar="SESSION",
+        help="Print and open a running session's URL (newest if omitted).",
     )
 
     quit_p = sub.add_parser(
@@ -129,7 +173,30 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_run_attach(args.attach)
         if args.config is None:
             parser.error("config path required (or pass --attach)")
-        return _cmd_run_tmux(args.config)
+        return _cmd_run_tmux(args.config, web_port=args.web)
+    if args.cmd == "web":
+        from conjure.web import launch
+
+        if args.attach is not None:
+            session = None if args.attach == "__most_recent__" else args.attach
+            return launch.cmd_web_attach(session, open_browser=not args.no_browser)
+        if args.replay:
+            return launch.cmd_web_replay(
+                args.replay,
+                store_dir=args.store,
+                port=args.port,
+                host=args.host,
+                open_browser=not args.no_browser,
+            )
+        if args.config is None:
+            parser.error("config path required (or pass --replay / --attach)")
+        return launch.cmd_web(
+            args.config,
+            port=args.port,
+            host=args.host,
+            open_browser=not args.no_browser,
+            detach=args.detach,
+        )
     if args.cmd == "quit":
         return _cmd_quit(args.session)
     if args.cmd == "repl":
@@ -144,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
 
 # ----- conjure run (tmux orchestrator) ------------------------------------
 
-def _cmd_run_tmux(config_path: Path) -> int:
+def _cmd_run_tmux(config_path: Path, *, web_port: int | None = None) -> int:
     """Start a daemonized conjure runtime, set up the tmux session
     with one window per agent, then attach the user's terminal.
 
@@ -200,15 +267,26 @@ def _cmd_run_tmux(config_path: Path) -> int:
             f"([dim]Ctrl+B d to detach[/], "
             f"[dim]`conjure quit` to stop the daemon[/])",
         )
+        if web_port is not None:
+            from conjure.web.launch import _wait_for_url
+
+            url = _wait_for_url(session_name, timeout_s=5.0)
+            if url:
+                _ui.print_system(console, f"web UI: [bold]{url}[/]")
+                time.sleep(1.0)  # leave the URL readable before tmux takes over
         time.sleep(0.1)
         os.execvp("tmux", ["tmux", "attach-session", "-t", session_name])
         return 1  # only reached if exec fails
 
     # Daemon path — _run_daemon never returns (blocks until SIGTERM).
-    return _run_daemon(cfg=cfg, session_name=session_name, pid_path=pid_path)
+    return _run_daemon(
+        cfg=cfg, session_name=session_name, pid_path=pid_path, web_port=web_port
+    )
 
 
-def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
+def _run_daemon(
+    *, cfg, session_name: str, pid_path: Path, web_port: int | None = None
+) -> int:
     """Daemon body: build the runtime, set up tmux, block on signal.
 
     Tmux layout is a single window (``conjure-main``) hosting the
@@ -222,10 +300,14 @@ def _run_daemon(*, cfg, session_name: str, pid_path: Path) -> int:
     ``conjure.profiling`` for the env var contract.
     """
     with profile_session(f"daemon-{session_name}"):
-        return _run_daemon_inner(cfg=cfg, session_name=session_name, pid_path=pid_path)
+        return _run_daemon_inner(
+            cfg=cfg, session_name=session_name, pid_path=pid_path, web_port=web_port
+        )
 
 
-def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
+def _run_daemon_inner(
+    *, cfg, session_name: str, pid_path: Path, web_port: int | None = None
+) -> int:
     shutdown_event = threading.Event()
 
     def _signal_handler(_signum, _frame):
@@ -236,66 +318,26 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Per-session scoping: every daemon invocation gets its own
-    # ``store_dir/sessions/{session_name}/`` so two runs from the same
-    # CWD never concatenate into one ambiguous journal. The tmux
-    # session_name doubles as the on-disk session id so a user looking
-    # at the tmux pane and a user looking at disk see the same name.
-    store_dir = Path(cfg.runtime.store_dir or "./.conjure/store")
-    session_dir = store_dir / "sessions" / session_name
-    agents_dir = session_dir / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
+    # Runtime + per-agent event logs + control server, shared with the
+    # web UI (``conjure.session``).
+    from conjure.session import start_session
+
+    try:
+        session = start_session(cfg, session_name)
+    except Exception as exc:
+        print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)
+        _remove_pid(pid_path)
+        return 2
+    runtime, root = session.runtime, session.root
 
     # Resolve absolute path to conjure-main so tmux's shell finds it
     # regardless of the user's login-shell PATH (conda envs are rarely
     # on the login PATH).
     import shutil as _shutil
     main_bin = _shutil.which("conjure-main") or "conjure-main"
-
-    def _main_command() -> str:
-        parts = [main_bin, "--session", session_name]
-        return " ".join(shlex.quote(p) for p in parts)
-
-    def spawn_listener(record: AgentRecord) -> None:
-        """Attach an event log to every spawned agent so the main
-        window can tail it. We deliberately do NOT create a tmux
-        window per agent — the main window's sidebar + swappable
-        chat pane is the primary interface; the ``o`` keypress in
-        the main window creates a dedicated window on-demand.
-
-        For *child* agents, the first event written is their
-        ``system_prompt`` — the role prompt they were spawned with —
-        so the chat pane opens with that initialization context as
-        the first visible block. The root agent is skipped: its
-        role prompt is the user's own configuration, not something
-        the user needs to see echoed back inside its own chat."""
-        log_path = agents_dir / f"{record.addr.id}.jsonl"
-        record.event_log = EventLog(log_path)
-        if record.parent is not None:
-            record.event_log.emit(
-                make_system_prompt_event(
-                    text=record.spec.role_prompt or "",
-                    label=record.spec.label or record.addr.label,
-                )
-            )
-
-    def event_log_router(record: AgentRecord) -> EventLog | None:
-        return record.event_log
-
-    control_path = socket_path_for(session_name)
-    try:
-        runtime, root = build_runtime(
-            cfg,
-            session_id=session_name,
-            event_log_router=event_log_router,
-            spawn_listener=spawn_listener,
-            stream=True,  # tmux mode: agent text streams into chat panes
-            control_socket=control_path,
-        )
-    except Exception as exc:
-        print(f"daemon: failed to build runtime: {exc}", file=sys.stderr)
-        _remove_pid(pid_path)
-        return 2
+    main_command = " ".join(
+        shlex.quote(p) for p in [main_bin, "--session", session_name]
+    )
 
     # Single tmux window (conjure-main) hosts everything. Dedicated
     # per-agent windows are spawned on-demand by the main window.
@@ -303,10 +345,11 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
         tmux = TmuxSession.attach_or_create(
             session_name,
             initial_window_name="main",
-            initial_command=_main_command(),
+            initial_command=main_command,
         )
     except Exception as exc:
         print(f"daemon: failed to create tmux session: {exc}", file=sys.stderr)
+        session.close()
         _remove_pid(pid_path)
         return 2
 
@@ -319,15 +362,16 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
         timeout=3,
     )
 
-    # Start the JSON-RPC control server so chat windows can send
-    # messages and the meta-view popup can query state. ``control_path``
-    # was computed earlier so claude_agent engines could embed it in
-    # their MCP subprocess env.
-    control_server = ControlServer(runtime=runtime, socket_path=control_path)
-    try:
-        control_server.start()
-    except Exception as exc:
-        print(f"daemon: control server failed to start: {exc}", file=sys.stderr)
+    # ``conjure run --web``: the browser UI alongside the cockpit, on
+    # the same runtime.
+    web = None
+    if web_port is not None:
+        from conjure.web.launch import start_live_web
+
+        try:
+            web = start_live_web(session, port=web_port)
+        except Exception as exc:
+            print(f"daemon: web UI failed to start: {exc}", file=sys.stderr)
 
     # Bind ``Ctrl+B F`` to the files popup. tmux key bindings are
     # server-global; the most recent daemon wins if there are
@@ -343,11 +387,15 @@ def _run_daemon_inner(*, cfg, session_name: str, pid_path: Path) -> int:
     # Block until SIGTERM / SIGINT.
     shutdown_event.wait()
 
+    if web is not None:
+        from conjure.web.launch import stop_live_web
+
+        stop_live_web(web, session_name)
+    session.close()
     try:
-        control_server.stop()
+        tmux.kill()
     except Exception:
         pass
-    _shutdown(runtime, tmux)
     _remove_pid(pid_path)
     return 0
 
@@ -397,28 +445,6 @@ def _start_input_reader(
                     pass
 
     threading.Thread(target=reader, daemon=True, name="input-reader").start()
-
-
-def _shutdown(runtime: Runtime, tmux: TmuxSession) -> None:
-    """Tear down the runtime + tmux session cleanly."""
-    try:
-        for _addr, record in list(runtime._records.items()):  # noqa: SLF001
-            log = getattr(record, "event_log", None)
-            if log is not None:
-                try:
-                    log.close()
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    try:
-        runtime.shutdown()
-    except Exception:
-        pass
-    try:
-        tmux.kill()
-    except Exception:
-        pass
 
 
 def _remove_pid(pid_path: Path) -> None:
@@ -500,7 +526,10 @@ def _find_most_recent_spawn_session() -> str | None:
         return sessions[0]
     # Fall back to tmux session listing for the case where the daemon
     # isn't tracked (older sessions or manual setups).
-    import libtmux
+    try:
+        import libtmux
+    except ImportError:  # web-only install: no tmux sessions to find
+        return None
 
     server = libtmux.Server()
     matching = [
