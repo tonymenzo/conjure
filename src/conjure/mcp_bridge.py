@@ -39,6 +39,7 @@ from orchestral.mcp.server import MCPServer
 from orchestral.tools.base.field_utils import is_state_field
 
 from conjure.control import ControlClient
+from conjure.tools.models import ModelCatalogTool
 from conjure.tools._base import StateField
 from conjure.tools.combinators import (
     AgentCriticTool,
@@ -99,6 +100,7 @@ _BRIDGE_TARGETS: dict[str, tuple[type, str]] = {
     "tool_catalog": (ToolCatalogTool, "ToolCatalog"),
     "grant_toolkits": (GrantToolkitsTool, "GrantToolkits"),
     "request_toolkits": (RequestToolkitsTool, "RequestToolkits"),
+    "model_catalog": (ModelCatalogTool, "ModelCatalog"),
 }
 
 

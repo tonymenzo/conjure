@@ -43,6 +43,15 @@ _PROVIDERS: dict[str, dict[str, str]] = {
         "default_model": "llama3.1",
         "key_env": "",  # local, no API key needed
     },
+    # Any OpenAI-compatible chat-completions endpoint: a model access
+    # gateway (MAG), vLLM, LiteLLM, an institutional proxy. Needs
+    # ``base_url``; ``model`` may be omitted when ``discover`` lists
+    # the endpoint's models (``GET <base_url>/models``).
+    "openai_compatible": {
+        "orchestral_attr": "",
+        "default_model": "",
+        "key_env": "",
+    },
 }
 
 
@@ -82,9 +91,13 @@ def build_llm(config: dict[str, Any]) -> Any:
     - ``provider`` (required): one of ``SUPPORTED_PROVIDERS``.
     - ``model`` (optional): provider-default when omitted.
     - ``api_key_env`` (optional): override the default key env-var name.
+    - ``openai_compatible`` only: ``base_url`` (required), ``headers``
+      (values may name env vars as ``${VAR}``), ``timeout_s``.
     """
     if "provider" not in config:
         raise ValueError("LLM config missing required field: provider")
+    if config["provider"].lower() == "openai_compatible":
+        return build_openai_compatible(config)
 
     spec = provider_spec(config["provider"])
     model = config.get("model") or spec["default_model"]
@@ -94,6 +107,53 @@ def build_llm(config: dict[str, Any]) -> Any:
     from orchestral import llm as orchestral_llm
     cls = getattr(orchestral_llm, spec["orchestral_attr"])
     return cls(**_kw_with_optional(model=model, api_key=api_key))
+
+
+def gateway_auth(config: dict[str, Any]) -> tuple[str | None, dict[str, str]]:
+    """``(api_key, extra headers)`` for an OpenAI-compatible endpoint,
+    read from the environment at call time (never from the config)."""
+    key_env = config.get("api_key_env")
+    api_key = os.environ.get(key_env) if key_env else None
+    headers = {
+        str(k): _expand_env(str(v)) for k, v in (config.get("headers") or {}).items()
+    }
+    return api_key, headers
+
+
+def _expand_env(value: str) -> str:
+    import re
+
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: os.environ.get(m.group(1), ""), value)
+
+
+def build_openai_compatible(config: dict[str, Any]) -> Any:
+    """An orchestral client for an OpenAI-compatible endpoint.
+
+    Built on orchestral's ``VLLM`` client (OpenAI chat completions with a
+    custom host), with the exact ``base_url`` (VLLM would append ``/v1``),
+    the gateway's headers, and a timeout suited to long generations."""
+    base_url = config.get("base_url")
+    if not base_url:
+        raise ValueError("openai_compatible LLM needs base_url")
+    model = config.get("model")
+    if not model:
+        raise ValueError(
+            "openai_compatible LLM needs a model (set `model`, or spawn with "
+            "one from ModelCatalog)"
+        )
+    import openai
+    from orchestral.llm.vllm.client import VLLM
+
+    api_key, headers = gateway_auth(config)
+    llm = VLLM(model=model, host=base_url.rstrip("/"), api_key=api_key or "EMPTY")
+    llm.base_url = base_url.rstrip("/")
+    llm.client = openai.Client(
+        api_key=api_key or "EMPTY",
+        base_url=llm.base_url,
+        default_headers=headers or None,
+        timeout=float(config.get("timeout_s") or 600.0),
+    )
+    return llm
 
 
 def build_llms(configs: dict[str, dict[str, Any]]) -> dict[str, Any]:

@@ -32,6 +32,7 @@ from conjure.errors import (
     MaxDepthExceeded,
     NoSuchAddress,
     Terminated,
+    ModelDenied,
     Timeout,
     ToolkitDenied,
 )
@@ -161,6 +162,8 @@ def spawn_impl(
 
     try:
         toolset = parse_toolkits(toolkits)
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
 
@@ -191,6 +194,8 @@ def spawn_impl(
         return _err("depth_exceeded", str(e))
     except BudgetExceeded as e:
         return _err("budget_exceeded", str(e))
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
 
@@ -529,6 +534,8 @@ def call_impl(
     template = spec or {}
     try:
         toolset = parse_toolkits(template.get("toolkits"))
+    except ModelDenied as e:
+        return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
     role_prompt = (template.get("role_prompt") or "") + _CALL_WORKER_SUFFIX
@@ -560,6 +567,8 @@ def call_impl(
             worker = runtime._spawn(parent=caller_addr, spec=worker_spec)
         except MaxDepthExceeded as e:
             return _err("depth_exceeded", str(e))
+        except ModelDenied as e:
+            return _err("model_denied", str(e))
         except ToolkitDenied as e:
             return _err("toolkit_denied", str(e))
         # Dispatch with ``sender=collector`` so the worker's ``"caller"``
@@ -703,14 +712,12 @@ class SpawnTool(StatelessRuntimeTool):
     )
     model: str | None = OptionalRuntimeField(
         description=(
-            "Model for the child's claude_agent session — alias "
-            "(``haiku``, ``sonnet``, ``opus``) or full name "
-            "(``claude-sonnet-4-6``). Omit to default to a cheap "
-            "model (``haiku``) for the child; explicitly set "
-            "``sonnet`` or ``opus`` only when the task genuinely "
-            "needs more capability. On the codex engine, a Codex model "
-            "name; omitted, Codex's default. Ignored by the orchestral "
-            "engine."
+            "Model for the child: an id from ``ModelCatalog`` "
+            "(``claude/haiku``, ``codex/gpt-6-astra``, ``mag/<model>``) "
+            "— it picks the engine for you — or a bare alias / model "
+            "name when unique (``haiku``, ``sonnet``). Omit for the "
+            "session's default (Claude children: ``haiku``). Choose a "
+            "stronger model only when the task genuinely needs it."
         ),
     )
     oneshot: bool = RuntimeField(

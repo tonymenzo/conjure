@@ -54,7 +54,11 @@ def build_runtime(
     # Capture each LLM config as a default arg so the lambda closes
     # over the right value (avoid the classic late-binding bug).
     llm_factories = {
-        name: (lambda c=cfg.model_dump(): build_llm(c))
+        name: (
+            lambda model=None, c=cfg.model_dump(): build_llm(
+                {**c, "model": model} if model else c
+            )
+        )
         for name, cfg in config.llms.items()
     }
 
@@ -85,11 +89,13 @@ def build_runtime(
             )
         raise ValueError(
             f"unknown engine {engine_name!r} on agent {record.addr.id}; "
-            f"supported: 'orchestral', 'claude_agent', 'auto'"
+            f"supported: 'orchestral', 'claude_agent', 'codex', 'auto'"
         )
 
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
     hub = build_hub_from_config(config.toolbase)
+    from conjure.models import build_model_hub
+
     runtime = Runtime(
         store_dir=store_dir,
         session_id=session_id,
@@ -98,6 +104,7 @@ def build_runtime(
         max_depth=config.runtime.max_depth,
         spawn_listener=spawn_listener,
         toolbase=hub,
+        models=build_model_hub(config),
     )
 
     root_spec = AgentSpec(
@@ -117,19 +124,9 @@ def build_runtime(
 
 
 def _engine_for(record: AgentRecord, runtime: Runtime) -> str:
-    """``spec.engine``, with ``auto`` resolved. A child left on
-    ``auto`` under a Codex parent stays on Codex: ``auto`` otherwise
-    means "Claude if available", which would silently switch a Codex
-    tree's children to another provider."""
-    name = record.spec.engine
-    if (not name or name == "auto") and record.parent is not None:
-        try:
-            parent = runtime.record_for(record.parent)
-        except Exception:
-            parent = None
-        if parent is not None and _engine_for(parent, runtime) == "codex":
-            return "codex"
-    return resolve_engine_name(name)
+    from conjure.engines import effective_engine
+
+    return effective_engine(record, runtime)
 
 
 def _build_codex_engine(

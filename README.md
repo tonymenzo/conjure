@@ -165,6 +165,16 @@ tools, so agents can invoke them on their own subtrees:
   sandbox for shell and edits. conjure's tools and granted toolkits
   reach them over a loopback MCP server. Children left on `auto` stay
   on Codex. See `examples/codex_agent.yaml`.
+- API models behind a **model access gateway** or any OpenAI-compatible
+  endpoint: an `openai_compatible` LLM with `base_url`, optionally
+  `discover: true` to list every model the endpoint serves. See
+  `examples/gateway_agent.yaml`.
+
+Agents see every model they may spawn on through `ModelCatalog` (API,
+gateway, Claude and Codex subscription models, with notes), and pick
+one with `Spawn(model="<id>")`; the id picks the engine. A `models:`
+section sets the policy (`allow` globs, `default`, `notes`).
+
 - **`ScriptedEngine`** — deterministic behaviors for tests and offline
   development.
 

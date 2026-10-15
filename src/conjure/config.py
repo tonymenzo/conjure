@@ -55,6 +55,16 @@ class LLMConfig(BaseModel):
     provider: str
     model: str | None = None
     api_key_env: str | None = None
+    # ``openai_compatible`` (a model access gateway, vLLM, LiteLLM, ...):
+    base_url: str | None = None
+    # Extra request headers; values may name env vars as ``${VAR}``.
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_s: float | None = None
+    # List the endpoint's models (``GET <base_url>/models``) into the
+    # model catalog, so agents can spawn on any of them.
+    discover: bool = False
+    # A note shown to agents in ModelCatalog (what this LLM is for).
+    note: str | None = None
 
 
 class RootConfig(BaseModel):
@@ -85,6 +95,23 @@ class RootConfig(BaseModel):
     # An existing toolbase loadout to serve the root, merged with
     # ``toolkits``.
     toolbase_loadout: str | None = None
+
+
+class ModelsConfig(BaseModel):
+    """``models:`` — which models agents may spawn on, and guidance.
+    Ids are ``<source>/<model>``: ``<llms entry>/<model>`` for API models
+    (a gateway with ``discover: true`` lists all of its own),
+    ``claude/<alias>`` and ``codex/<slug>`` for subscriptions.
+    ``ModelCatalog`` shows agents the allowed ones."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Glob patterns over ids, e.g. ``["mag/*", "codex/gpt-6-astra"]``.
+    allow: list[str] = Field(default_factory=lambda: ["*"])
+    # Model for a child spawned without one (an id). ``None``: the
+    # engine's own default (haiku for Claude children, Codex's default).
+    default: str | None = None
+    # Guidance per id, shown in ModelCatalog ("cheap; literature search").
+    notes: dict[str, str] = Field(default_factory=dict)
 
 
 class ToolbaseConfig(BaseModel):
@@ -137,6 +164,7 @@ class Config(BaseModel):
     root: RootConfig
     toolbase: ToolbaseConfig | None = None
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     mode: Literal["repl", "one-shot"] = "repl"
     initial_task: str | None = None
 

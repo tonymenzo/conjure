@@ -56,6 +56,34 @@
   ``conjure.session.start_session``, shared by tmux and web modes.
 - ``conjure quit`` no longer needs libtmux when no daemon is tracked.
 
+## Unreleased — model catalog and gateways
+
+- **Agents can resolve every model they may spawn on.** ``ModelCatalog``
+  (all engines) lists one id per model, ``<source>/<model>``:
+  - API LLMs from ``llms:``.
+  - Every model an OpenAI-compatible gateway serves, when its entry sets
+    ``discover: true`` (it reads ``GET <base_url>/models``).
+  - Claude subscription aliases with the exact model each resolves to.
+  - Codex models with their context windows.
+  ``Spawn(model=...)`` (also ``Call`` and combinator specs) takes an id,
+  an alias or model name when unique, or an ``llms`` entry name. The
+  runtime resolves it to engine, LLM entry and provider model before
+  anything spawns. A gateway that can't be reached is reported in the
+  catalog, not raised.
+- **Model policy**: ``models: {allow: [globs], default: <id>, notes:
+  {id: text}}``. Ids outside ``allow`` are refused with
+  ``code=model_denied`` and the allowed list. So is a child whose
+  implied model falls outside it (e.g. Claude's ``haiku`` when only
+  ``mag/*`` is allowed). ``default`` covers children spawned without a
+  model.
+- **``openai_compatible`` provider** for model access gateways (MAG),
+  vLLM, LiteLLM or institutional proxies. Set ``base_url``, plus
+  ``api_key_env`` (sent as ``Bearer``), ``headers`` (``${VAR}`` reads the
+  environment) and ``timeout_s``. Keys never live in the config. See
+  ``examples/gateway_agent.yaml``.
+- Orchestral agents honour a resolved model over their LLM entry's
+  configured one, so one gateway entry serves all of its models.
+
 ## Unreleased — Codex engine
 
 - **``engine: codex``**: agents run on the Codex CLI under your ChatGPT

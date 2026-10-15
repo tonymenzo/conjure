@@ -282,6 +282,7 @@ class ClaudeAgentEngine:
                 in_process_server = build_in_process_mcp_server(
                     record.token,
                     include_toolkits=getattr(runtime, "toolbase", None) is not None,
+                    include_models=getattr(runtime, "models", None) is not None,
                 )
             except Exception:
                 in_process_server = None
@@ -339,6 +340,12 @@ class ClaudeAgentEngine:
 
                 bridged_tools.extend(
                     f"mcp__conjure__{short}" for short in TOOLKIT_TOOL_NAMES
+                )
+            if getattr(runtime, "models", None) is not None:
+                from conjure.mcp_in_process import MODEL_TOOL_NAMES
+
+                bridged_tools.extend(
+                    f"mcp__conjure__{short}" for short in MODEL_TOOL_NAMES
                 )
 
         # When the user is on a subscription, shadow ANTHROPIC_API_KEY
@@ -761,6 +768,10 @@ class ClaudeAgentEngine:
             from conjure.toolbase import TOOLKIT_GUIDANCE
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+        if getattr(runtime, "models", None) is not None:
+            from conjure.models import MODEL_GUIDANCE
+
+            prompt += "\n" + MODEL_GUIDANCE
         return prompt
 
 

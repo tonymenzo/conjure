@@ -48,6 +48,7 @@ from conjure.tools._base import register_token, unregister_token
 
 if TYPE_CHECKING:
     from conjure.agent import Engine
+    from conjure.models import ModelHub
     from conjure.toolbase import Toolset, ToolbaseHub
 
 EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
@@ -138,8 +139,14 @@ class Runtime:
         max_depth: int = 3,
         spawn_listener: Callable[[AgentRecord], None] | None = None,
         toolbase: "ToolbaseHub | None" = None,
+        models: "ModelHub | None" = None,
     ) -> None:
         self._lock = threading.RLock()
+        # Model catalog + policy (``conjure.models``): resolves each
+        # spec's model choice to engine / LLM / provider model and
+        # refuses what the session doesn't allow. ``None``: specs pass
+        # through as written.
+        self.models = models
         # Toolbase hub (``conjure.toolbase``): catalog, root authority,
         # server factory. ``None`` means toolbase isn't configured and
         # any spec asking for toolkits is refused.
@@ -389,6 +396,8 @@ class Runtime:
         The root has no parent. Its capability set is its own address
         plus any addresses listed in ``spec.capabilities``.
         """
+        if self.models is not None:
+            spec = self.models.resolve_spec(spec, parent_engine=None)
         if spec.toolkits:
             hub = self._require_toolbase()
             hub.check_grant(dict(spec.toolkits), hub.root_authority())
@@ -664,6 +673,13 @@ class Runtime:
         """
         if not specs:
             return []
+        if self.models is not None:
+            # Model choice → engine / LLM / provider model, checked
+            # against the session's policy; before any registry mutation.
+            from conjure.engines import effective_engine
+
+            parent_engine = effective_engine(self.record_for(parent), self)
+            specs = [self.models.resolve_spec(s, parent_engine=parent_engine) for s in specs]
         # Toolkit attenuation, before any registry mutation so a refused
         # grant leaves no half-spawned batch. Outside the lock: the
         # first check may read toolbase's cache from disk.

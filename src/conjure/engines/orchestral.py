@@ -328,6 +328,10 @@ class OrchestralEngine:
             from conjure.toolbase import TOOLKIT_GUIDANCE
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+        if getattr(runtime, "models", None) is not None:
+            from conjure.models import MODEL_GUIDANCE
+
+            prompt += "\n" + MODEL_GUIDANCE
         return prompt
 
 
@@ -373,7 +377,16 @@ def make_orchestral_engine_factory(
                 raise KeyError(
                     f"LLM {llm_name!r} not configured (known: {sorted(llm_factories)})"
                 )
-            llm = llm_factories[llm_name]()
+            factory_fn = llm_factories[llm_name]
+            # A spec's model (resolved from the catalog: a gateway model,
+            # say) overrides the LLM entry's configured one.
+            # Only with a model catalog: without one, ``spec.model`` may be
+            # a Claude alias meant for another engine.
+            override = record.spec.model if getattr(runtime, "models", None) is not None else None
+            try:
+                llm = factory_fn(model=override) if override else factory_fn()
+            except TypeError:
+                llm = factory_fn()
         else:
             if llm_name not in llms:
                 raise KeyError(
@@ -386,6 +399,8 @@ def make_orchestral_engine_factory(
             # Toolkit curation (catalog, grant, request) rides along
             # whenever the runtime has toolbase configured.
             tool_names.append("toolkit")
+        if getattr(runtime, "models", None) is not None and "models" in registry and "models" not in tool_names:
+            tool_names.append("models")
         tools = build_tools(record.token, tool_names, registry)
         mount = None
         if hub is not None:

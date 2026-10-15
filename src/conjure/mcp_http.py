@@ -113,6 +113,7 @@ class McpHttpServer:
         from conjure.mcp_in_process import (
             _HIDDEN_FIELDS,
             _TOOL_TARGETS,
+            _MODEL_TARGETS,
             _TOOLKIT_TARGETS,
             _build_input_schema,
         )
@@ -122,6 +123,9 @@ class McpHttpServer:
             conjure_tools.setdefault(name, cls)
         if getattr(self._runtime, "toolbase", None) is not None:
             for name, cls in _TOOLKIT_TARGETS:
+                conjure_tools[name] = cls
+        if getattr(self._runtime, "models", None) is not None:
+            for name, cls in _MODEL_TARGETS:
                 conjure_tools[name] = cls
         conjure_specs = [
             types.Tool(

@@ -85,6 +85,12 @@ _TOOLKIT_TARGETS: list[tuple[str, type]] = [
 ]
 TOOLKIT_TOOL_NAMES: tuple[str, ...] = tuple(n for n, _ in _TOOLKIT_TARGETS)
 
+# Model catalog — served when the runtime has a model hub.
+from conjure.tools.models import ModelCatalogTool  # noqa: E402
+
+_MODEL_TARGETS: list[tuple[str, type]] = [("ModelCatalog", ModelCatalogTool)]
+MODEL_TOOL_NAMES: tuple[str, ...] = tuple(n for n, _ in _MODEL_TARGETS)
+
 
 # Fields present on every conjure tool that the LLM must NOT see —
 # state fields (token plumbing) plus BaseTool's accounting hooks. Kept
@@ -94,7 +100,7 @@ _HIDDEN_FIELDS = frozenset({"runtime_token", "cost"})
 
 
 def build_in_process_mcp_server(
-    token: str, *, include_toolkits: bool = False
+    token: str, *, include_toolkits: bool = False, include_models: bool = False
 ) -> Any | None:
     """Return an ``McpSdkServerConfig`` (the SDK's in-process server
     handle) for conjure's orchestration tools, bound to ``token``.
@@ -107,7 +113,11 @@ def build_in_process_mcp_server(
     except ImportError:
         return None
 
-    targets = _TOOL_TARGETS + (_TOOLKIT_TARGETS if include_toolkits else [])
+    targets = (
+        _TOOL_TARGETS
+        + (_TOOLKIT_TARGETS if include_toolkits else [])
+        + (_MODEL_TARGETS if include_models else [])
+    )
     tools: list[Any] = []
     for display_name, tool_cls in targets:
         schema = _build_input_schema(tool_cls)
