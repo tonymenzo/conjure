@@ -823,13 +823,20 @@ class Runtime:
         with self._lock:
             self._require_alive(target)
             record = self._records[target]
-            cur = record.parent
-            while cur is not None and cur != granter:
-                cur = self._records[cur].parent
-            if cur is None:
-                raise NotPermitted(
-                    f"{granter.id} is not an ancestor of {target.id}"
-                )
+            if granter == target:
+                # Only the root serves itself: its authority (from the
+                # config) is wider than what it's served (root.toolkits).
+                # Anyone else already calls everything it may grant.
+                if record.parent is not None:
+                    raise NotPermitted("only the root may grant toolkits to itself")
+            else:
+                cur = record.parent
+                while cur is not None and cur != granter:
+                    cur = self._records[cur].parent
+                if cur is None:
+                    raise NotPermitted(
+                        f"{granter.id} is not an ancestor of {target.id}"
+                    )
             merged = merge_toolsets(record.spec.toolkits, toolkits)
             record.spec = record.spec.model_copy(update={"toolkits": merged})
             self._journal.write(

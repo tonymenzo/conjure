@@ -166,6 +166,8 @@ class ClaudeAgentEngine:
         self._runtime = runtime
         self._stream_emit = stream_emit
         self._toolbase = toolbase_mount
+        self._toolkits_synced = False
+        self._grant_note: str | None = None
         # Captured from each turn's ResultMessage; a toolkit change
         # reconnects with ``resume=`` this id so the conversation
         # survives the new tool list.
@@ -581,6 +583,10 @@ class ClaudeAgentEngine:
         served = await asyncio.to_thread(self._toolbase.sync)
         if served is None:
             return
+        if self._toolkits_synced and served:
+            # A live grant: the system prompt only listed the first set.
+            self._grant_note = grant_note(served, "mcp__toolbase__", self._toolbase.skill_names())
+        self._toolkits_synced = True
         import dataclasses
 
         from claude_agent_sdk import ClaudeSDKClient
@@ -636,6 +642,9 @@ class ClaudeAgentEngine:
         )
 
         await self._sync_toolkits()
+        if self._grant_note:
+            prompt = f"{self._grant_note}\n\n{prompt}"
+            self._grant_note = None
         if not self._connected:
             await self._client.connect()
             self._connected = True
@@ -756,7 +765,9 @@ class ClaudeAgentEngine:
             pass
 
     @staticmethod
-    def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
+    def _build_system_prompt(
+        record: "AgentRecord", runtime: "Runtime", engine: str = "claude_agent"
+    ) -> str:
         template = _load_default_system_template()
         prompt = template.safe_substitute(
             addr_id=record.addr.id,
@@ -766,9 +777,10 @@ class ClaudeAgentEngine:
             max_depth=str(getattr(runtime, "max_depth", 3)),
         )
         if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE
+            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+            prompt += toolkit_brief(runtime.toolbase, record.spec, engine)
         if getattr(runtime, "models", None) is not None:
             from conjure.models import MODEL_GUIDANCE
 
@@ -926,3 +938,12 @@ def _stringify_tool_result(body: Any) -> str:
                 parts.append(entry)
         return "".join(parts)
     return str(body)
+
+
+def grant_note(served: list[Any], prefix: str, skills: list[str]) -> str:
+    """One line telling the agent which toolkit tools it holds now."""
+    names = ", ".join(f"{prefix}{t.get_name()}" for t in served)
+    note = f"[conjure] Toolkit tools now available to you (call them directly): {names}."
+    if skills:
+        note += f" Skills: {', '.join(skills)}."
+    return note

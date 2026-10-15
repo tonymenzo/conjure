@@ -788,11 +788,81 @@ before using the tools it covers.
 # ---------- catalog rendering (LLM-facing) ----------
 
 
+# How each engine's model sees a toolkit tool ``<kit>__<tool>``.
+CALL_PREFIX = {
+    "claude_agent": "mcp__toolbase__",
+    "codex": "mcp__conjure__",
+    "orchestral": "",
+}
+
+
+def servable_tools(toolset: Toolset, catalog: Catalog) -> dict[str, list[str]]:
+    """``{toolkit: [tool, ...]}`` that ``toolset`` actually serves:
+    tools in bundles this session can't serve (missing config) are left
+    out, since they won't appear."""
+    out: dict[str, list[str]] = {}
+    for kit, grant in sorted(toolset.items()):
+        info = catalog.get(kit)
+        if info is None:
+            continue
+        names = []
+        for name in sorted(expand(kit, grant, catalog).tools):
+            tool = info.tools.get(name)
+            bundles = tool.bundles if tool is not None else ()
+            if bundles and all(b in info.unavailable_bundles for b in bundles):
+                continue
+            names.append(name)
+        if names:
+            out[kit] = names
+    return out
+
+
+def toolkit_brief(hub: "ToolbaseHub", spec: "AgentSpec", engine: str) -> str:
+    """System-prompt section naming the toolkit tools this agent can
+    call, exactly as its engine shows them, and its skills. Empty when
+    it holds none. An agent that isn't told these exist tends to fall
+    back to shelling out to local executables."""
+    try:
+        toolset = hub.toolset_of(spec)
+        if not toolset:
+            return ""
+        catalog = hub.catalog()
+        tools = servable_tools(toolset, catalog)
+        skills = [f"{k}__{s.slug}" for k, s in hub.skills_for(toolset)]
+    except Exception:
+        return ""
+    if not tools and not skills:
+        return ""
+    prefix = CALL_PREFIX.get(engine, "")
+    lines = ["", "## Your toolkit tools", ""]
+    lines.append(
+        "You were granted these toolbase tools for your task. Call them "
+        "directly, by these names, rather than running the underlying "
+        "programs yourself: they carry the session's configuration, version "
+        "pins and logging. File paths you pass them are relative to your "
+        "working directory (the tools' base directory); prefer relative "
+        "paths. If one fails, report the failure (with its error) instead "
+        "of silently working around it."
+    )
+    lines.append("")
+    for kit, names in tools.items():
+        lines.append(f"- {kit}: " + ", ".join(f"`{prefix}{kit}__{n}`" for n in names))
+    if skills:
+        lines.append("")
+        lines.append(
+            "Skills (read the matching one before using its tools): "
+            + ", ".join(f"`{s}`" for s in skills)
+        )
+    return "\n".join(lines) + "\n"
+
+
 def describe_catalog(
     catalog: Catalog,
     authority: Toolset,
     *,
     toolkit: str | None = None,
+    served: Toolset | None = None,
+    prefix: str = "",
 ) -> dict[str, Any]:
     """Summarize what the caller may grant. Without ``toolkit``, one
     line per toolkit (description, bundles, counts) — cheap enough to
@@ -813,6 +883,7 @@ def describe_catalog(
                 "error": f"toolkit {toolkit!r} is not installed",
             }
         held = expand(toolkit, authority[toolkit], catalog)
+        callable_here = servable_tools(served or {}, catalog)
         return {
             "ok": True,
             "toolkit": toolkit,
@@ -828,6 +899,11 @@ def describe_catalog(
                     "name": t.name,
                     "bundles": list(t.bundles),
                     "description": _first_line(t.description),
+                    **(
+                        {"call_as": f"{prefix}{toolkit}__{t.name}"}
+                        if t.name in callable_here.get(toolkit, ())
+                        else {"callable": False}
+                    ),
                 }
                 for t in sorted(info.tools.values(), key=lambda t: t.name)
                 if t.name in held.tools
@@ -856,6 +932,7 @@ def describe_catalog(
                 "tools_held": len(held.tools),
                 "skills_held": len(held.skills),
                 "whole": authority[name].is_whole,
+                "tools_you_can_call": len(servable_tools(served or {}, catalog).get(name, [])),
             }
         )
     return {"ok": True, "toolkits": rows}

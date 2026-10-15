@@ -73,6 +73,12 @@ CASE C — body contains an explicit ``reply_to`` field
   caller has routed the result somewhere specific (often a collector
   agent).
 
+WAITING ON WORKERS: messages are pushed to you between turns; during a
+turn they wait in your inbox. Wait for workers with ``wait_for`` /
+``recv``, not by reading their files. Any tool result may carry
+``"inbox": {{"unread": N, ...}}``: messages are waiting, so ``recv``
+them before going on, especially before a final answer.
+
 ================ DELEGATING TO A CHILD AGENT ================
 
 If your task genuinely needs a child agent (be conservative — most
@@ -326,9 +332,10 @@ class OrchestralEngine:
             max_depth=getattr(runtime, "max_depth", 3),
         )
         if getattr(runtime, "toolbase", None) is not None:
-            from conjure.toolbase import TOOLKIT_GUIDANCE
+            from conjure.toolbase import TOOLKIT_GUIDANCE, toolkit_brief
 
             prompt += "\n" + TOOLKIT_GUIDANCE
+            prompt += toolkit_brief(runtime.toolbase, record.spec, "orchestral")
         if getattr(runtime, "models", None) is not None:
             from conjure.models import MODEL_GUIDANCE
 

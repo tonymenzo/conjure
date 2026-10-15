@@ -59,11 +59,33 @@ def catalog_impl(
     if isinstance(hub, dict):
         return hub
     try:
+        from conjure.engines import effective_engine
+        from conjure.toolbase import CALL_PREFIX
+
         catalog = hub.catalog(refresh=bool(refresh))
         authority = hub.authority_of(runtime, caller)
-        return describe_catalog(catalog, authority, toolkit=toolkit or None)
+        record = runtime.record_for(caller)
+        served = hub.toolset_of(record.spec)
+        prefix = CALL_PREFIX.get(effective_engine(record, runtime), "")
+        out = describe_catalog(
+            catalog, authority, toolkit=toolkit or None, served=served, prefix=prefix
+        )
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
+    if out.get("ok"):
+        # Grantable and callable differ for the root: its authority comes
+        # from the config, its own served tools from root.toolkits.
+        out["note"] = (
+            "`tools_held` is what you may grant; `tools_you_can_call` (and "
+            "each tool's `call_as`) is what you can call yourself."
+        )
+        if record.parent is None and not served and authority:
+            out["note"] += (
+                " You hold these to grant but can't call any yet: to use one "
+                "yourself, GrantToolkits(child=\"self\", toolkits=[...]); it's "
+                "served to you from your next turn."
+            )
+    return out
 
 
 def grant_toolkits_impl(
@@ -75,7 +97,10 @@ def grant_toolkits_impl(
     runtime, caller = resolved
     if isinstance(_hub_or_err(runtime), dict):
         return _hub_or_err(runtime)
-    target = _resolve_addr(child, runtime, caller)
+    if child in ("self", caller.id):
+        target = caller
+    else:
+        target = _resolve_addr(child, runtime, caller)
     if target is None:
         return _err("no_such_address", f"unknown address: {child}")
     try:
@@ -250,7 +275,9 @@ class GrantToolkitsTool(StatelessRuntimeTool):
     """Give a live descendant more toolbase toolkits. Additive, and
     bounded by your own: you can grant only what you hold. The child
     sees the new tools from its next turn, with its conversation
-    intact. Use this to answer a child's ``toolkit_request``.
+    intact. Use this to answer a child's ``toolkit_request``. The root
+    may also grant itself (``child="self"``) from what it may grant, to
+    call those tools directly.
 
     Error codes: ``toolkit_denied`` (you don't hold it / not installed),
     ``not_permitted`` (target isn't your descendant)."""

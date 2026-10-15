@@ -56,6 +56,44 @@
   ``conjure.session.start_session``, shared by tmux and web modes.
 - ``conjure quit`` no longer needs libtmux when no daemon is tracked.
 
+## Unreleased — pilot-study fixes
+
+From a first pilot, in which a Codex root ran a five-decay MadGraph
+study with one worker:
+
+- **Waiting messages show up on tool results.** Messages are pushed
+  between turns. In the pilot, all seven of the worker's messages
+  arrived during one 469-second root turn and reached the root only
+  after its final answer. It had found the results by reading the
+  worker's files, half-copied. Now any conjure tool result can carry
+  ``"inbox": {"unread": N, "latest": [...]}`` with the sender, kind and a
+  preview. ``Recv`` / ``WaitFor`` / ``ListInbox`` / ``Peek`` leave it
+  out, since they already show the inbox. Prompts tell agents to wait on
+  workers through the inbox, not their files, and that steering
+  reaches a busy worker at its next turn.
+- **Agents are told exactly which toolkit tools to call.** In the pilot
+  the worker was granted seven heptapod tools and the mg5 skill but
+  ran MG5 by hand 37 times. Each agent's prompt now names its toolkit
+  tools as its engine shows them (``mcp__toolbase__…`` for Claude,
+  ``mcp__conjure__…`` for Codex, ``<kit>__<tool>`` for orchestral) and
+  its skills, and says to use them rather than the underlying programs
+  and to report tool failures. A live grant adds a one-line note to the
+  next prompt.
+- **ToolCatalog separates what you can call from what you can grant.**
+  Each toolkit now shows ``tools_you_can_call`` next to ``tools_held``,
+  and each tool shows its ``call_as`` name. The root's authority (from
+  the config) is wider than what it's served, which is how the pilot's
+  root saw heptapod advertised but couldn't call it. The root may now
+  ``GrantToolkits(child="self", ...)`` to serve itself.
+- Codex prepended the HTTP MCP server's instructions to every tool
+  description. The server no longer sets any.
+
+Re-run on a smaller study (Z→ee width, one worker): the worker drove
+MadGraph through ``SubmitJob`` / ``JobStatus`` / ``JobResult`` /
+``ValidateProcess`` / ``MadGraphFromRunCard``. The root waited with
+``WaitFor`` / ``Peek``, received the result inside its turn, and
+answered with it.
+
 ## Unreleased — run records and export
 
 - **Every session records its provenance.**

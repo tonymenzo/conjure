@@ -86,6 +86,7 @@ class CodexEngine:
         self._system_prompt = system_prompt
         self.thread_id: str | None = None
         self.system_prompt_text: str | None = None
+        self._grant_note: str | None = None
         self._observed_model: str | None = None
         self._context: tuple[int, int] | None = None
         self._proc: subprocess.Popen[str] | None = None
@@ -100,6 +101,9 @@ class CodexEngine:
 
     def step(self, prompt: str) -> str:
         self._sync_toolkits()
+        if self._grant_note:
+            prompt = f"{self._grant_note}\n\n{prompt}"
+            self._grant_note = None
         if self.thread_id is None:
             system = self._system_prompt or build_system_prompt(self._record, self._runtime)
             self.system_prompt_text = system  # provenance
@@ -251,6 +255,12 @@ class CodexEngine:
         served = self._toolbase.sync()
         if served is None:
             return
+        if self.thread_id is not None and served:
+            # A live grant mid-conversation: the first prompt listed the
+            # original set only.
+            from conjure.engines.claude_agent import grant_note
+
+            self._grant_note = grant_note(served, "mcp__conjure__", self._toolbase.skill_names())
         # Nothing to rewire: each turn's codex process opens a fresh MCP
         # session, which lists the mount's current tools.
         self._emit(
@@ -429,7 +439,7 @@ def build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
     tool-naming note rewritten for Codex."""
     from conjure.engines.claude_agent import ClaudeAgentEngine
 
-    prompt = ClaudeAgentEngine._build_system_prompt(record, runtime)  # noqa: SLF001
+    prompt = ClaudeAgentEngine._build_system_prompt(record, runtime, "codex")  # noqa: SLF001
     prompt = prompt.replace("(claude_agent engine)", "(codex engine)", 1)
     prompt = _CLAUDE_TOOLS_SECTION.sub(_CODEX_TOOLS_SECTION, prompt, count=1)
     prompt = prompt.replace(

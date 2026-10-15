@@ -23,7 +23,7 @@ the caller's capability set before invoking the runtime's trusted
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from conjure.address import Address
 from conjure.envelope import Envelope
@@ -808,6 +808,8 @@ class RecvTool(StatelessRuntimeTool):
     ``{"ok": True, "envelopes": [...], "next_seq": int}``.
     """
 
+    _shows_inbox: ClassVar[bool] = True
+
     thread_id: str = RuntimeField(default="", description="Filter by thread id.")
     from_: str = RuntimeField(default="", description="Filter by sender address id.")
     since_seq: int = RuntimeField(default=0, description="Return envelopes with seq > since_seq.")
@@ -833,6 +835,8 @@ class WaitForTool(StatelessRuntimeTool):
     the deadline elapsed; the agent can detect a short read by
     comparing ``len(envelopes)`` to ``max_n``). Use this for fan-in
     when you're expecting N replies from N workers."""
+
+    _shows_inbox: ClassVar[bool] = True
 
     predicate_kind: str = RuntimeField(default="any", description="One of 'thread', 'from', 'any'.")
     value: str = RuntimeField(default="", description="Predicate value (thread_id or sender id).")
@@ -894,6 +898,8 @@ class IntroduceTool(StatelessRuntimeTool):
 class ListInboxTool(StatelessRuntimeTool):
     """Return a summary of envelopes in your own inbox without
     consuming them (non-blocking)."""
+
+    _shows_inbox: ClassVar[bool] = True
 
     since_seq: int = RuntimeField(default=0, description="Return envelopes with seq > since_seq.")
     max_n: int = RuntimeField(default=50, description="Maximum envelopes to return.")
@@ -970,6 +976,8 @@ class PeekTool(StatelessRuntimeTool):
     target itself). ``address`` accepts ids and the label / `self` /
     `parent` shortcuts.
     """
+
+    _shows_inbox: ClassVar[bool] = True
 
     address: str = RuntimeField(
         description="Address id, label of a direct child, or 'self' / 'parent'.",

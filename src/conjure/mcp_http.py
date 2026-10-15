@@ -214,7 +214,6 @@ class McpHttpServer:
 
         server = Server(
             "conjure",
-            instructions="conjure orchestration tools and this agent's toolbase toolkits.",
             on_list_tools=list_tools,
             on_call_tool=call_tool,
         )
