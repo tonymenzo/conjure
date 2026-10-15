@@ -85,6 +85,12 @@ def start_session(cfg: Any, name: str) -> Session:
         stream=True,  # agent text streams into chat views
         control_socket=control_path,
     )
+    try:
+        from conjure.provenance import write_manifest
+
+        write_manifest(Path(runtime.session_dir or session_dir), name=name, config=cfg, runtime=runtime)
+    except Exception as exc:
+        print(f"couldn't write the session manifest: {exc}", file=sys.stderr)
     control = ControlServer(runtime=runtime, socket_path=control_path)
     try:
         control.start()

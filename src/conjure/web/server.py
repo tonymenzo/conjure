@@ -184,6 +184,18 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             at = float(q["at"]) if q.get("at") else None
             view = self.app.provider(at)
+            if url.path == "/api/export":
+                filename, data = view.export_archive()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/gzip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Cache-Control", "no-store")
+                for k, v in _SECURITY_HEADERS.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(data)
+                return None
             return self._json(self._get(view, url.path, q))
         except ValueError as exc:
             return self._error(HTTPStatus.BAD_REQUEST, str(exc))
@@ -211,6 +223,8 @@ class _Handler(BaseHTTPRequestHandler):
             return view.sandbox(q.get("addr", ""), q.get("path") or None)
         if path == "/api/sandbox_recent":
             return view.sandbox_recent(q.get("addr", ""))
+        if path == "/api/run":
+            return view.run_record()
         raise ValueError(f"unknown route {path}")
 
     def do_POST(self) -> None:  # noqa: N802

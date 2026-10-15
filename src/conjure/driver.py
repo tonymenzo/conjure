@@ -163,6 +163,7 @@ class Driver:
                 )
             finally:
                 self._emit_event({"kind": "turn_end", "errored": errored})
+                self._note_meta()
                 if record.status != "terminated":
                     # Sticky ``error`` between turns so the tree's red
                     # dot persists until the agent successfully
@@ -209,6 +210,29 @@ class Driver:
         except Exception:
             pass
 
+    def _note_meta(self) -> None:
+        """Journal what the agent ran as this turn (provenance for
+        replays and exports). Best-effort: never fails a turn."""
+        try:
+            from conjure.web.state import _engine_kind, model_info
+
+            record = self.agent.record
+            engine = getattr(self.agent, "engine", None)
+            model, source = model_info(engine, record.spec)
+            prompt = getattr(engine, "system_prompt_text", None)
+            self.runtime.note_agent_meta(
+                record.addr,
+                {
+                    "engine": _engine_kind(engine, record.spec),
+                    "model": model,
+                    "model_source": source,
+                    "system_prompt": prompt if isinstance(prompt, str) else None,
+                    "cost_usd": _cost(engine),
+                },
+            )
+        except Exception:
+            pass
+
     def _emit_engine_error(self, exc: Exception) -> None:
         event_log = getattr(self.agent.record, "event_log", None)
         if event_log is None:
@@ -243,3 +267,12 @@ class Driver:
                 f"no auto-forward via final assistant text)."
             )
         return "\n".join(lines)
+
+
+def _cost(engine) -> float | None:
+    fn = getattr(engine, "cost", None)
+    try:
+        value = fn() if callable(fn) else None
+    except Exception:
+        return None
+    return round(float(value), 6) if isinstance(value, (int, float)) else None

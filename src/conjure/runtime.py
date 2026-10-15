@@ -894,6 +894,10 @@ class Runtime:
                 rt._replay_terminate(payload)
             elif kind == "toolkits":
                 rt._replay_toolkits(payload)
+            elif kind == "agent_meta":
+                addr = rt._addr_index.get(payload.get("addr", ""))
+                if addr is not None:
+                    rt._records[addr].meta.update(payload.get("meta") or {})
         return rt
 
     @staticmethod
@@ -1237,6 +1241,23 @@ class Runtime:
                 "spec": record.spec.model_dump(),
             },
         )
+
+    def note_agent_meta(self, addr: Address, meta: dict[str, Any]) -> None:
+        """Record what ``addr`` runs as (engine, model, system prompt,
+        ...). Journals only the keys that changed, so a session's
+        journal says which model each agent ran on and when that became
+        known."""
+        record = self._records.get(addr)
+        if record is None:
+            return
+        changed = {k: v for k, v in meta.items() if v is not None and record.meta.get(k) != v}
+        if not changed:
+            return
+        record.meta.update(changed)
+        try:
+            self._journal.write("agent_meta", {"addr": addr.id, "meta": changed})
+        except Exception:
+            pass
 
     def _journal_send(self, env: Envelope) -> None:
         self._journal.write("send", {"envelope": env.model_dump(by_alias=True)})

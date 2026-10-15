@@ -1440,6 +1440,10 @@
     // Close on the backdrop or ✕, not on clicks inside the card.
     $("#help").addEventListener("click", (e) => { if (e.target === e.currentTarget) $("#help").hidden = true; });
     $("#help-close").addEventListener("click", () => ($("#help").hidden = true));
+    $("#run-toggle").addEventListener("click", () => RunRecord.open());
+    $("#run-close").addEventListener("click", () => ($("#run").hidden = true));
+    $("#run").addEventListener("click", (e) => { if (e.target === e.currentTarget) $("#run").hidden = true; });
+    $("#run-export").addEventListener("click", () => RunRecord.download());
     $("#theme-toggle").addEventListener("click", () => {
       const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
       document.documentElement.dataset.theme = next;
@@ -1521,11 +1525,86 @@
         case "Enter": e.preventDefault(); openChat(S.selected, { focus: true }); break;
         case "s": splitColumn(); break;
         case "?": $("#help").hidden = !$("#help").hidden; break;
-        case "Escape": $("#help").hidden = true; break;
+        case "Escape": $("#help").hidden = true; $("#run").hidden = true; break;
+        case "r": $("#run").hidden ? RunRecord.open() : ($("#run").hidden = true); break;
         case " ": if (!S.live) { e.preventDefault(); Scrub.playing ? Scrub.stop() : Scrub.play(); } break;
       }
     });
   }
+
+  // ---------- run record ----------
+  /** Provenance and totals for the whole session (manifest + summary),
+   *  and the export download. */
+  const RunRecord = {
+    async open() {
+      $("#run").hidden = false;
+      const body = $("#run-body");
+      let data;
+      try { data = await api("run"); } catch (e) { fill(body, h("p", { class: "dim", text: `couldn't load: ${e.message || e}` })); return; }
+      if (!data.ok) { fill(body, h("p", { class: "dim", text: data.error || "no record" })); return; }
+      this.render(body, data.manifest || {}, data.summary || {});
+    },
+    render(body, m, sm) {
+      const t = sm.totals || {};
+      const env = m.environment || {};
+      const stat = (v, k) => h("div", { class: "run-stat" }, h("div", { class: "v", text: v }), h("div", { class: "k", text: k }));
+      const secs = (x) => (x == null ? "—" : dur(x));
+      const ex = m.export;
+      const agents = (sm.agents || []).filter((a) => !a.internal);
+      const row = (a) => h("tr", { onclick: () => { $("#run").hidden = true; setView("chat"); openChat(a.id, { focus: false }); } },
+        h("td", { text: a.label || a.id }),
+        h("td", { text: ENGINE_NAMES[a.engine] || a.engine || "—" }),
+        h("td", { text: a.model ? shortModel(a.model) : "—", title: a.model_source ? `${a.model} (${a.model_source})` : "" }),
+        h("td", { class: "num", text: a.turns ?? 0 }),
+        h("td", { class: "num", text: `${a.tool_calls ?? 0}${a.tool_errors ? ` (${a.tool_errors}✗)` : ""}` }),
+        h("td", { class: "num", text: kfmt(a.tokens_out || 0) }),
+        h("td", { class: "num", text: secs(a.active_s) }),
+        h("td", { class: "num", text: money(a.cost_usd || 0) }));
+      const kv = (pairs) => h("dl", { class: "run-kv" }, pairs.filter(([, v]) => v != null && v !== "").flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: String(v) })]));
+      const pkgs = Object.entries(env.packages || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
+      const clis = Object.entries(env.clis || {}).map(([k, v]) => `${k}: ${v}`).join(" · ");
+      const kits = Object.entries(m.toolbase?.toolkits || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
+      fill(body,
+        ex ? h("p", { class: "run-note", text: `Exported ${ex.exported_at_iso || ""} by conjure ${ex.conjure || ""}${ex.scrubbed ? " · paths scrubbed" : ""}${ex.contents?.omitted_files?.length ? ` · ${ex.contents.omitted_files.length} large file(s) not included` : ""}` }) : null,
+        h("section", null, h("h3", { text: "Run" }), h("div", { class: "run-stats" },
+          stat(clock(sm.started_at || m.started_at || 0), "started"),
+          stat(secs(sm.wall_s), "wall time"),
+          stat(secs(t.active_s), "agent time"),
+          stat(String(sm.agent_count ?? 0), "agents"),
+          stat(String(sm.messages ?? 0), "messages"),
+          stat(`${t.turns ?? 0}${t.errored_turns ? ` (${t.errored_turns}✗)` : ""}`, "turns"),
+          stat(`${t.tool_calls ?? 0}${t.tool_errors ? ` (${t.tool_errors}✗)` : ""}`, "tool calls"),
+          stat(kfmt(t.tokens_out || 0), "output tokens"),
+          stat(money(t.cost_usd || 0), "cost"))),
+        h("section", null, h("h3", { text: "Agents" }), h("div", { class: "run-table-wrap" }, h("table", { class: "run-table" },
+          h("thead", null, h("tr", null, ["agent", "engine", "model"].map((x) => h("th", { text: x })), ["turns", "tool calls", "tokens", "active", "cost"].map((x) => h("th", { class: "num", text: x })))),
+          h("tbody", null, agents.map(row))))),
+        h("section", null, h("h3", { text: "Environment" }), kv([
+          ["session", m.session || sm.session], ["started", m.started_at_iso], ["platform", env.platform], ["python", env.python],
+          ["packages", pkgs], ["CLIs", clis], ["toolbase project", m.toolbase?.project_root], ["toolkits", kits],
+        ])),
+        m.config ? h("section", null, h("details", null, h("summary", { text: "Config (frozen at start)" }), h("pre", { text: JSON.stringify(m.config, null, 2) }))) : null,
+        !m.session ? h("p", { class: "dim", text: "No manifest: this session predates run records. Totals come from its journal and logs." }) : null,
+      );
+    },
+    async download() {
+      const btn = $("#run-export");
+      btn.disabled = true; btn.textContent = "exporting…";
+      try {
+        const res = await fetch("/api/export", { headers: { "X-Conjure-Token": S.token } });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        const blob = await res.blob();
+        const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "conjure-export.tar.gz";
+        const a = h("a", { href: URL.createObjectURL(blob), download: name });
+        document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      } catch (e) {
+        toast(`export failed: ${e.message || e}`, { err: true });
+      } finally {
+        btn.disabled = false; btn.textContent = "export";
+      }
+    },
+  };
 
   async function toggleAuto() {
     if (!S.live) return;

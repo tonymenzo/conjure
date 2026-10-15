@@ -450,6 +450,29 @@ kbd {
 @keyframes card-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
 @media (max-width: 560px) { .help-grid { grid-template-columns: 1fr; } }
 
+/* run record */
+.run-card { width: min(980px, 100%); }
+.run-actions { display: flex; gap: 8px; align-items: center; }
+.run-body { padding: 14px 18px 18px; display: grid; gap: 18px; }
+.run-body h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+.run-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.run-stat { border: 1px solid var(--faint); border-radius: 8px; padding: 8px 10px; background: var(--bg-2); }
+.run-stat .v { font-size: 16px; font-weight: 700; color: var(--fg); }
+.run-stat .k { font-size: 11px; color: var(--dim); }
+.run-table-wrap { overflow-x: auto; }
+.run-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.run-table th, .run-table td { border-bottom: 1px solid var(--faint); padding: 5px 8px; text-align: left; white-space: nowrap; }
+.run-table th { color: var(--dim); font-weight: 600; }
+.run-table td.num, .run-table th.num { text-align: right; }
+.run-table tbody tr { cursor: pointer; }
+.run-table tbody tr:hover td { background: var(--bg-3); }
+.run-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 12px; }
+.run-kv dt { color: var(--dim); }
+.run-kv dd { margin: 0; overflow-wrap: anywhere; }
+.run-body details summary { cursor: pointer; color: var(--dim); font-size: 12px; }
+.run-body details pre { background: var(--bg-2); border: 1px solid var(--faint); border-radius: 6px; padding: 8px 10px; overflow: auto; max-height: 320px; font-size: 11.5px; }
+.run-note { font-size: 12px; color: var(--amber); }
+
 /* toggles: every checkbox is a small switch */
 label.toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; color: var(--dim); }
 label.toggle:hover { color: var(--fg); }

@@ -47,7 +47,10 @@ with open({str(calls)!r}, "a") as f:
 home = os.environ["CODEX_HOME"]
 os.makedirs(os.path.join(home, "sessions", "2026"), exist_ok=True)
 with open(os.path.join(home, "sessions", "2026", "rollout-x-thread-123.jsonl"), "w") as f:
-    f.write('{{"payload":{{"model":"gpt-test-1","model_context_window":400000}}}}\\n')
+    f.write('{{"type":"turn_context","payload":{{"model":"gpt-test-1"}}}}\\n')
+    f.write('{{"type":"event_msg","payload":{{"type":"task_started","model_context_window":400000}}}}\\n')
+    # A tool call naming another model (a child's) must not be read as ours.
+    f.write('{{"type":"response_item","payload":{{"type":"function_call","arguments":"{{\\\\"model\\\\":\\\\"codex/decoy\\\\"}}","model":"decoy"}}}}\\n')
 for ev in {json.dumps(EVENTS)!r} and json.loads({json.dumps(json.dumps(EVENTS))}):
     print(json.dumps(ev), flush=True)
 sys.stderr.write("boom\\n" if {exit_code} else "")

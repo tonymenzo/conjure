@@ -178,6 +178,17 @@ section sets the policy (`allow` globs, `default`, `notes`).
 - **`ScriptedEngine`** — deterministic behaviors for tests and offline
   development.
 
+## Run records and export
+
+Every session writes a manifest (frozen config, software and toolkit
+versions) and journals which engine and model each agent actually ran
+on. `conjure export <session> --archive` packs a session into a portable,
+read-only record: per-agent rows (`agents.jsonl`), totals, the raw
+journal and event logs, and the agents' working files, with paths
+scrubbed. `conjure web --replay run.tar.gz` opens it in the browser with
+the full scrubber, graph, timeline and files; the **run** panel shows the
+totals, versions and config, and exports from the UI.
+
 ## Toolkits (toolbase)
 
 With [toolbase](https://github.com/alexr314/toolbase) installed, agents

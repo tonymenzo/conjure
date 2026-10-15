@@ -92,6 +92,12 @@ class SessionView:
             if addr.id in _SENTINELS:
                 continue
             rec.event_log = _LogRef(agents_dir / f"{addr.id}.jsonl")
+            # Files view: an export carries sandboxes beside the journal;
+            # a session in a store finds them in <store>/sandboxes.
+            for cand in (session_dir / "sandboxes" / addr.id, session_dir.parent.parent / "sandboxes" / addr.id):
+                if cand.is_dir():
+                    rec.spec = rec.spec.model_copy(update={"sandbox_dir": str(cand)})
+                    break
             # Replay reconstructs structure, not liveness: an agent the
             # journal never terminated was alive (idle, as far as the
             # record shows) at this instant.
@@ -151,6 +157,43 @@ class SessionView:
             "session_dir": str(self.session_dir) if self.session_dir else None,
         }
 
+    def run_record(self) -> dict[str, Any]:
+        """The run's provenance and totals: the session manifest (frozen
+        config, versions; an export's ``export`` block) and the summary
+        computed from the journal and event logs."""
+        if self.session_dir is None:
+            return {"ok": False, "error": "this session has no on-disk record"}
+        from conjure.provenance import read_manifest, summarize
+
+        return {
+            "ok": True,
+            "manifest": read_manifest(self.session_dir),
+            "summary": summarize(self.session_dir),
+        }
+
+    def export_archive(self) -> tuple[str, bytes]:
+        """``(filename, .tar.gz bytes)`` of this session's export (paths
+        scrubbed, sandboxes included, large files listed not copied)."""
+        import shutil
+        import tempfile
+
+        from conjure.export import export_session
+
+        if self.session_dir is None:
+            raise ValueError("this session has no on-disk record")
+        store = getattr(self.runtime, "store_dir", None)
+        tmp = Path(tempfile.mkdtemp(prefix="conjure-export-"))
+        try:
+            name = f"{self.session_dir.name}-export"
+            rep = export_session(
+                self.session_dir, tmp / name,
+                store_dir=Path(store) if store else None, archive=True,
+            )
+            data = Path(rep["archive"]).read_bytes()
+            return f"{name}.tar.gz", data
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def snapshot(self) -> dict[str, Any]:
         """Everything the always-visible panes need, in one call: the
         agent tree, cost, the cross-agent activity feed, and pending
@@ -196,6 +239,10 @@ class SessionView:
             spec = rec.spec
             engine = self.runtime._engine_for(rec)  # noqa: SLF001
             model, model_source = model_info(engine, spec)
+            meta = getattr(rec, "meta", None) or {}
+            if engine is None and meta.get("model"):
+                # Replay / export: what the journal recorded it ran on.
+                model, model_source = meta["model"], meta.get("model_source", "observed")
             node = {
                 "addr": addr.id,
                 "label": addr.label or addr.id,
@@ -203,7 +250,7 @@ class SessionView:
                 "awaiting_permission": addr.id in awaiting,
                 "depth": rec.depth,
                 "parent": rec.parent.id if rec.parent else None,
-                "engine": _engine_kind(engine, spec),
+                "engine": (meta.get("engine") if engine is None and meta.get("engine") else _engine_kind(engine, spec)),
                 "model": model,
                 "model_source": model_source,
                 "internal": bool(spec.internal),
@@ -226,7 +273,11 @@ class SessionView:
             return {"ok": False, "error": f"unknown agent: {addr_id}"}
         rec = self.runtime.record_for(addr)
         spec = rec.spec
-        model, model_source = model_info(self.runtime._engine_for(rec), spec)  # noqa: SLF001
+        engine = self.runtime._engine_for(rec)  # noqa: SLF001
+        model, model_source = model_info(engine, spec)
+        meta = getattr(rec, "meta", None) or {}
+        if engine is None and meta.get("model"):
+            model, model_source = meta["model"], meta.get("model_source", "observed")
         caps = [
             {"addr": a.id, "label": a.label or a.id}
             for a in rec.capabilities.snapshot()
@@ -242,9 +293,10 @@ class SessionView:
             "children": [_ref(c) for c in sorted(rec.children, key=lambda c: c.id)],
             "capabilities": caps,
             "role_prompt": spec.role_prompt,
-            "engine": _engine_kind(self.runtime._engine_for(rec), spec),  # noqa: SLF001
+            "engine": meta.get("engine") if engine is None and meta.get("engine") else _engine_kind(engine, spec),
             "model": model,
             "model_source": model_source,
+            "system_prompt": meta.get("system_prompt") or getattr(engine, "system_prompt_text", None),
             "tools": list(spec.tools or []),
             "permissions": dict(spec.permissions or {}),
             "budget": spec.budget,

@@ -85,6 +85,7 @@ class CodexEngine:
         self._bin = codex_bin or shutil.which("codex") or "codex"
         self._system_prompt = system_prompt
         self.thread_id: str | None = None
+        self.system_prompt_text: str | None = None
         self._observed_model: str | None = None
         self._context: tuple[int, int] | None = None
         self._proc: subprocess.Popen[str] | None = None
@@ -101,6 +102,7 @@ class CodexEngine:
         self._sync_toolkits()
         if self.thread_id is None:
             system = self._system_prompt or build_system_prompt(self._record, self._runtime)
+            self.system_prompt_text = system  # provenance
             prompt = f"{system}\n\n---\n\n{prompt}"
         cmd = self._command(prompt)
         env = dict(os.environ)
@@ -308,17 +310,30 @@ class CodexEngine:
             return
         if not files:
             return
+        model = window = None
         try:
-            text = files[-1].read_text(encoding="utf-8", errors="replace")
+            with open(files[-1], encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    payload = entry.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    # Only Codex's own records: a tool call's arguments can
+                    # carry a "model" too (a child's, say).
+                    if entry.get("type") == "turn_context" and isinstance(payload.get("model"), str):
+                        model = payload["model"]
+                    elif entry.get("type") == "event_msg" and isinstance(payload.get("model_context_window"), int):
+                        window = payload["model_context_window"]
         except OSError:
             return
-        models = re.findall(r'"model":"([^"]+)"', text)
-        if models:
-            self._observed_model = models[-1]
-        windows = re.findall(r'"model_context_window":(\d+)', text)
-        if windows:
+        if model:
+            self._observed_model = model
+        if window:
             used = self._context[0] if self._context else 0
-            self._context = (used, int(windows[-1]))
+            self._context = (used, window)
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self._emit_fn is None:
@@ -392,7 +407,10 @@ def _tool_result(item: dict[str, Any]) -> tuple[str, bool]:
 def _strip_shell(command: str) -> str:
     # ``/bin/zsh -lc 'echo hi'`` → ``echo hi``
     m = re.match(r"^\S*sh -l?c (['\"])(.*)\1$", command, re.S)
-    return m.group(2) if m else command
+    if m:
+        return m.group(2)
+    m = re.match(r"^\S*sh -l?c (\S.*)$", command, re.S)  # unquoted: /bin/zsh -lc pwd
+    return m.group(1) if m else command
 
 
 _CLAUDE_TOOLS_SECTION = re.compile(

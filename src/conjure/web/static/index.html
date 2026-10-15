@@ -23,6 +23,7 @@
     <div class="spacer"></div>
     <div id="stats" class="dim"></div>
     <button id="auto-toggle" class="toggle" title="Auto-approve permission requests (F6)">auto <b>off</b></button>
+    <button id="run-toggle" class="small-btn" title="Run record: config, versions, per-agent totals; export (r)">run</button>
     <button id="theme-toggle" class="icon" title="Toggle theme">◐</button>
     <button id="help-toggle" class="icon" title="Keyboard shortcuts (?)">?</button>
     <span id="conn" class="conn" title="Connection"></span>
@@ -133,6 +134,7 @@
         <dl>
           <dt><kbd>F6</kbd></dt><dd>Toggle auto-approve</dd>
           <dt><kbd>Ctrl</kbd><kbd>G</kbd></dt><dd>Same</dd>
+          <dt><kbd>r</kbd></dt><dd>Run record &amp; export</dd>
           <dt><kbd>Space</kbd></dt><dd>Replay: play / pause</dd>
           <dt><kbd>?</kbd></dt><dd>Show / hide this panel</dd>
         </dl>
@@ -149,6 +151,19 @@
     <footer class="help-foot">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</footer>
   </div>
 </div>
+<div id="run" class="overlay" hidden>
+  <div class="help-card run-card" role="dialog" aria-modal="true" aria-labelledby="run-title">
+    <header class="help-head">
+      <h2 id="run-title">Run record</h2>
+      <div class="run-actions">
+        <button id="run-export" class="small-btn" title="Download this session as a portable, read-only export (.tar.gz)">export</button>
+        <button class="help-close" id="run-close" aria-label="Close">✕</button>
+      </div>
+    </header>
+    <div id="run-body" class="run-body"><p class="dim">loading…</p></div>
+  </div>
+</div>
+
 <div id="gate" class="overlay" hidden>
   <div class="overlay-card pane">
     <h2 class="pane-title">token required</h2>

@@ -231,6 +231,16 @@ def cmd_web_replay(
 ) -> int:
     console = _ui.make_console()
     sdir = resolve_session_dir(target, store_dir)
+    if sdir is None and Path(target).expanduser().is_file():
+        # An exported .tar.gz: unpack (safely) to a temp dir and view that.
+        import tempfile
+
+        from conjure.export import open_export
+
+        try:
+            sdir = open_export(Path(target), Path(tempfile.mkdtemp(prefix="conjure-export-")))
+        except FileNotFoundError:
+            sdir = None
     if sdir is None:
         sessions = sorted(
             p.name for p in (store_dir / "sessions").glob("*") if (p / "journal.jsonl").exists()

@@ -56,6 +56,40 @@
   ``conjure.session.start_session``, shared by tmux and web modes.
 - ``conjure quit`` no longer needs libtmux when no daemon is tracked.
 
+## Unreleased — run records and export
+
+- **Every session records its provenance.**
+  - ``manifest.json``, written at start: the frozen config; conjure,
+    toolbase, SDK and CLI versions; installed toolkit versions; and the
+    start time.
+  - After each turn, the journal gets an ``agent_meta`` entry with what
+    the agent actually ran on (engine, exact model, system prompt,
+    cost). Replays read it, so a replay shows each agent's model without
+    the live engine.
+- **``conjure export <session>``** writes a portable, read-only record:
+  - ``manifest.json`` with an ``export`` block, and ``summary.json``.
+  - ``agents.jsonl``: one flat, schema-versioned row per agent (engine,
+    model, system prompt, toolkits, turns, errored turns, tool calls and
+    failures, output tokens, active time, messages, cost).
+  - The raw journal and event logs.
+  - Sandboxes, optionally. Files over ``--max-file-mb`` are listed, not
+    copied.
+  - Paths are scrubbed to ``${SESSION}`` / ``${STORE}`` / ``${HOME}`` by
+    default. Codex homes, which link your login, are never included.
+  - ``--archive`` also writes a ``.tar.gz``.
+- **View an export**: ``conjure web --replay <export dir or .tar.gz>``.
+  Archives are unpacked safely. You get the scrubber, graph, timeline,
+  files and each agent's model, all read-only.
+- **Run record in the web UI** (``run`` button, or ``r``):
+  - Session totals, and a per-agent table that opens the agent's chat.
+  - Environment and versions, and the frozen config.
+  - An **export** button that downloads the ``.tar.gz``, in live and
+    replay modes.
+- Fixed: the Codex engine could misreport an agent's model when its
+  conversation contained another model's name (e.g. a child's
+  ``model`` argument). It now reads only Codex's own ``turn_context``
+  records.
+
 ## Unreleased — model catalog and gateways
 
 - **Agents can resolve every model they may spawn on.** ``ModelCatalog``

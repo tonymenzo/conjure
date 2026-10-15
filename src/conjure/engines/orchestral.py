@@ -162,6 +162,7 @@ class OrchestralEngine:
         self._display_hook = display_hook
         self._toolbase = toolbase_mount
         prompt = system_prompt or self._build_system_prompt(record, runtime)
+        self.system_prompt_text = prompt  # provenance
         self._agent = OrchestralAgent(
             llm=llm,
             tools=tools,

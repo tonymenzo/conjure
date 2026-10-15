@@ -394,6 +394,7 @@ class ClaudeAgentEngine:
             model=model,
         )
         self._options = opts
+        self.system_prompt_text = opts.system_prompt  # provenance
         self._base_setting_sources = opts.setting_sources
         self._client = ClaudeSDKClient(opts)
         self._start_model_probe(sdk_env)

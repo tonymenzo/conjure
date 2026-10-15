@@ -133,6 +133,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Print and open a running session's URL (newest if omitted).",
     )
 
+    export_p = sub.add_parser(
+        "export",
+        help="Export a session as a portable, read-only record (view with web --replay).",
+    )
+    export_p.add_argument("session", help="Session name (under --store) or session directory.")
+    export_p.add_argument("--store", type=Path, default=Path("./.conjure/store"), help="Store dir to look up the session name in.")
+    export_p.add_argument("-o", "--out", type=Path, default=None, help="Output directory (default: ./exports/<session>).")
+    export_p.add_argument("--no-sandboxes", action="store_true", help="Leave out the agents' working files.")
+    export_p.add_argument("--max-file-mb", type=float, default=50.0, help="Skip (and list) sandbox files larger than this.")
+    export_p.add_argument("--no-scrub", action="store_true", help="Keep machine-specific absolute paths.")
+    export_p.add_argument("--archive", action="store_true", help="Also write <out>.tar.gz.")
+
     quit_p = sub.add_parser(
         "quit",
         help="Stop a running conjure daemon (newest if name omitted).",
@@ -197,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
             open_browser=not args.no_browser,
             detach=args.detach,
         )
+    if args.cmd == "export":
+        return _cmd_export(args)
     if args.cmd == "quit":
         return _cmd_quit(args.session)
     if args.cmd == "repl":
@@ -912,3 +926,39 @@ def _cmd_config(args) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _cmd_export(args) -> int:
+    from conjure import _ui
+    from conjure.export import export_session
+    from conjure.web.launch import resolve_session_dir
+
+    console = _ui.make_console()
+    sdir = resolve_session_dir(args.session, args.store)
+    if sdir is None:
+        _ui.print_error(console, f"no journaled session at {args.session!r} (looked in {args.store}/sessions)")
+        return 1
+    out = args.out or Path("exports") / sdir.name
+    try:
+        rep = export_session(
+            sdir,
+            out,
+            store_dir=args.store if (args.store / "sessions" / sdir.name).exists() else None,
+            sandboxes=not args.no_sandboxes,
+            max_file_mb=args.max_file_mb,
+            scrub=not args.no_scrub,
+            archive=args.archive,
+        )
+    except (FileNotFoundError, FileExistsError) as exc:
+        _ui.print_error(console, str(exc))
+        return 1
+    _ui.print_system(console, f"exported [cyan]{rep['session']}[/]: {rep['agents']} agent(s), {rep['sandbox_files']} sandbox file(s)")
+    console.print(f"  {rep['out']}/")
+    if rep["omitted"]:
+        console.print(f"  [yellow]{rep['omitted']} large file(s) listed in manifest.json, not copied[/]")
+    if not rep["scrubbed"]:
+        console.print("  [yellow]paths NOT scrubbed: don't publish as-is[/]")
+    if rep.get("archive"):
+        console.print(f"  {rep['archive']}  ({rep['archive_bytes'] / 1e6:.1f} MB)")
+    console.print(f"  view: [bold]conjure web --replay {rep.get('archive') or rep['out']}[/]")
+    return 0
