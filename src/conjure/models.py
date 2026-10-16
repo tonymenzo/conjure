@@ -189,7 +189,9 @@ class ModelHub:
         if not name and not self.policy.default and self.policy.allow == ["*"]:
             return spec  # nothing named, nothing restricted: no catalog needed
         if not name:
-            if self.policy.default:
+            # ``models.default`` is for children. The root (no parent) runs
+            # on its own configuration, e.g. the llms entry's ``model``.
+            if self.policy.default and parent_engine is not None:
                 name = self.policy.default
             else:
                 entry = self._implied(spec, parent_engine)

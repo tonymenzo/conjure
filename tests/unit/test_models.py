@@ -204,3 +204,33 @@ def test_an_exact_model_name_shared_by_two_aliases_resolves(monkeypatch):
     hub = ModelHub(llm_configs={}, claude=True, codex=False)
     s = hub.resolve_spec(AgentSpec(role_prompt="x", model="claude-opus-5-5"), parent_engine=None)
     assert (s.engine, s.model) == ("claude_agent", "opus")
+
+
+
+def test_the_policy_default_is_for_children_not_the_root(gateway):
+    """A root without ``model`` runs on its llms entry's model, even when
+    ``models.default`` names a cheaper one for children."""
+    hub = _hub(gateway, allow=["mag/*"], default="mag/mistral-large")
+    root = hub.resolve_spec(AgentSpec(role_prompt="r", engine="orchestral", llm="mag"), parent_engine=None)
+    assert root.model is None and root.llm == "mag"  # the entry's own model
+    child = hub.resolve_spec(AgentSpec(role_prompt="c"), parent_engine="orchestral")
+    assert (child.llm, child.model) == ("mag", "mistral-large")
+
+
+def test_the_root_runs_on_its_entrys_model_end_to_end(gateway):
+    from conjure.config import load_config_from_mapping
+    from conjure.runner import build_runtime
+
+    cfg = load_config_from_mapping({
+        "llms": {"mag": {"provider": "openai_compatible", "base_url": gateway.url,
+                         "api_key_env": "MAG_API_KEY", "discover": True, "model": "llama-4-405b"}},
+        "models": {"allow": ["mag/*"], "default": "mag/mistral-large"},
+        "root": {"role_prompt": "r", "engine": "orchestral", "llm": "mag"},
+    })
+    rt, root = build_runtime(cfg)
+    try:
+        rec = rt.record_for(root)
+        assert rec.spec.model is None
+        assert rec.agent.engine.model_name() == "llama-4-405b"
+    finally:
+        rt.shutdown()
