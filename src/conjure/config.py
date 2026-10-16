@@ -80,6 +80,11 @@ class LLMConfig(BaseModel):
     # Retries of a transient failure (dropped connection, timeout, 429,
     # 5xx), with backoff; a 429 waits for the gateway's stated reset.
     max_retries: int = 5
+    # USD per million tokens, by model id (or id prefix) or "default":
+    # {claude-haiku-5-5: {input: 1.0, output: 5.0, cached_input: 0.1}}.
+    # An openai_compatible entry falls back to public list prices where
+    # known; models with neither show token counts as unpriced.
+    pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class RootConfig(BaseModel):

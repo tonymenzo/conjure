@@ -8,6 +8,30 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gateway models showed as free.** An `openai_compatible` entry (a
+  model access gateway, vLLM, LiteLLM) runs on orchestral's vLLM client,
+  which prices every call at $0. Its calls are now priced from their
+  token counts:
+  - by the entry's new `pricing:` (USD per million tokens, by model id,
+    id prefix, or `default`);
+  - else by the public list price where orchestral's tables know the
+    model (`claude-sonnet-5-5` takes `claude-sonnet-5`'s);
+  - else counted as unpriced tokens, shown as such rather than as $0.
+- **Orchestral agents reported no tokens.** They now emit per-turn
+  `usage` events, so turn headers, the timeline and the run record count
+  their tokens.
+
+### Added
+
+- The web UI shows tokens next to cost: the header reads
+  `$1.35 · 290.0k tok`, or `unpriced` when no price is known, with a hint
+  on how to set one. Each agent shows its cost, or its tokens when
+  unpriced.
+- `ModelCatalog` shows each API model's `price_per_mtok` where known, so
+  agents can weigh cost when choosing a child's model.
+
 ## [0.2.3] — 2026-10-15
 
 Agents stop when they're terminated, orchestral agents get a coding

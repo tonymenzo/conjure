@@ -163,6 +163,7 @@ class OrchestralEngine:
         from conjure.llm_resilience import LLMCallStopped
 
         self._sync_toolkits()
+        self._turn_start_usage = self.usage()
         try:
             if self._stream_emit is None:
                 response = self._agent.run(prompt)
@@ -195,6 +196,7 @@ class OrchestralEngine:
             self._emit_chunk(chunk)
             accumulated += chunk
         self._emit_stream_end()
+        self._emit_turn_usage(self._turn_start_usage)
 
         for _ in range(self._max_tool_iterations):
             if self._interrupt.is_set():
@@ -209,6 +211,7 @@ class OrchestralEngine:
                 self._emit_chunk(chunk)
                 accumulated += chunk
             self._emit_stream_end()
+            self._emit_turn_usage(self._turn_start_usage)
         else:
             if not self._interrupt.is_set() and self._extract_tool_calls(self._agent.context.messages[-1]):
                 # The turn ran out of tool rounds with calls still pending:
@@ -298,12 +301,68 @@ class OrchestralEngine:
         tokens_max = _model_context_window(self.model_name() or "")
         return (tokens_used, tokens_max)
 
-    def cost(self) -> float:
-        """Return the cumulative LLM cost (USD) seen by this engine."""
+    def usage(self) -> dict[str, Any]:
+        """Token counts and cost over this agent's responses.
+
+        ``cost`` covers the priced responses only; ``unpriced_tokens``
+        counts the rest (a gateway model with no known price), so a UI
+        can say "unpriced" instead of a misleading $0."""
+        book = getattr(self._llm, "conjure_pricebook", None)
+        tokens_in = tokens_out = unpriced = 0
+        cost = 0.0
+        sources: set[str] = set()
         try:
-            return float(self._agent.get_total_cost())
+            messages = list(self._agent.context.messages)
+        except Exception:
+            messages = []
+        for msg in messages:
+            usage = getattr(msg, "usage", None)
+            if usage is None:
+                continue
+            toks = getattr(usage, "tokens", None) or {}
+            n_in = int(toks.get("prompt_tokens") or toks.get("input_tokens") or 0)
+            n_out = int(toks.get("completion_tokens") or toks.get("output_tokens") or 0)
+            tokens_in += n_in
+            tokens_out += n_out
+            if book is not None:
+                price = book.price(getattr(usage, "model_name", None))
+                if price is None:
+                    unpriced += n_in + n_out
+                    continue
+                cost += price.cost(toks)
+                sources.add(price.source)
+            else:
+                try:
+                    cost += float(usage.get_cost())
+                except Exception:
+                    pass
+        return {
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cost": round(cost, 6),
+            "unpriced_tokens": unpriced,
+            "price_sources": sorted(sources),
+        }
+
+    def cost(self) -> float:
+        """Cumulative cost (USD) of this agent's priced responses."""
+        try:
+            return float(self.usage()["cost"])
         except Exception:
             return 0.0
+
+    def _emit_turn_usage(self, before: dict[str, Any]) -> None:
+        """A ``usage`` event with this turn's tokens so far (cumulative
+        within the turn, like the other engines'), for the turn header,
+        timeline and run record."""
+        if self._stream_emit is None:
+            return
+        now = self.usage()
+        self._emit_event({
+            "kind": "usage",
+            "tokens_in": now["tokens_in"] - before["tokens_in"],
+            "tokens_out": now["tokens_out"] - before["tokens_out"],
+        })
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:
