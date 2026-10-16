@@ -114,6 +114,7 @@ def build_runtime(
         toolbase=hub,
         models=build_model_hub(config),
     )
+    runtime.auto_mode = bool(config.runtime.auto_approve)
 
     root_spec = AgentSpec(
         role_prompt=config.root.role_prompt,

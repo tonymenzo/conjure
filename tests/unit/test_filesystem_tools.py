@@ -23,6 +23,9 @@ from conjure.tools.filesystem import (
 @pytest.fixture
 def rt(tmp_path):
     rt = Runtime(store_dir=tmp_path)
+    # These tests exercise the tools, not the approval flow: Bash / Write /
+    # Edit ask first by default (see test_permission_defaults_*).
+    rt.auto_mode = True
     yield rt
     rt.shutdown()
 
@@ -128,6 +131,7 @@ def test_permission_deny_blocks_write(rt):
 def test_permission_ask_blocks_and_resolves_to_allow(rt):
     """An ``ask`` decision submits a PermissionRequest and blocks the
     tool. When the UI resolves it to ``allow``, the tool proceeds."""
+    rt.auto_mode = False  # this test is about the prompt
     import threading
 
     addr = rt.root(
@@ -166,6 +170,7 @@ def test_permission_ask_blocks_and_resolves_to_allow(rt):
 
 def test_permission_ask_resolved_to_deny(rt):
     """``deny`` resolution returns a clean ``permission_denied``."""
+    rt.auto_mode = False  # this test is about the prompt
     import threading
 
     addr = rt.root(
@@ -250,6 +255,7 @@ def test_explicit_sandbox_dir(tmp_path):
     """Spec-level ``sandbox_dir`` wins over the auto-allocated path."""
     custom = tmp_path / "custom-sandbox"
     rt = Runtime()  # no store_dir → would normally be no_sandbox
+    rt.auto_mode = True
     addr = rt.root(
         AgentSpec(
             role_prompt="r",
@@ -264,3 +270,63 @@ def test_explicit_sandbox_dir(tmp_path):
         assert (custom / "ok.txt").read_text() == "ok"
     finally:
         rt.shutdown()
+
+
+# ----- permission defaults and process control -----
+
+
+def test_permission_defaults_ask_for_changes_and_allow_reads(tmp_path):
+    from conjure.tools.filesystem import ASK_BY_DEFAULT, _check_permission
+
+    assert ASK_BY_DEFAULT == {"Bash", "Write", "Edit"}
+    rt = Runtime(store_dir=tmp_path)
+    rec = rt.record_for(rt.root(AgentSpec(role_prompt="r")))
+    assert _check_permission(rec, rt, "Read") is None
+    # An ``ask`` with nobody to answer would block; auto mode and "allow
+    # always" open it, an explicit deny still holds.
+    rt.auto_mode = True
+    assert _check_permission(rec, rt, "Bash") is None
+    rec.spec = rec.spec.model_copy(update={"permissions": {"Bash": "deny"}})
+    assert _check_permission(rec, rt, "Bash")["code"] == "permission_denied"
+    rt.shutdown()
+
+
+def test_bash_timeout_stops_the_whole_process_group(rt, agent_token, tmp_path):
+    import time
+
+    marker = tmp_path / "survivor"
+    # The shell starts a background child that would write a file later.
+    out = bash_impl(
+        token=agent_token,
+        command=f"(sleep 1.5; touch {marker}) & sleep 30",
+        timeout_s=0.5,
+    )
+    assert out["ok"] is False and out["code"] == "timeout"
+    time.sleep(2.0)
+    assert not marker.exists(), "the shell's child outlived the timeout"
+
+
+def test_terminating_an_agent_stops_its_running_command(tmp_path):
+    import threading
+    import time
+
+    rt = Runtime(store_dir=tmp_path)
+    rt.auto_mode = True
+    root = rt.root(AgentSpec(role_prompt="r"))
+    kid = rt.record_for(rt._spawn(parent=root, spec=AgentSpec(role_prompt="c")))
+    result = {}
+    t = threading.Thread(target=lambda: result.update(bash_impl(token=kid.token, command="sleep 30", timeout_s=60)))
+    t.start()
+    while not kid.processes:
+        time.sleep(0.02)
+    t0 = time.monotonic()
+    rt.terminate(kid.addr)
+    t.join(10)
+    assert not t.is_alive() and time.monotonic() - t0 < 6
+    assert result["ok"] is False and result["code"] == "terminated"
+    # Later calls from the terminated agent say so, rather than no_runtime.
+    from conjure.tools.primitives import SendTool
+
+    late = SendTool(runtime_token=kid.token, to="parent", body="done")._run()
+    assert late["code"] == "terminated" and kid.addr.id in late["error"]
+    rt.shutdown()

@@ -76,7 +76,20 @@ def register_token(token: str, runtime: "Runtime", addr: Address) -> None:
 
 def unregister_token(token: str) -> None:
     with _TOKEN_LOCK:
-        _TOKEN_REGISTRY.pop(token, None)
+        entry = _TOKEN_REGISTRY.pop(token, None)
+        if entry is not None:
+            _REVOKED[token] = entry[1].id
+
+
+# Tokens of terminated agents → their address id. A tool call made with
+# one comes from an agent whose turn outlived its termination; it gets
+# ``code=terminated`` (stop working) rather than a puzzling ``no_runtime``.
+_REVOKED: dict[str, str] = {}
+
+
+def revoked(token: str) -> str | None:
+    with _TOKEN_LOCK:
+        return _REVOKED.get(token)
 
 
 def resolve_token(token: str) -> "tuple[Runtime, Address] | None":
@@ -131,6 +144,16 @@ class StatelessRuntimeTool(BaseTool):
             return
 
         def _run(self, *args, **kw):
+            gone = revoked(getattr(self, "runtime_token", "") or "")
+            if gone is not None:
+                return {
+                    "ok": False,
+                    "code": "terminated",
+                    "error": (
+                        f"you ({gone}) were terminated: nothing you do now takes "
+                        "effect. Stop and end your turn."
+                    ),
+                }
             out = run(self, *args, **kw)
             if isinstance(out, dict) and "inbox" not in out and not type(self)._shows_inbox:
                 notice = inbox_notice(getattr(self, "runtime_token", "") or "")

@@ -1123,16 +1123,29 @@ class Runtime:
         for addr in addrs:
             with self._lock:
                 record = self._records.get(addr)
-            if record is not None and record.delivered:
-                # Its result is already in; let the turn wind down.
+            if record is None:
                 continue
-            engine = self._engine_for(record) if record is not None else None
-            fn = getattr(engine, "interrupt", None)
-            if callable(fn):
-                try:
-                    fn()
-                except Exception:
-                    pass
+            # A delivered agent's result is already in: let its turn wind
+            # down rather than abort a reply mid-acknowledgement.
+            if not record.delivered:
+                engine = self._engine_for(record)
+                fn = getattr(engine, "interrupt", None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+            # Either way its shell commands (and whatever they started)
+            # stop; the engine is told first, so its loop can't start
+            # another round in between.
+            if record.processes:
+                from conjure.tools.filesystem import stop_process_group
+
+                for proc in list(record.processes):
+                    threading.Thread(
+                        target=stop_process_group, args=(proc,), daemon=True,
+                        name=f"stop-{addr.id}",
+                    ).start()
 
     def _emit_batch_terminated(
         self,

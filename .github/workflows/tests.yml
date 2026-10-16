@@ -1,0 +1,31 @@
+# The test suite, on every pull request and every push to main.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:   # the release workflow runs it before publishing
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          sudo apt-get install -y tmux >/dev/null
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test,claude_agent,toolbase]" pytest-timeout
+      - name: Test
+        run: python -m pytest -q --timeout=120

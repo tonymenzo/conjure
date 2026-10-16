@@ -31,7 +31,9 @@ root:
     sees your final assistant text directly.
   engine: orchestral
   llm: default
-  tools: [primitive, combinator]
+  # tools: default is the core set: primitive, combinator and filesystem
+  # (Read, Write, Edit, Bash, Grep, Glob). Bash / Write / Edit ask first
+  # unless runtime.auto_approve is set.
   label: root
 
 mode: repl

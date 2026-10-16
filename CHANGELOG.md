@@ -8,25 +8,67 @@ this file as its notes.
 
 ## [Unreleased]
 
-### Fixed
+## [0.2.3] — 2026-10-15
 
-- Drivers drain mailbox backlogs larger than 1,024 messages without requiring
-  another send to wake them.
-- Mailbox sequence assignment and journal writes are serialized; replay also
-  sorts out-of-order sends from older journals before cursor reads.
-- Failed batch startup terminates all children, revokes tokens, and cleans up
-  started engines and logs. Terminated records remain available for inspection.
+Agents stop when they're terminated, orchestral agents get a coding
+harness's core tools, and safeguards against looping and against
+releasing broken builds.
+
+### Added
+
+- **Orchestral agents get the core tools by default:** orchestration,
+  combinators, and `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob` in
+  their sandbox, like a coding harness. A spec that lists `tools` keeps
+  exactly that list. `Bash`, `Write` and `Edit` ask first, as on Claude
+  Code agents; `runtime.auto_approve: true` starts a session with
+  auto-approve on (for unattended runs; F6 toggles it live). The
+  orchestral engine's permission check now honors auto-approve and
+  "allow always", as the Claude engine's does.
+- **Loop breaker.** An orchestral turn that calls a tool that doesn't
+  exist three times, or gets the same tool error four times in a row,
+  ends with a notice in the chat instead of another round.
+- **Startup tool-name check.** An orchestral agent whose tools would be
+  offered to the model under one name and dispatched under another (as
+  in 0.2.1), or under duplicate names, refuses to start with an error
+  naming them.
+- **Tests run in CI** on every pull request and push to `main`, and the
+  release workflow publishes only after they pass.
+- `AgentMap` / `agent_map` take `max_concurrency` (default unlimited).
+  Slots refill as workers finish, and one timeout covers the whole map.
+- `Send` takes an optional `idempotency_key`. Retrying with the same key
+  and message returns the original; the same key with a different
+  message returns `idempotency_conflict`.
 
 ### Changed
 
-- `Send` deduplicates only when an explicit `idempotency_key` is supplied.
-  Independent messages with identical bodies are delivered normally. Reusing
-  a key for a different message returns `idempotency_conflict`.
-- `agent_map` and `AgentMap` accept `max_concurrency` (default `None`, unlimited).
-  Slots refill as workers finish; one timeout covers the entire operation.
-- Bounded mailbox reads no longer copy the remaining backlog. Timeline log
-  parsing reads only appended complete lines and resets on replacement or
-  truncation, retaining incomplete lines for the next update.
+- **Terminating an agent stops its work.**
+  - Orchestral agents are now interrupted, as Claude and Codex agents
+    already were: no further tool calls or model calls in the current
+    turn.
+  - Every agent's running `Bash` commands are stopped, including
+    whatever they started (the whole process group).
+  - Tool calls from an agent whose turn outlived its termination get
+    `code=terminated` with its address, instead of a puzzling
+    `no_runtime`.
+- `Bash` runs each command in its own process group. A timeout stops the
+  group, not just the shell, and reports the output so far. The default
+  timeout is 120 s (was 30 s).
+- `Send` no longer silently drops a message identical to one sent within
+  the last 5 seconds. Identical messages are delivered as independent
+  messages unless they share an `idempotency_key`.
+
+### Fixed
+
+- Drivers drain mailbox backlogs larger than 1,024 messages without
+  waiting for another send to wake them.
+- Sequence assignment and journal writes are serialized, so readers never
+  see a message before it's journaled. Replay sorts out-of-order sends
+  from older journals.
+- A failed batch spawn terminates every child in the batch, revokes their
+  tokens, and cleans up engines and logs already started. The records stay
+  for inspection.
+- Bounded mailbox reads no longer copy the remaining backlog, and the web
+  UI parses only newly appended log lines.
 
 ## [0.2.2] — 2026-10-15
 
@@ -292,7 +334,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/tonymenzo/conjure/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/tonymenzo/conjure/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tonymenzo/conjure/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tonymenzo/conjure/compare/v0.1.2...v0.2.0

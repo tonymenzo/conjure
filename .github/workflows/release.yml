@@ -1,8 +1,8 @@
-# Pushing a version tag (v0.2.0, ...) publishes a GitHub release whose
-# notes are that version's section of CHANGELOG.md, with the built
-# wheel and sdist attached. The tag must match the package version, and
-# the changelog must have a section for it, or the release stops before
-# anything is published.
+# Pushing a version tag (v0.2.0, ...) runs the test suite and, if it
+# passes, publishes a GitHub release whose notes are that version's
+# section of CHANGELOG.md, with the built wheel and sdist attached. The
+# tag must match the package version, and the changelog must have a
+# section for it, or the release stops before anything is published.
 name: release
 
 on:
@@ -13,7 +13,12 @@ permissions:
   contents: write
 
 jobs:
+  # A release publishes only what passes the full suite.
+  test:
+    uses: ./.github/workflows/tests.yml
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

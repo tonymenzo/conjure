@@ -162,3 +162,6 @@ class AgentRecord:
     # prompt). Journaled as ``agent_meta`` when it changes, so a replay
     # or an export shows it without the live engine.
     meta: dict[str, Any] = field(default_factory=dict)
+    # Shell commands this agent is running (``Bash``), each in its own
+    # process group, so terminating the agent can stop them.
+    processes: set[Any] = field(default_factory=set)

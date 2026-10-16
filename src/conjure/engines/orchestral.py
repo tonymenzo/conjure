@@ -18,6 +18,8 @@ to a follow-on iteration.
 
 from __future__ import annotations
 
+import threading
+
 from typing import Any, Callable, TYPE_CHECKING
 
 from orchestral import Agent as OrchestralAgent
@@ -93,6 +95,24 @@ class OrchestralEngine:
             display_hook=display_hook,
             debug=False,
         )
+        # orchestral checks this between tool calls and stream chunks;
+        # ``interrupt()`` sets it so terminating the agent stops its turn.
+        self._interrupt = threading.Event()
+        self._agent.interrupt_flag = self._interrupt
+        try:
+            # The record's status flips to ``terminated`` before any
+            # interrupt arrives, so this can't race the runtime's teardown.
+            llm.conjure_should_stop = (
+                lambda: self._interrupt.is_set() or self._record.status == "terminated"
+            )
+            llm.conjure_guard = loop_guard
+        except Exception:
+            pass
+
+    def interrupt(self) -> None:
+        """Stop the in-flight turn: no further tool calls or LLM rounds.
+        (The runtime separately stops the agent's shell commands.)"""
+        self._interrupt.set()
 
     def _sync_toolkits(self) -> None:
         if self._toolbase is None:
@@ -105,19 +125,20 @@ class OrchestralEngine:
         self._agent = OrchestralAgent(
             llm=self._llm,
             context=self._agent.context,
-            tools=self._base_tools + served,
+            tools=check_and_return(self._base_tools + served),
             max_tool_interations=self._max_tool_iterations,
             tool_config=None,
             display_hook=self._display_hook,
             debug=False,
         )
+        self._agent.interrupt_flag = self._interrupt
 
     def close_toolkits(self) -> None:
         if self._toolbase is not None:
             self._toolbase.close()
 
     def _on_llm_retry(self, attempt: int, max_retries: int, delay_s: float, exc: BaseException) -> bool:
-        if self._record.status == "terminated":
+        if self._record.status == "terminated" or self._interrupt.is_set():
             return False
         if self._stream_emit is not None:
             try:
@@ -139,11 +160,18 @@ class OrchestralEngine:
         self.close_toolkits()
 
     def step(self, prompt: str) -> str:
+        from conjure.llm_resilience import LLMCallStopped
+
         self._sync_toolkits()
-        if self._stream_emit is None:
-            response = self._agent.run(prompt)
-            return response.text if response.text is not None else ""
-        return self._step_streaming(prompt)
+        try:
+            if self._stream_emit is None:
+                response = self._agent.run(prompt)
+                return response.text if response.text is not None else ""
+            return self._step_streaming(prompt)
+        except LLMCallStopped as stopped:
+            if str(stopped):  # the loop guard: say why the turn ended
+                self._emit_event({"kind": "notice", "text": str(stopped)})
+            return ""
 
     def _step_streaming(self, prompt: str) -> str:
         """Drive orchestral's tool-call loop ourselves so we can stream
@@ -169,6 +197,8 @@ class OrchestralEngine:
         self._emit_stream_end()
 
         for _ in range(self._max_tool_iterations):
+            if self._interrupt.is_set():
+                break
             last = self._agent.context.messages[-1]
             tool_calls = self._extract_tool_calls(last)
             if not tool_calls:
@@ -180,7 +210,7 @@ class OrchestralEngine:
                 accumulated += chunk
             self._emit_stream_end()
         else:
-            if self._extract_tool_calls(self._agent.context.messages[-1]):
+            if not self._interrupt.is_set() and self._extract_tool_calls(self._agent.context.messages[-1]):
                 # The turn ran out of tool rounds with calls still pending:
                 # say so rather than ending in silence.
                 self._emit_event({
@@ -282,6 +312,75 @@ class OrchestralEngine:
         return build_system_prompt(record, runtime, "orchestral")
 
 
+# Loop guard: identical failing tool results in a row end the turn.
+LOOP_UNKNOWN_TOOL = 3   # calls to a tool that doesn't exist
+LOOP_SAME_ERROR = 4     # the same error from tool calls, back to back
+
+
+def _role(msg: Any) -> str | None:
+    inner = getattr(msg, "message", None)
+    return getattr(msg, "role", None) or getattr(inner, "role", None)
+
+
+def _is_error(text: str) -> bool:
+    t = text.lstrip()
+    return t.startswith("Error") or "'ok': False" in t or '"ok": false' in t
+
+
+def loop_guard(context: Any) -> str | None:
+    """Why this turn should stop instead of calling the model again, or
+    None. Looks at the current turn's tool results (after the last user
+    message): a model calling a tool that doesn't exist, or hitting the
+    same error over and over, won't get unstuck by another round."""
+    import re
+
+    results: list[str] = []
+    for msg in reversed(list(getattr(context, "messages", None) or [])):
+        role = _role(msg)
+        if role == "user":
+            break
+        if role == "tool":
+            results.append(str(getattr(msg, "text", "") or ""))
+    results.reverse()
+    unknown = [r for r in results if "not found! Available tools" in r]
+    if len(unknown) >= LOOP_UNKNOWN_TOOL:
+        return (
+            f"turn stopped: {len(unknown)} calls to tools that don't exist "
+            f"(last: {unknown[-1][:160]})"
+        )
+    tail = results[-LOOP_SAME_ERROR:]
+    if len(tail) == LOOP_SAME_ERROR and all(_is_error(r) for r in tail):
+        if len({re.sub(r"\d+", "#", r)[:500] for r in tail}) == 1:
+            return (
+                f"turn stopped: the same tool error {LOOP_SAME_ERROR} times in a row "
+                f"({tail[-1][:160]})"
+            )
+    return None
+
+
+def check_and_return(tools: list[Any]) -> list[Any]:
+    check_tool_names(tools)
+    return tools
+
+
+def check_tool_names(tools: list[Any]) -> None:
+    """Refuse to start an agent whose tools would be offered to the model
+    under one name and dispatched under another (0.2.1 shipped exactly
+    that), or under a duplicate name."""
+    offered = [t.get_tool_spec().name for t in tools]
+    routed = [t.get_name() for t in tools]
+    mismatched = [(o, r) for o, r in zip(offered, routed) if o != r]
+    if mismatched:
+        raise RuntimeError(f"tool names offered to the model don't match the dispatcher: {mismatched}")
+    dupes = sorted({n for n in routed if routed.count(n) > 1})
+    if dupes:
+        raise RuntimeError(f"duplicate tool names: {dupes}")
+
+
+# Tool groups an orchestral agent gets when its spec doesn't list any.
+DEFAULT_TOOL_GROUPS_FOR_AGENTS = ("primitive", "combinator", "filesystem")
+
+
 def make_orchestral_engine_factory(
     *,
     llm_factories: dict[str, Callable[[], Any]] | None = None,
@@ -340,7 +439,9 @@ def make_orchestral_engine_factory(
                     f"LLM {llm_name!r} not configured (known: {sorted(llms)})"
                 )
             llm = llms[llm_name]
-        tool_names = list(record.spec.tools) if record.spec.tools else ["primitive"]
+        # Like a coding harness, an agent gets the core tools (orchestration,
+        # combinators, files and shell) unless its spec names its own set.
+        tool_names = list(record.spec.tools) if record.spec.tools else list(DEFAULT_TOOL_GROUPS_FOR_AGENTS)
         hub = getattr(runtime, "toolbase", None)
         if hub is not None and "toolkit" in registry and "toolkit" not in tool_names:
             # Toolkit curation (catalog, grant, request) rides along
@@ -349,6 +450,7 @@ def make_orchestral_engine_factory(
         if getattr(runtime, "models", None) is not None and "models" in registry and "models" not in tool_names:
             tool_names.append("models")
         tools = build_tools(record.token, tool_names, registry)
+        check_tool_names(tools)
         mount = None
         if hub is not None:
             # Every agent gets a mount, even with no toolkits yet: a
