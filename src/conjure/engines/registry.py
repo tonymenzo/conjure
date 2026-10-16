@@ -49,6 +49,24 @@ DEFAULT_TOOL_GROUPS: ToolGroupRegistry = {
 }
 
 
+def check_tool_groups(
+    names: list[str],
+    registry: ToolGroupRegistry | None = None,
+) -> None:
+    """Raise ``ValueError`` if any of ``names`` is not a tool group.
+
+    Spawn calls this before the child exists (see ``Runtime._spawn_batch``),
+    so a bad ``tools`` list is refused without leaving a record or journal
+    entry behind; ``build_tools`` calls it again as the last line of defence.
+    """
+    reg = registry if registry is not None else DEFAULT_TOOL_GROUPS
+    for name in names:
+        if name not in reg:
+            raise ValueError(
+                f"unknown tool group: {name!r} (known: {sorted(reg)})"
+            )
+
+
 def build_tools(
     token: str,
     names: list[str],
@@ -56,12 +74,9 @@ def build_tools(
 ) -> list[StatelessRuntimeTool]:
     """Instantiate the tools requested by ``names``, deduplicated."""
     reg = registry if registry is not None else DEFAULT_TOOL_GROUPS
+    check_tool_groups(names, reg)
     classes: list[type[StatelessRuntimeTool]] = []
     for name in names:
-        if name not in reg:
-            raise ValueError(
-                f"unknown tool group: {name!r} (known: {sorted(reg)})"
-            )
         classes.extend(reg[name])
 
     # Preserve insertion order while deduplicating.

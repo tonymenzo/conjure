@@ -8,6 +8,29 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A spawn refused for unknown tool groups no longer leaves a ghost
+  child.** Tool groups were checked only while the child's engine was
+  built, after the spawn had been recorded and journaled, so the refused
+  spawn left a terminated (`spawn-failed`) record and a `spawn` journal
+  entry. A benchmark that counts workers from the journal counted it: five
+  of five FeynTable coordinated trials failed their one-worker gate after
+  the root passed Claude Code tool names (`Read`, `Bash`) to an orchestral
+  child and immediately retried with groups. Engine factories may now
+  expose `validate_spec(spec, parent)`; `Runtime._spawn_batch` calls it
+  with the model and toolkit checks, before any registry mutation. The
+  orchestral factory checks tool-group names there (`check_tool_groups`,
+  also used by `build_tools`), and `build_runtime`'s dispatcher routes the
+  check to the engine each spec will run on, so `claude_agent` children,
+  whose `tools` are Claude Code tool names, are unaffected. The error
+  message is unchanged; a batch with one bad spec creates no children.
+- **`Spawn`'s `tools` parameter says what it takes**: tool groups on the
+  orchestral engine (`primitive`, `combinator`, `filesystem`, `toolkit`,
+  `models`, `all`), Claude Code tool names on `claude_agent`, toolbase
+  toolkits in `toolkits`. It said "names of tools", which is how an agent
+  ended up passing `Read`.
+
 ## [0.2.6] — 2026-10-16
 
 ### Fixed

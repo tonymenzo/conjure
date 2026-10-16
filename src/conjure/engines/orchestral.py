@@ -27,6 +27,7 @@ from orchestral import Agent as OrchestralAgent
 from conjure.engines.registry import (
     DEFAULT_TOOL_GROUPS,
     ToolGroupRegistry,
+    check_tool_groups,
     build_tools,
 )
 
@@ -556,6 +557,14 @@ def make_orchestral_engine_factory(
             toolbase_mount=mount,
         )
 
+
+    def validate_spec(spec: "AgentSpec", parent: Any = None) -> None:
+        # Spawn-time check (Runtime._spawn_batch): the same tool-group test
+        # build_tools applies, before the child is recorded or journaled.
+        if spec.tools:
+            check_tool_groups(list(spec.tools), registry)
+
+    factory.validate_spec = validate_spec  # type: ignore[attr-defined]
     return factory
 
 

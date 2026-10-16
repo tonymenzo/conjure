@@ -688,6 +688,14 @@ class Runtime:
         # first check may read toolbase's cache from disk.
         if any(s.toolkits or s.toolbase_loadout for s in specs):
             self._check_toolkit_specs(parent, specs)
+        # Engine-specific checks (e.g. orchestral tool-group names), also
+        # before any registry mutation: a spec the engine would refuse must
+        # not leave a record or a journaled spawn behind (a benchmark that
+        # counts spawns from the journal would count the refused one).
+        validate = getattr(self._engine_factory, "validate_spec", None)
+        if validate is not None:
+            for s in specs:
+                validate(s, parent)
         records: list[AgentRecord] = []
         addrs: list[Address] = []
         with self._lock:
