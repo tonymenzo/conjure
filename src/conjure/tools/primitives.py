@@ -685,7 +685,14 @@ class SpawnTool(StatelessRuntimeTool):
         description="Human-readable hint for the child's address.",
     )
     tools: list[str] | None = OptionalRuntimeField(
-        description="Names of tools the child should be granted.",
+        description=(
+            "Tools for the child. On the orchestral engine (API models) these "
+            "are tool GROUPS, not tool names: 'primitive', 'combinator', "
+            "'filesystem', 'toolkit', 'models' or 'all'; omit for "
+            "primitive + combinator + filesystem. An unknown group is refused "
+            "and no child is created. On claude_agent they are Claude Code tool "
+            "names (Read, Bash, ...). Toolbase toolkits go in `toolkits`."
+        ),
     )
     llm: str = RuntimeField(
         default="default",

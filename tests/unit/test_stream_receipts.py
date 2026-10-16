@@ -100,8 +100,9 @@ def test_streaming_logs_each_tool_result_once():
         # Each round's results are logged before the next reply streams.
         kinds = [e["kind"] for e in log.events if e["kind"] in ("tool", "stream_end")]
         assert kinds == ["stream_end", "tool", "tool", "tool", "stream_end", "tool", "stream_end"]
-        # Streamed text isn't logged a second time as a response.
-        assert not [e for e in log.events if e["kind"] in ("response", "assistant")]
+        # Streamed text isn't logged a second time as a response, and the
+        # system prompt isn't logged at all (it came out as "unknown").
+        assert not [e for e in log.events if e["kind"] in ("response", "assistant", "unknown")]
     finally:
         rt.shutdown()
 

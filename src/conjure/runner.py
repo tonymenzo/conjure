@@ -103,6 +103,19 @@ def build_runtime(
             f"supported: 'orchestral', 'claude_agent', 'codex', 'auto'"
         )
 
+    def validate_spec(spec, parent=None):
+        # Spawn-time check, before the child is recorded or journaled: route
+        # to the engine this spec will run on (a stand-in record is enough
+        # for effective_engine). Only the orchestral engine reads ``tools``
+        # as tool groups; the others interpret it themselves.
+        from types import SimpleNamespace
+
+        stub = SimpleNamespace(spec=spec, parent=parent)
+        if _engine_for(stub, runtime) == "orchestral":
+            orchestral_factory.validate_spec(spec, parent)
+
+    dispatch.validate_spec = validate_spec  # type: ignore[attr-defined]
+
     store_dir = Path(config.runtime.store_dir) if config.runtime.store_dir else None
     hub = build_hub_from_config(config.toolbase)
     from conjure.models import build_model_hub

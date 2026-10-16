@@ -73,6 +73,7 @@ class SessionView:
         self.live = live
         self.until = until
         self._parse_cache: dict[str, _ParsedLog] = {}
+        self._config: dict[str, Any] = {}  # a replay's recorded config (manifest)
         self._cache_lock = threading.Lock()
 
     # ----- construction -----
@@ -98,6 +99,7 @@ class SessionView:
             raise FileNotFoundError(f"no journal in {session_dir}")
         rt = Runtime.replay(session_dir, until=until)
         agents_dir = session_dir / "agents"
+        config = _manifest_config(session_dir)
         for addr, rec in rt._records.items():  # noqa: SLF001
             if addr.id in _SENTINELS:
                 continue
@@ -108,12 +110,16 @@ class SessionView:
                 if cand.is_dir():
                     rec.spec = rec.spec.model_copy(update={"sandbox_dir": str(cand)})
                     break
+            else:
+                moved = _moved_sandbox(rec.spec.sandbox_dir, session_dir, config)
+                if moved is not None:
+                    rec.spec = rec.spec.model_copy(update={"sandbox_dir": str(moved)})
             # Replay reconstructs structure, not liveness: an agent the
             # journal never terminated was alive (idle, as far as the
             # record shows) at this instant.
             if rec.status != "terminated":
                 rec.status = "idle"
-        return cls(
+        view = cls(
             runtime=rt,
             control=ControlServer(runtime=rt, socket_path=session_dir / ".unused.sock"),
             session_dir=session_dir,
@@ -121,6 +127,8 @@ class SessionView:
             live=False,
             until=until,
         )
+        view._config = config
+        return view
 
     # ----- helpers -----
 
@@ -215,16 +223,16 @@ class SessionView:
             activity = [a for a in activity if (a.get("ts") or 0) <= self.until]
             tool_events = [e for e in tool_events if e["ts"] <= self.until]
         cost = self.control._cost()  # noqa: SLF001
-        usage = [_engine_usage(self.runtime._engine_for(r)) for r in self._records().values()]  # noqa: SLF001
+        usages = {a: self._usage(r) for a, r in self._records().items()}
         return {
             "ok": True,
             "ts": time.time(),
-            "tree": self._tree({p["addr"] for p in perms}),
+            "tree": self._tree({p["addr"] for p in perms}, usages),
             "cost": {
-                "total": cost.get("total", 0.0),
+                "total": round(sum(u["cost"] for u in usages.values()), 6),
                 "subscription": cost.get("has_subscription_agent", False),
-                "tokens": sum(u.get("tokens", 0) for u in usage if u),
-                "unpriced_tokens": sum(u.get("unpriced_tokens", 0) for u in usage if u),
+                "tokens": sum(u["tokens"] for u in usages.values()),
+                "unpriced_tokens": sum(u["unpriced_tokens"] for u in usages.values()),
             },
             "activity": activity,
             "tool_events": tool_events,
@@ -232,13 +240,36 @@ class SessionView:
             "auto_mode": bool(getattr(self.runtime, "auto_mode", False)),
         }
 
-    def _tree(self, awaiting: set[str]) -> dict[str, Any] | None:
+    def _usage(self, rec: Any) -> dict[str, Any]:
+        """``{"cost", "tokens", "unpriced_tokens"}`` for one agent: from
+        its engine when live; in a replay, from what the journal recorded
+        (``agent_meta``) and, for journals from before conjure 0.2.7,
+        the token counts in its event log."""
+        engine = self.runtime._engine_for(rec)  # noqa: SLF001
+        if engine is not None:
+            u = _engine_usage(engine) or {}
+            return {"cost": _engine_cost(engine), "tokens": u.get("tokens", 0),
+                    "unpriced_tokens": u.get("unpriced_tokens", 0)}
+        meta = getattr(rec, "meta", None) or {}
+        tokens = meta.get("tokens")
+        if not isinstance(tokens, int):
+            evs = self._parsed_log(self.log_path(rec))
+            if self.until is not None:
+                evs = [e for e in evs if (e.get("ts") or 0) <= self.until]
+            tokens = _log_tokens(evs)
+        unpriced = meta.get("unpriced_tokens")
+        if not isinstance(unpriced, int):
+            unpriced = tokens if _unpriced_model(rec, meta, self._config) else 0
+        return {"cost": float(meta.get("cost_usd") or 0.0), "tokens": tokens, "unpriced_tokens": unpriced}
+
+    def _tree(self, awaiting: set[str], usages: dict[Address, dict[str, Any]] | None = None) -> dict[str, Any] | None:
         root = self.runtime.root_addr
         records = self._records()
         if root is None or root not in records:
             return None
-        costs = {a: _engine_cost(self.runtime._engine_for(r)) for a, r in records.items()}  # noqa: SLF001
-        usages = {a: _engine_usage(self.runtime._engine_for(r)) for a, r in records.items()}  # noqa: SLF001
+        if usages is None:
+            usages = {a: self._usage(r) for a, r in records.items()}
+        costs = {a: u["cost"] for a, u in usages.items()}
 
         def walk(addr: Address) -> tuple[dict[str, Any], float]:
             rec = records[addr]
@@ -274,8 +305,8 @@ class SessionView:
                 "subtree_cost": subtree,
                 # Tokens, and how many of them have no known price (a
                 # gateway model without a list or configured price).
-                "tokens": (usages.get(addr) or {}).get("tokens", 0),
-                "unpriced_tokens": (usages.get(addr) or {}).get("unpriced_tokens", 0),
+                "tokens": usages[addr]["tokens"],
+                "unpriced_tokens": usages[addr]["unpriced_tokens"],
                 "toolkits": toolkit_items(getattr(spec, "toolkits", None)),
                 "inbox_size": len(rec.inbox),
                 "spawned_at": rec.spawned_at,
@@ -752,6 +783,77 @@ def _turns_and_tools(
         elif kind == "error":
             errors.append({"ts": ts, "text": (e.get("text") or "")[:300]})
     return turns, tools, errors
+
+
+def _log_tokens(events: list[dict[str, Any]]) -> int:
+    """Tokens from an event log's ``usage`` events. Each is cumulative
+    within its turn, so a turn counts its largest."""
+    total = turn_in = turn_out = 0
+    for e in events:
+        kind = e.get("kind")
+        if kind in ("turn_start", "thinking_start"):
+            total += turn_in + turn_out
+            turn_in = turn_out = 0
+        elif kind == "usage":
+            turn_in = max(turn_in, int(e.get("tokens_in") or 0))
+            turn_out = max(turn_out, int(e.get("tokens_out") or 0))
+    return total + turn_in + turn_out
+
+
+def _manifest_config(session_dir: Path) -> dict[str, Any]:
+    try:
+        from conjure.provenance import read_manifest
+
+        config = (read_manifest(session_dir) or {}).get("config")
+    except Exception:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _unpriced_model(rec: Any, meta: dict[str, Any], config: dict[str, Any]) -> bool:
+    """Whether a replayed orchestral agent's model had no price under the
+    recorded config: a gateway (``openai_compatible``) model with neither
+    a configured nor a list price. Other agents were priced by their
+    provider or engine."""
+    if (meta.get("engine") or rec.spec.engine) not in (None, "orchestral"):
+        return False
+    entry = (config.get("llms") or {}).get(rec.spec.llm)
+    if not isinstance(entry, dict) or str(entry.get("provider", "")).lower() != "openai_compatible":
+        return False
+    from conjure.pricing import PriceBook
+
+    model = meta.get("model") or rec.spec.model or entry.get("model")
+    try:
+        return PriceBook(entry.get("pricing")).price(model) is None
+    except Exception:
+        return False
+
+
+def _moved_sandbox(recorded: str | None, session_dir: Path, config: dict[str, Any]) -> Path | None:
+    """Where a sandbox recorded on another machine is in this copy of the
+    run. A session in a store (``<store>/sessions/<id>``) whose agent
+    worked in ``<recorded store>/../workspace`` finds it at
+    ``<this store>/../workspace``. Only paths inside the run directory
+    (the store's parent) are mapped, and only when they exist here."""
+    if not recorded or session_dir.parent.name != "sessions" or _is_dir(Path(recorded)):
+        return None
+    recorded_store = (config.get("runtime") or {}).get("store_dir")
+    if not recorded_store:
+        return None
+    rel = os.path.relpath(recorded, Path(recorded_store).parent)
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+        return None
+    local = session_dir.parent.parent.parent / rel
+    return local if _is_dir(local) else None
+
+
+def _is_dir(path: Path) -> bool:
+    # macOS answers /home/... (an automount point) with EOPNOTSUPP,
+    # which Path.is_dir raises rather than reporting False.
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _engine_usage(engine: Any) -> dict[str, int] | None:
