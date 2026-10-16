@@ -85,7 +85,7 @@
     return `${Math.floor(sec / 3600)}h${pad(Math.floor((sec % 3600) / 60))}m`;
   }
   const money = (x) => (x ? (x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(2)}`) : "$0");
-  const kfmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0));
+  const kfmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0));
   const clip = (str, n) => (str.length > n ? str.slice(0, n - 1) + "…" : str);
   function bodyText(body) {
     if (typeof body === "string") return body;
@@ -457,6 +457,8 @@
       const meta = [];
       meta.push(node.model ? shortModel(node.model) : "default model");
       if (node.cost) meta.push(money(node.cost));
+      if (node.unpriced_tokens) meta.push(`${kfmt(node.unpriced_tokens)} tok unpriced`);
+      else if (!node.cost && node.tokens) meta.push(`${kfmt(node.tokens)} tok`);
       const row = h("div", {
         class: `node ${node.status}${node.addr === S.selected ? " selected" : ""}`,
         dataset: { addr: node.addr },
@@ -518,8 +520,13 @@
 
   function renderStats() {
     const c = S.snap.cost || {};
-    const parts = [`${money(c.total)}${c.subscription ? " + subscription" : ""}`];
+    const priced = c.unpriced_tokens && !c.total ? "unpriced" : `${money(c.total)}${c.unpriced_tokens ? " + unpriced" : ""}`;
+    const parts = [`${priced}${c.subscription ? " + subscription" : ""}`];
+    if (c.tokens) parts.push(`${kfmt(c.tokens)} tok`);
     $("#stats").textContent = parts.join(" · ");
+    $("#stats").title = c.unpriced_tokens
+      ? `${kfmt(c.unpriced_tokens)} tokens are on models with no known price: set llms.<entry>.pricing in the config to count them`
+      : "";
     const auto = $("#auto-toggle");
     auto.classList.toggle("on", !!S.snap.auto_mode);
     auto.querySelector("b").textContent = S.snap.auto_mode ? "on" : "off";

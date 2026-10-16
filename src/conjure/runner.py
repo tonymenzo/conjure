@@ -59,11 +59,14 @@ def build_runtime(
     # all agents on a gateway together stay under its limit.
     llm_factories = {
         name: (
-            lambda model=None, c=cfg.model_dump(), n=name: make_resilient(
-                build_llm({**c, "model": model} if model else c),
-                key=n,
-                max_concurrency=c.get("max_concurrency"),
-                max_retries=int(c.get("max_retries") or 0),
+            lambda model=None, c=cfg.model_dump(), n=name: _priced(
+                make_resilient(
+                    build_llm({**c, "model": model} if model else c),
+                    key=n,
+                    max_concurrency=c.get("max_concurrency"),
+                    max_retries=int(c.get("max_retries") or 0),
+                ),
+                c,
             )
         )
         for name, cfg in config.llms.items()
@@ -130,6 +133,22 @@ def build_runtime(
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
+
+
+def _priced(llm: Any, cfg: dict[str, Any]) -> Any:
+    """Attach the entry's prices (``conjure.pricing``). An
+    ``openai_compatible`` client needs them: orchestral prices its calls
+    at $0. Native providers keep orchestral's prices unless the entry
+    sets ``pricing``."""
+    from conjure.pricing import PriceBook
+
+    gateway = str(cfg.get("provider", "")).lower() == "openai_compatible"
+    if gateway or cfg.get("pricing"):
+        try:
+            llm.conjure_pricebook = PriceBook(cfg.get("pricing"), use_list_prices=gateway)
+        except Exception:
+            pass
+    return llm
 
 
 def _engine_for(record: AgentRecord, runtime: Runtime) -> str:

@@ -58,6 +58,10 @@ class ModelEntry:
     context_window: int | None = None
     description: str = ""
     note: str = ""
+    # USD per million tokens {input, output, cached_input?, source}, when
+    # known (config or public list price); None for subscriptions and
+    # unknown models.
+    price_per_mtok: dict[str, Any] | None = None
 
     def public(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v not in (None, "")}
@@ -284,11 +288,20 @@ class ModelHub:
             default_model = ""
         configured = cfg.get("model") or default_model
         entries: list[ModelEntry] = []
+        from conjure.pricing import PriceBook
+
+        book = PriceBook(cfg.get("pricing"), use_list_prices=True)
+
+        def priced(model: str) -> dict[str, Any] | None:
+            price = book.price(model)
+            return price.public() if price is not None else None
+
         if configured:
             entries.append(
                 ModelEntry(
                     id=f"{name}/{configured}", engine="orchestral", source=name,
                     model=configured, provider=provider, access="api", note=note,
+                    price_per_mtok=priced(configured),
                 )
             )
         if provider == "openai_compatible" and cfg.get("discover"):
@@ -298,6 +311,7 @@ class ModelHub:
                         ModelEntry(
                             id=f"{name}/{mid}", engine="orchestral", source=name,
                             model=mid, provider=provider, access="api", note=note,
+                            price_per_mtok=priced(mid),
                         )
                     )
             except Exception as exc:
@@ -420,6 +434,7 @@ and subscription models (Claude, Codex), each with its id, engine and
 any note about what it's for. Pick a child's model with
 `Spawn(model="<id>")` (also `Call` / combinator `spec`s); the id
 chooses the engine. Match the model to the task: a strong model for
-hard reasoning, a cheaper one for routine work. A model outside the
+hard reasoning, a cheaper one for routine work (`price_per_mtok`, where
+known, is USD per million input / output tokens). A model outside the
 session's policy is refused with the list of allowed ones.
 """

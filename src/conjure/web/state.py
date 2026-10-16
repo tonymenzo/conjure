@@ -215,6 +215,7 @@ class SessionView:
             activity = [a for a in activity if (a.get("ts") or 0) <= self.until]
             tool_events = [e for e in tool_events if e["ts"] <= self.until]
         cost = self.control._cost()  # noqa: SLF001
+        usage = [_engine_usage(self.runtime._engine_for(r)) for r in self._records().values()]  # noqa: SLF001
         return {
             "ok": True,
             "ts": time.time(),
@@ -222,6 +223,8 @@ class SessionView:
             "cost": {
                 "total": cost.get("total", 0.0),
                 "subscription": cost.get("has_subscription_agent", False),
+                "tokens": sum(u.get("tokens", 0) for u in usage if u),
+                "unpriced_tokens": sum(u.get("unpriced_tokens", 0) for u in usage if u),
             },
             "activity": activity,
             "tool_events": tool_events,
@@ -235,6 +238,7 @@ class SessionView:
         if root is None or root not in records:
             return None
         costs = {a: _engine_cost(self.runtime._engine_for(r)) for a, r in records.items()}  # noqa: SLF001
+        usages = {a: _engine_usage(self.runtime._engine_for(r)) for a, r in records.items()}  # noqa: SLF001
 
         def walk(addr: Address) -> tuple[dict[str, Any], float]:
             rec = records[addr]
@@ -268,6 +272,10 @@ class SessionView:
                 "budget": spec.budget,
                 "cost": costs.get(addr, 0.0),
                 "subtree_cost": subtree,
+                # Tokens, and how many of them have no known price (a
+                # gateway model without a list or configured price).
+                "tokens": (usages.get(addr) or {}).get("tokens", 0),
+                "unpriced_tokens": (usages.get(addr) or {}).get("unpriced_tokens", 0),
                 "toolkits": toolkit_items(getattr(spec, "toolkits", None)),
                 "inbox_size": len(rec.inbox),
                 "spawned_at": rec.spawned_at,
@@ -744,3 +752,18 @@ def _turns_and_tools(
         elif kind == "error":
             errors.append({"ts": ts, "text": (e.get("text") or "")[:300]})
     return turns, tools, errors
+
+
+def _engine_usage(engine: Any) -> dict[str, int] | None:
+    """``{"tokens", "unpriced_tokens"}`` from engines that count them."""
+    fn = getattr(engine, "usage", None)
+    if not callable(fn):
+        return None
+    try:
+        u = fn()
+    except Exception:
+        return None
+    return {
+        "tokens": int(u.get("tokens_in", 0)) + int(u.get("tokens_out", 0)),
+        "unpriced_tokens": int(u.get("unpriced_tokens", 0)),
+    }
