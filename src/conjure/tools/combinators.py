@@ -171,7 +171,7 @@ class AgentMapTool(StatelessRuntimeTool):
         try:
             result = agent_map(
                 runtime, caller_addr, factory, list(self.items or []),
-                timeout_s=float(self.timeout_s or 120.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 120.0)),
                 max_concurrency=self.max_concurrency,
             )
         except ValueError as e:
@@ -218,7 +218,7 @@ class AgentFoldTool(StatelessRuntimeTool):
             result = agent_fold(
                 runtime, caller_addr, factory, list(self.items or []),
                 init=self.init,
-                timeout_s=float(self.timeout_s or 120.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 120.0)),
                 trace=bool(self.trace),
             )
         except Timeout as e:
@@ -252,7 +252,7 @@ class AgentFilterTool(StatelessRuntimeTool):
         try:
             result = agent_filter(
                 runtime, caller_addr, factory, list(self.items or []),
-                timeout_s=float(self.timeout_s or 120.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 120.0)),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="gather")
@@ -284,7 +284,7 @@ class AgentFixedPointTool(StatelessRuntimeTool):
             value, converged = agent_fixed_point(
                 runtime, caller_addr, factory, self.seed,
                 max_iters=int(self.max_iters or 16),
-                timeout_s=float(self.timeout_s or 600.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 600.0)),
             )
         except Timeout as e:
             return _err("timeout", str(e))
@@ -334,7 +334,7 @@ class AgentRaceTool(StatelessRuntimeTool):
         try:
             winner_idx, winner_body = agent_race(
                 runtime, caller_addr, specs, self.body,
-                timeout_s=float(self.timeout_s or 60.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 60.0)),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="race")
@@ -393,7 +393,7 @@ class AgentEnsembleTool(StatelessRuntimeTool):
         try:
             result = agent_ensemble(
                 runtime, caller_addr, worker_specs, self.body, agg_spec,
-                timeout_s=float(self.timeout_s or 120.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 120.0)),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="ensemble")
@@ -457,7 +457,7 @@ class AgentCriticTool(StatelessRuntimeTool):
             output, converged, iters = agent_critic(
                 runtime, caller_addr, gen_spec, crit_spec, self.body,
                 max_iters=int(self.max_iters or 5),
-                timeout_s=float(self.timeout_s or 300.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 300.0)),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="critic")
@@ -508,7 +508,7 @@ class AgentSupervisorTool(StatelessRuntimeTool):
             out = agent_supervisor(
                 runtime, caller_addr, factory, list(self.items or []),
                 max_restarts=int(self.max_restarts or 0),
-                timeout_s=float(self.timeout_s or 120.0),
+                timeout_s=runtime.clip_to_deadline(float(self.timeout_s or 120.0)),
             )
         except Timeout as e:
             return _timeout_payload(e, stage="supervise")

@@ -37,6 +37,7 @@ from conjure.errors import (
     MaxDepthExceeded,
     NoSuchAddress,
     NotPermitted,
+    SandboxViolation,
     Terminated,
     ToolkitDenied,
 )
@@ -59,6 +60,16 @@ EngineFactory = Callable[[AgentRecord, "Runtime"], "Engine"]
 # claude_agent engine's ``can_use_tool`` callback so both surfaces
 # behave the same.
 PERMISSION_WAIT_S: float = 300.0
+
+# Longest a single blocking wait (``WaitFor``, ``Recv``) may block before
+# control returns to the agent, whatever ``timeout_s`` it asked for. A
+# wait that long without news is better spent checking on the worker
+# (``Peek``) than blocking on. ``runtime.max_wait_s`` overrides it.
+DEFAULT_MAX_WAIT_S: float = 1800.0
+
+# Longest tool result handed back to a model, in characters
+# (``runtime.tool_output_max_chars``); see ``conjure.tool_output``.
+DEFAULT_TOOL_OUTPUT_MAX_CHARS: int = 40_000
 
 
 @dataclass
@@ -140,8 +151,22 @@ class Runtime:
         spawn_listener: Callable[[AgentRecord], None] | None = None,
         toolbase: "ToolbaseHub | None" = None,
         models: "ModelHub | None" = None,
+        deadline: float | None = None,
+        max_wait_s: float | None = DEFAULT_MAX_WAIT_S,
+        tool_output_max_chars: int | None = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
     ) -> None:
         self._lock = threading.RLock()
+        # Run deadline (absolute epoch seconds) set by an embedding
+        # harness with a wall clock. Blocking waits are clipped to the
+        # time left so an agent never blocks past the end of the run.
+        # ``None``: no deadline. Settable after construction.
+        self.deadline: float | None = deadline
+        # Cap on one blocking wait (see ``DEFAULT_MAX_WAIT_S``); ``None``
+        # or 0 means uncapped.
+        self.max_wait_s: float | None = max_wait_s
+        # Cap on one tool result returned to a model (``conjure.tool_output``);
+        # ``None`` or 0 means uncapped.
+        self.tool_output_max_chars: int | None = tool_output_max_chars
         # Model catalog + policy (``conjure.models``): resolves each
         # spec's model choice to engine / LLM / provider model and
         # refuses what the session doesn't allow. ``None``: specs pass
@@ -488,6 +513,18 @@ class Runtime:
         ``terminated``; drivers are signaled and joined; the journal
         is closed.
         """
+        # Record each agent's usage while the journal is still open: a run
+        # stopped mid-turn (a harness timeout, an agent blocked in WaitFor)
+        # never reaches the turn end where the driver records it, and
+        # its cost would be lost.
+        if not self._shutdown:
+            for record in list(self._records.values()):
+                note = getattr(record.driver, "note_meta", None)
+                if callable(note):
+                    try:
+                        note()
+                    except Exception:
+                        pass
         with self._lock:
             if self._shutdown:
                 return
@@ -523,6 +560,42 @@ class Runtime:
     @property
     def root_addr(self) -> Address | None:
         return self._root_addr
+
+    # ----- Run deadline / blocking waits -----
+
+    def remaining_s(self) -> float | None:
+        """Seconds left before ``deadline`` (0 once it has passed), or
+        ``None`` when the run has no deadline."""
+        if self.deadline is None:
+            return None
+        return max(0.0, float(self.deadline) - time.time())
+
+    def clip_wait(
+        self, timeout_s: float, *, single_wait: bool = True
+    ) -> tuple[float, str | None]:
+        """Clip a blocking wait to what the run allows. Returns the
+        timeout to use and, when it was shortened, why (for the agent).
+
+        ``single_wait`` applies ``max_wait_s`` too (message waits:
+        ``WaitFor``, ``Recv``); waits whose timeout ends work in flight
+        (a combinator's gather, a shell command) take only the deadline."""
+        t = max(0.0, float(timeout_s or 0.0))
+        reason: str | None = None
+        cap = self.max_wait_s
+        if single_wait and cap and t > cap:
+            t, reason = float(cap), f"the longest single wait is {cap:g}s (runtime.max_wait_s)"
+        left = self.remaining_s()
+        if left is not None and t > left:
+            t = left
+            reason = (
+                "the run's deadline has passed" if left <= 0
+                else f"the run's deadline is {left:.0f}s away"
+            )
+        return t, reason
+
+    def clip_to_deadline(self, timeout_s: float) -> float:
+        """``timeout_s`` clipped to the time left before the deadline."""
+        return self.clip_wait(timeout_s, single_wait=False)[0]
 
     # ----- Identity / authentication -----
 
@@ -676,6 +749,10 @@ class Runtime:
         """
         if not specs:
             return []
+        # A relative sandbox_dir means "inside my sandbox", and a child
+        # may not escape its parent's sandbox. Before any registry
+        # mutation, so a refused spawn leaves nothing behind.
+        specs = [self._resolve_child_sandbox(parent, s) for s in specs]
         if self.models is not None:
             # Model choice → engine / LLM / provider model, checked
             # against the session's policy; before any registry mutation.
@@ -744,6 +821,48 @@ class Runtime:
             self._cleanup_failed_spawn(records)
             raise
         return addrs
+
+    def sandbox_of(self, addr: Address) -> Path | None:
+        """Where ``addr``'s sandbox is (absolute, not created), the same
+        resolution the filesystem tools use: ``spec.sandbox_dir``, else
+        ``{store_dir}/sandboxes/{id}``. ``None`` when neither applies."""
+        record = self.record_for(addr)
+        if record.spec.sandbox_dir:
+            return Path(record.spec.sandbox_dir).expanduser().resolve()
+        if self._store_dir is None:
+            return None
+        return (Path(self._store_dir).expanduser() / "sandboxes" / addr.id).resolve()
+
+    def _resolve_child_sandbox(self, parent: Address, spec: AgentSpec) -> AgentSpec:
+        """Make a child's ``sandbox_dir`` absolute and contained.
+
+        A relative path is resolved against the parent's sandbox, not
+        the process's working directory (a worker sent to
+        ``work/worker`` used to land beside the workspace and find
+        none of its inputs). A path outside the parent's sandbox
+        raises ``SandboxViolation``. A parent without a sandbox (no
+        store and none set) leaves the spec as written."""
+        raw = spec.sandbox_dir
+        if not raw:
+            return spec
+        base = self.sandbox_of(parent)
+        if base is None:
+            return spec
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        try:
+            path.relative_to(base)
+        except ValueError:
+            raise SandboxViolation(
+                f"sandbox_dir {raw!r} resolves to {path}, outside your sandbox "
+                f"{base}; give a path inside it (relative paths are resolved "
+                f"against it, e.g. 'work/worker')"
+            ) from None
+        if str(path) == raw:
+            return spec
+        return spec.model_copy(update={"sandbox_dir": str(path)})
 
     def _cleanup_failed_spawn(self, records: list[AgentRecord]) -> None:
         terminated: list[Address] = []

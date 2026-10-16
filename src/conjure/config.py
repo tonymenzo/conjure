@@ -56,6 +56,22 @@ class RuntimeConfig(BaseModel):
     # (Bash, Write, Edit) run without a prompt. For unattended runs (an
     # HPC job); toggle it live in the UI with F6 either way.
     auto_approve: bool = False
+    # Longest tool result (characters) handed back to a model. A longer
+    # one keeps its head and tail with a "[... N chars truncated ...]"
+    # notice, and the full output is saved in the agent's sandbox under
+    # ``.conjure/tool-output/`` for it to grep. 0 or null: no cap.
+    tool_output_max_chars: int | None = 40_000
+    # Run deadline, for an embedding harness with a wall clock. Blocking
+    # waits (WaitFor, Recv, Call, combinator gathers, Bash) are clipped
+    # to the time left. ``deadline`` is absolute (Unix epoch seconds);
+    # ``wall_clock_s`` counts from when the runtime is built. With both,
+    # the earlier wins. Null: no deadline.
+    deadline: float | None = None
+    wall_clock_s: float | None = None
+    # Longest one WaitFor / Recv blocks before control returns to the
+    # agent (with a note to check on its workers), whatever timeout it
+    # asked for. 0 or null: uncapped.
+    max_wait_s: float | None = 1800.0
 
 
 class LLMConfig(BaseModel):

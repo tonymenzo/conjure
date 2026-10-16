@@ -8,6 +8,54 @@ this file as its notes.
 
 ## [Unreleased]
 
+Harness fixes from auditing a 24-trial benchmark campaign.
+
+### Added
+
+- **Run deadline and bounded waits.** `runtime.deadline` (Unix epoch
+  seconds) and `runtime.wall_clock_s` (seconds from when the runtime is
+  built; the earlier wins) let an embedding harness say when the run
+  ends; `Runtime.deadline` can also be set on a live runtime. `WaitFor`,
+  `Recv`, `Call`, combinator gathers and `Bash` are clipped to the time
+  left. `runtime.max_wait_s` (default 1800) caps one `WaitFor`/`Recv`:
+  a wait cut short returns `timed_out: true` with a `note` telling the
+  agent to check its workers with `Peek`.
+- **Tool-result cap.** `runtime.tool_output_max_chars` (default 40000;
+  0 or null disables) caps every tool result an orchestral agent gets
+  back (conjure tools, toolbase toolkits and MCP tools alike). A longer
+  result keeps its head and tail around a `[... N chars truncated; full
+  output ... saved to .conjure/tool-output/<file>]` notice; the full
+  text is saved in the agent's sandbox, and the cut is logged as a
+  `tool_output_truncated` event.
+- `Read` takes `offset` and `limit` (lines) to page through long files.
+
+### Fixed
+
+- **One huge tool output killed the run.** A script printed 16M
+  characters, all of it went into the agent's context, and the next
+  model call failed with "prompt is too long". See the cap above.
+- **`Bash` ran under `/bin/sh`.** Process substitution (`<(...)`) and
+  other bash syntax failed with "syntax error near unexpected token".
+  Commands now run under bash when there is one (`$CONJURE_SHELL`
+  overrides), falling back to `/bin/sh`.
+- **A worker's reply to "caller" went to `@system`.** `Spawn`'s
+  `initial_message` was sent from `@system`, so a worker told to reply
+  with `Send(to="caller")` replied into the void while its parent
+  waited forever. The task now comes from the parent; `"caller"` falls
+  back to the parent when the last sender was `@system`; a `Send` to
+  `@system` is refused with a hint; the system prompt says how a
+  spawned agent delivers its result.
+- **A relative `Spawn(sandbox_dir=...)` landed outside the workspace.**
+  It resolved against the process's working directory. It now resolves
+  against the parent's sandbox, and a `sandbox_dir` outside the
+  parent's sandbox is refused (`code=invalid_sandbox`) before the child
+  is recorded or journaled.
+- **A run cut off mid-turn recorded no cost.** Agent meta (cost,
+  tokens, model) was journaled only at turn end, so an agent stopped
+  inside a turn (a harness timeout while it blocked in `WaitFor`)
+  recorded nothing. `Runtime.shutdown` now records every agent's meta
+  first, and orchestral agents journal it every minute during a turn.
+
 ## [0.2.7] — 2026-10-16
 
 Replays of finished runs show their cost and files, and a refused spawn

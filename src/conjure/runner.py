@@ -129,6 +129,9 @@ def build_runtime(
         spawn_listener=spawn_listener,
         toolbase=hub,
         models=build_model_hub(config),
+        deadline=_deadline(config),
+        max_wait_s=config.runtime.max_wait_s,
+        tool_output_max_chars=config.runtime.tool_output_max_chars,
     )
     runtime.auto_mode = bool(config.runtime.auto_approve)
 
@@ -146,6 +149,19 @@ def build_runtime(
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
+
+
+def _deadline(config: Config) -> float | None:
+    """The run's absolute deadline: ``runtime.deadline``, or
+    ``runtime.wall_clock_s`` from now, whichever is earlier."""
+    import time
+
+    candidates = []
+    if config.runtime.deadline is not None:
+        candidates.append(float(config.runtime.deadline))
+    if config.runtime.wall_clock_s is not None:
+        candidates.append(time.time() + float(config.runtime.wall_clock_s))
+    return min(candidates) if candidates else None
 
 
 def _priced(llm: Any, cfg: dict[str, Any]) -> Any:
