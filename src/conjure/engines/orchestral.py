@@ -185,9 +185,9 @@ class OrchestralEngine:
         2. When the stream ends, orchestral has added the full
            ``Response`` to context. We emit ``stream_end`` with the
            model's tool calls (if any).
-        3. If there are tool calls, run them (the display hook emits
-           ``tool`` events for the results), then stream the next LLM
-           response. Repeat.
+        3. If there are tool calls, run them and call the display hook,
+           which emits ``tool`` events for the results; then stream the
+           next LLM response. Repeat.
         4. Stop when an iteration produces no tool calls.
         """
         accumulated = ""
@@ -206,6 +206,11 @@ class OrchestralEngine:
             if not tool_calls:
                 break
             self._agent._handle_tool_calls()  # noqa: SLF001
+            # Log the round's results. Agent.run() calls the display hook
+            # here; orchestral's streaming methods don't, so without this
+            # call no tool result reached the event log.
+            if self._display_hook is not None:
+                self._display_hook(self._agent.context)
             # Stream the next response.
             for chunk in self._agent._stream_response():  # noqa: SLF001
                 self._emit_chunk(chunk)
