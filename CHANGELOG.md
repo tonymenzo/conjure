@@ -8,8 +8,33 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-10-16
+
+Replays of finished runs show their cost and files, and a refused spawn
+no longer leaves a ghost child.
+
 ### Fixed
 
+- **A replayed session showed $0 and no tokens.** The web UI read cost
+  and tokens from each agent's engine, and a replay has none. It now
+  reads the cost each agent's turns journaled (`agent_meta.cost_usd`)
+  and the tokens journaled beside it, which turns now record. Older
+  journals (0.2.6 and before) take tokens from the event log's `usage`
+  events. Tokens of a gateway model with no configured or list price
+  show as unpriced, as they do live.
+- **A replay of a run copied from another machine couldn't open its
+  agents' files.** An agent whose sandbox was set to a path in the run
+  directory (`<run>/workspace/...` beside `<run>/conjure-native`)
+  recorded that machine's absolute path, and the Files view failed on
+  it (`Operation not supported: '/home/...'` on macOS). Replay now
+  maps such a path onto this copy of the run: the path's place relative
+  to the recorded store, applied to the local store. Only paths inside
+  the run directory, and only ones that exist locally, are mapped.
+- **Every orchestral agent's event log carried its system prompt as an
+  `unknown` event** (since 0.2.6, whose display-hook call logs the
+  conversation from its first message). The hook now skips the system
+  message; provenance keeps the prompt, and a child's log still opens
+  with its role prompt.
 - **A spawn refused for unknown tool groups no longer leaves a ghost
   child.** Tool groups were checked only while the child's engine was
   built, after the spawn had been recorded and journaled, so the refused
@@ -411,7 +436,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/tonymenzo/conjure/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/tonymenzo/conjure/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/tonymenzo/conjure/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/tonymenzo/conjure/compare/v0.2.3...v0.2.4

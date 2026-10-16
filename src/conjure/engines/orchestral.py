@@ -597,6 +597,10 @@ def _build_hook(
             def hook(context: Any) -> None:
                 messages = getattr(context, "messages", None) or []
                 for msg in messages[seen["n"]:]:
+                    if _role(msg) == "system":
+                        # The system prompt: provenance keeps it, and a
+                        # child's log opens with its role prompt.
+                        continue
                     event = serialize_message(msg)
                     if streaming and event.get("kind") in ("response", "assistant"):
                         # Engine streamed this; skip the duplicate.

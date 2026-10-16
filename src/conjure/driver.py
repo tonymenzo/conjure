@@ -223,11 +223,12 @@ class Driver:
         """Journal what the agent ran as this turn (provenance for
         replays and exports). Best-effort: never fails a turn."""
         try:
-            from conjure.web.state import _engine_kind, model_info
+            from conjure.web.state import _engine_kind, _engine_usage, model_info
 
             record = self.agent.record
             engine = getattr(self.agent, "engine", None)
             model, source = model_info(engine, record.spec)
+            usage = _engine_usage(engine) or {}
             prompt = getattr(engine, "system_prompt_text", None)
             self.runtime.note_agent_meta(
                 record.addr,
@@ -237,6 +238,9 @@ class Driver:
                     "model_source": source,
                     "system_prompt": prompt if isinstance(prompt, str) else None,
                     "cost_usd": _cost(engine),
+                    # A replay's tree and header show these.
+                    "tokens": usage.get("tokens"),
+                    "unpriced_tokens": usage.get("unpriced_tokens"),
                 },
             )
         except Exception:
