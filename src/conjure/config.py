@@ -127,8 +127,9 @@ class ModelsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Glob patterns over ids, e.g. ``["mag/*", "codex/gpt-6-astra"]``.
     allow: list[str] = Field(default_factory=lambda: ["*"])
-    # Model for a child spawned without one (an id). ``None``: the
-    # engine's own default (haiku for Claude children, Codex's default).
+    # Model for a child spawned without one (an id); never the root,
+    # which runs on its own config. ``None``: the engine's own default
+    # (haiku for Claude children, Codex's default).
     default: str | None = None
     # Guidance per id, shown in ModelCatalog ("cheap; literature search").
     notes: dict[str, str] = Field(default_factory=dict)

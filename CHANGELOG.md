@@ -8,6 +8,18 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-10-16
+
+### Fixed
+
+- **`models.default` replaced the root's model.** It's meant for
+  children spawned without a model, but it also applied to the root,
+  overriding the `llms` entry's `model`. A config with
+  `model: claude-opus-5-5` on its gateway entry and
+  `models.default: amsc/claude-haiku-5-5` ran its root on Haiku. The root
+  now runs on its own configuration, and `models.default` covers
+  children only.
+
 ## [0.2.4] — 2026-10-16
 
 Prices and token counts for model-gateway runs.
@@ -362,7 +374,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/tonymenzo/conjure/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/tonymenzo/conjure/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/tonymenzo/conjure/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/tonymenzo/conjure/compare/v0.2.1...v0.2.2
