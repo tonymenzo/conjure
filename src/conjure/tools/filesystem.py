@@ -75,6 +75,12 @@ def _within(child: Path, parent: Path) -> bool:
         return False
 
 
+# Tools that can change the environment ask first unless a spec says
+# otherwise, the same defaults Claude Code agents have. Read-only tools
+# are allowed.
+ASK_BY_DEFAULT = frozenset({"Bash", "Write", "Edit"})
+
+
 def _check_permission(
     record: "AgentRecord",
     runtime: "Runtime",
@@ -88,9 +94,18 @@ def _check_permission(
     waiting for the UI to allow/deny. The agent's status flips to
     ``awaiting_permission`` during the wait so the tree shows the
     distinct color and the UI can surface a banner."""
-    decision = (record.spec.permissions or {}).get(tool_name, "allow")
+    decision = (record.spec.permissions or {}).get(
+        tool_name, "ask" if tool_name in ASK_BY_DEFAULT else "allow"
+    )
     if decision == "deny":
         return _err("permission_denied", f"{tool_name} denied by agent permissions")
+    if decision == "ask" and (
+        getattr(runtime, "auto_mode", False)
+        or runtime.session_allow_contains(record.addr, tool_name)
+    ):
+        # Auto-approve mode and "allow always" open ``ask`` gates, as on
+        # the claude_agent engine; an explicit ``deny`` still holds.
+        return None
     if decision == "ask":
         req = runtime.submit_permission_request(
             addr=record.addr, tool_name=tool_name, args=args or {}
@@ -214,34 +229,76 @@ def edit_impl(
 
 
 def bash_impl(
-    *, token: str, command: str, timeout_s: float = 30.0
+    *, token: str, command: str, timeout_s: float = 120.0
 ) -> dict[str, Any]:
     """Run a shell command with ``cwd=sandbox``. The agent has the
     shell's full surface inside the sandbox; permissions on the
-    ``Bash`` tool name are the gate."""
+    ``Bash`` tool name are the gate.
+
+    The command runs in its own process group, registered on the agent's
+    record: a timeout, or terminating the agent, stops the whole group
+    (whatever the shell started), not just the shell."""
     res = _enter_sandbox(token, "Bash", {"command": command})
     if isinstance(res, dict):
         return res
-    sandbox, _record, _runtime = res
+    sandbox, record, _runtime = res
     try:
-        completed = subprocess.run(
+        proc = subprocess.Popen(
             command,
             shell=True,
             cwd=str(sandbox),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=max(0.1, timeout_s),
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        return _err("timeout", f"command exceeded {timeout_s}s")
     except OSError as exc:
         return _err("exec_failed", str(exc))
+    record.processes.add(proc)
+    try:
+        stdout, stderr = proc.communicate(timeout=max(0.1, timeout_s))
+    except subprocess.TimeoutExpired:
+        stop_process_group(proc)
+        stdout, stderr = proc.communicate()
+        return {
+            **_err("timeout", f"command exceeded {timeout_s}s; its process group was stopped"),
+            "stdout": stdout[-4000:],
+            "stderr": stderr[-4000:],
+        }
+    finally:
+        record.processes.discard(proc)
+    if record.status == "terminated":
+        return _err("terminated", "you were terminated; the command was stopped")
     return {
         "ok": True,
-        "exit_code": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
+        "exit_code": proc.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
     }
+
+
+def stop_process_group(proc: Any, grace_s: float = 3.0) -> None:
+    """SIGTERM the process's group, then SIGKILL whatever is left after
+    ``grace_s``. Best-effort; the group may already be gone."""
+    import os
+    import signal
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        proc.wait(timeout=grace_s)
+    except Exception:
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def grep_impl(

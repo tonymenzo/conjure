@@ -52,6 +52,10 @@ class RuntimeConfig(BaseModel):
     # Codex agents have their CLIs' own limits). A turn that reaches it
     # ends, with a notice in the chat.
     max_tool_iterations: int = 50
+    # Start the session with auto-approve on: tools that would ask first
+    # (Bash, Write, Edit) run without a prompt. For unattended runs (an
+    # HPC job); toggle it live in the UI with F6 either way.
+    auto_approve: bool = False
 
 
 class LLMConfig(BaseModel):
@@ -86,7 +90,7 @@ class RootConfig(BaseModel):
     # ``"codex"`` to pin a specific surface.
     engine: str = "auto"
     llm: str = "default"
-    tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator"])
+    tools: list[str] = Field(default_factory=lambda: ["primitive", "combinator", "filesystem"])
     label: str = "root"
     # Filesystem sandbox path (used by the filesystem tool group and
     # by ``engine: claude_agent``). ``None`` auto-allocates under

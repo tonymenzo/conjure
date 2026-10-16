@@ -30,7 +30,7 @@ def test_minimal_config_loads_with_defaults():
     assert cfg.root.label == "root"
     assert cfg.root.engine == "auto"
     assert cfg.root.llm == "default"
-    assert cfg.root.tools == ["primitive", "combinator"]
+    assert cfg.root.tools == ["primitive", "combinator", "filesystem"]
     assert cfg.runtime.max_workers == 32
 
 

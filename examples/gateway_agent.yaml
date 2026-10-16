@@ -40,7 +40,9 @@ root:
   label: root
   engine: orchestral
   llm: mag
-  tools: [primitive, combinator]
+  # tools: default is the core set: primitive, combinator and filesystem
+  # (Read, Write, Edit, Bash, Grep, Glob). Bash / Write / Edit ask first
+  # unless runtime.auto_approve is set.
   role_prompt: |
     You coordinate specialist agents. Check ModelCatalog and give each
     child the cheapest model that can do its task well.

@@ -47,6 +47,12 @@ _TRANSIENT_NAMES = (
     "RateLimitError",
 )
 
+class LLMCallStopped(Exception):
+    """No further model calls this turn: the agent was terminated, or
+    its engine's guard saw it looping. ``str(exc)`` says why (empty for
+    termination)."""
+
+
 # ``on_retry(attempt, max_retries, delay_s, exc) -> bool``; False stops retrying.
 OnRetry = Callable[[int, int, float, BaseException], bool]
 
@@ -154,9 +160,22 @@ def make_resilient(
                 pass
         return delay
 
+    def check_stopped(context: Any) -> None:
+        # An engine sets ``conjure_should_stop`` (terminated) and
+        # ``conjure_guard`` (looping); either ends the turn before another
+        # model call, whichever loop (ours or orchestral's) asks.
+        stop = getattr(llm, "conjure_should_stop", None)
+        if stop is not None and stop():
+            raise LLMCallStopped()
+        guard = getattr(llm, "conjure_guard", None)
+        reason = guard(context) if guard is not None else None
+        if reason:
+            raise LLMCallStopped(reason)
+
     def resilient_get(context: Any, **kwargs: Any) -> Any:
         attempt = 0
         while True:
+            check_stopped(context)
             try:
                 with _Slot(sem):
                     return get_response(context, **kwargs)
@@ -170,6 +189,7 @@ def make_resilient(
     def resilient_stream(context: Any, **kwargs: Any):
         attempt = 0
         while True:
+            check_stopped(context)
             try:
                 with _Slot(sem):
                     gen = stream_response(context, **kwargs)

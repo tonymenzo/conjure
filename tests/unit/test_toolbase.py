@@ -88,6 +88,10 @@ def _fake_tool(name: str) -> Any:
     )
     tool = cls()
     object.__setattr__(tool, "get_name", lambda: name)
+    # Like toolbase's proxies: offered and dispatched under one name.
+    spec = cls.get_tool_spec()
+    spec.name = name
+    object.__setattr__(tool, "get_tool_spec", lambda: spec)
     return tool
 
 
@@ -456,9 +460,12 @@ def test_orchestral_engine_serves_and_swaps_toolkits(tmp_path):
 
     names = lambda: {t.get_name() for t in fake.tools}  # noqa: E731
     assert "ToolCatalog" in {type(t).__name__.removesuffix("Tool") for t in engine._base_tools}
-    assert servers.started == []
+    # Servers start at spawn, in the background (prestart); the first
+    # step reuses them rather than starting a second set.
+    assert len(servers.started) <= 1
     engine.step("hi")
     assert "calc__add" in names()
+    assert len(servers.started) == 1
     # Scoped to the agent's sandbox.
     assert servers.started[0]["sandbox"] == tmp_path / "sandboxes" / rec.addr.id
     context_before = engine._agent.context
