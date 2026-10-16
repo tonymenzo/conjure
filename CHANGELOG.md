@@ -8,6 +8,20 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-10-16
+
+### Fixed
+
+- **Tool results were missing from streaming orchestral agents' logs.**
+  With an event log (every agent in the web UI and the TUI), an
+  orchestral agent streams its replies by running orchestral's tool loop
+  itself. That loop never called the display hook, which `Agent.run()`
+  calls after each round of tool calls and which writes tool results to
+  the event log. The model still got its results, but the log didn't:
+  the web UI and the TUI showed tool calls without their results, and
+  the activity timeline and tool-error counts missed them. Each round's
+  results are now logged before the next reply streams, once each.
+
 ## [0.2.5] — 2026-10-16
 
 ### Fixed
@@ -374,7 +388,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/tonymenzo/conjure/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/tonymenzo/conjure/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/tonymenzo/conjure/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/tonymenzo/conjure/compare/v0.2.2...v0.2.3
