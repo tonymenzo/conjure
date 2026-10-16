@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-10-16
+
+Prices and token counts for model-gateway runs.
+
 ### Fixed
 
 - **Gateway models showed as free.** An `openai_compatible` entry (a
@@ -358,7 +362,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/tonymenzo/conjure/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/tonymenzo/conjure/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/tonymenzo/conjure/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tonymenzo/conjure/compare/v0.2.0...v0.2.1
