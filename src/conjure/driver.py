@@ -172,7 +172,7 @@ class Driver:
                 logger.debug("engine traceback for %s", record.addr, exc_info=True)
             finally:
                 self._emit_event({"kind": "turn_end", "errored": errored})
-                self._note_meta()
+                self.note_meta()
                 if record.status != "terminated":
                     # Sticky ``error`` between turns so the tree's red
                     # dot persists until the agent successfully
@@ -219,9 +219,13 @@ class Driver:
         except Exception:
             pass
 
-    def _note_meta(self) -> None:
+    def note_meta(self) -> None:
         """Journal what the agent ran as this turn (provenance for
-        replays and exports). Best-effort: never fails a turn."""
+        replays and exports). Best-effort: never fails a turn.
+
+        Called at each turn end, by the engine during a long turn, and by
+        ``Runtime.shutdown`` (a run stopped mid-turn still records its
+        usage). Journals only what changed."""
         try:
             from conjure.web.state import _engine_kind, _engine_usage, model_info
 

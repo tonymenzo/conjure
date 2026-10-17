@@ -25,13 +25,14 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from conjure.address import Address
+from conjure.address import SYSTEM, Address
 from conjure.envelope import Envelope
 from conjure.errors import (
     IdempotencyConflict,
     BudgetExceeded,
     MaxDepthExceeded,
     NoSuchAddress,
+    SandboxViolation,
     Terminated,
     ModelDenied,
     Timeout,
@@ -92,7 +93,10 @@ def _resolve_addr(
     - ``"parent"`` → the caller's parent (``None`` for the root).
     - ``"caller"`` → the sender of the most-recent envelope the
       agent received. Lets workers reply to "whoever just messaged
-      me" without the agent tracking the address itself.
+      me" without the agent tracking the address itself. When that
+      sender is ``@system`` (a runtime notice, which forwards nothing)
+      or nobody yet, a spawned agent's caller is its parent: a
+      worker's reply must never vanish into ``@system``.
     - ``"@user"`` / ``"@system"`` → the sentinels (id lookup).
     - ``"ag-..."`` → exact id lookup.
     - ``"<label>"`` → matched against the caller's own children; only
@@ -107,7 +111,11 @@ def _resolve_addr(
     if addr_str == "parent":
         return runtime.record_for(caller_addr).parent
     if addr_str == "caller":
-        return runtime.record_for(caller_addr).last_received_from
+        record = runtime.record_for(caller_addr)
+        last = record.last_received_from
+        if (last is None or last.id == SYSTEM.id) and record.parent is not None:
+            return record.parent
+        return last
     by_id = runtime.address_by_id(addr_str)
     if by_id is not None:
         return by_id
@@ -199,10 +207,15 @@ def spawn_impl(
         return _err("model_denied", str(e))
     except ToolkitDenied as e:
         return _err("toolkit_denied", str(e))
+    except SandboxViolation as e:
+        return _err("invalid_sandbox", str(e))
 
-    # Optionally send the initial message right away.
+    # Optionally send the initial message right away, from the parent:
+    # the task is the parent's request, so the child's reply (to the
+    # sender, ``"caller"`` or ``"parent"``) reaches the parent. Sent
+    # from ``@system`` it was a reply into the void.
     if initial_message:
-        runtime.send_external(to=child_addr, body=initial_message, sender="system")
+        runtime.dispatch_batch([(caller_addr, child_addr, initial_message)])
 
     out: dict[str, Any] = {"ok": True, "address": child_addr.id, "label": child_addr.label}
     if toolset:
@@ -231,8 +244,20 @@ def send_impl(
     target_addr = _resolve_addr(to, runtime, caller_addr)
     if target_addr is None:
         return _err("no_such_address", f"unknown address: {to}")
-
     caller_record = runtime.record_for(caller_addr)
+    if target_addr.id == SYSTEM.id:
+        # Nothing reads @system's inbox: a message sent there is lost,
+        # and the agent waiting on it hangs. Say so instead.
+        hint = (
+            "reply to your parent with Send(to=\"parent\", ...)"
+            if caller_record.parent is not None
+            else "answer the user in your final text"
+        )
+        return _err(
+            "not_deliverable",
+            f"@system is the runtime itself and reads nothing; {hint}",
+        )
+
     if target_addr not in caller_record.capabilities:
         return _err("not_permitted", f"caller cannot send to {to}")
 
@@ -333,6 +358,33 @@ def _collect(
     return out, cursor
 
 
+def _clipped(runtime: Any, timeout_s: float) -> tuple[float, str | None]:
+    clip = getattr(runtime, "clip_wait", None)
+    if not callable(clip):
+        return max(0.0, float(timeout_s or 0.0)), None
+    return clip(timeout_s)
+
+
+def _wait_outcome(
+    out: dict[str, Any], *, got: int, wanted: int, asked_s: float, waited_s: float, reason: str | None
+) -> dict[str, Any]:
+    """Mark a wait that ended without what it waited for, and when the
+    runtime shortened it, say why and what to do instead of waiting
+    blind again."""
+    if got >= wanted or (waited_s <= 0 and reason is None):
+        return out  # got it, or a plain poll
+    out["timed_out"] = True
+    if reason is not None:
+        out["note"] = (
+            f"Waited {waited_s:.0f}s of the {asked_s:g}s asked: {reason}. "
+            "No matching message yet. Check your workers (Peek(address=...) "
+            "shows a worker's status and recent activity), then wait again, "
+            "or go on with what you have"
+            + (" and deliver it now." if "deadline" in reason else ".")
+        )
+    return out
+
+
 def recv_impl(
     *,
     token: str,
@@ -350,6 +402,7 @@ def recv_impl(
     if isinstance(sender, dict):
         return sender
     record = runtime.record_for(caller_addr)
+    wait_s, reason = _clipped(runtime, timeout_s)
     envelopes, cursor = _collect(
         record,
         since_seq=since_seq,
@@ -357,14 +410,16 @@ def recv_impl(
         max_n=max(1, int(max_n)),
         thread_id=thread_id,
         from_id=sender,
-        timeout_s=timeout_s,
+        timeout_s=wait_s,
     )
     record.pulled.update(e.seq for e in envelopes)
-    return {
+    out = {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
         "next_seq": envelopes[-1].seq if envelopes else (since_seq or 0),
     }
+    return _wait_outcome(out, got=len(envelopes), wanted=1, asked_s=float(timeout_s or 0.0),
+                         waited_s=wait_s, reason=reason)
 
 
 def wait_for_impl(
@@ -397,21 +452,27 @@ def wait_for_impl(
             return sender
         from_id = sender
     record = runtime.record_for(caller_addr)
+    # A wait is clipped to ``runtime.max_wait_s`` and the run's deadline:
+    # an agent blocked past the end of the run delivers nothing.
+    wait_s, reason = _clipped(runtime, timeout_s)
+    wanted = max_n if max_n is not None else 1
     envelopes, cursor = _collect(
         record,
         since_seq=since_seq,
-        min_n=max_n if max_n is not None else 1,
+        min_n=wanted,
         max_n=max_n if max_n is not None else 50,
         thread_id=value if predicate_kind == "thread" else "",
         from_id=from_id,
-        timeout_s=timeout_s,
+        timeout_s=wait_s,
     )
     record.pulled.update(e.seq for e in envelopes)
-    return {
+    out = {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
         "next_seq": envelopes[-1].seq if envelopes else (since_seq or 0),
     }
+    return _wait_outcome(out, got=len(envelopes), wanted=wanted, asked_s=float(timeout_s or 0.0),
+                         waited_s=wait_s, reason=reason)
 
 
 def terminate_impl(
@@ -600,7 +661,7 @@ def call_impl(
                 runtime=runtime,
                 collector=collector,
                 expected_senders=[worker],
-                timeout_s=float(timeout_s),
+                timeout_s=runtime.clip_to_deadline(float(timeout_s)),
             )
         except Timeout as e:
             return {
@@ -674,7 +735,8 @@ class SpawnTool(StatelessRuntimeTool):
     Returns ``{"ok": True, "address": str, "label": str}`` on success.
     Error codes: ``cap_violation`` (caller lacks a requested
     capability), ``no_such_address`` (capability id unknown),
-    ``terminated`` (caller is terminated).
+    ``terminated`` (caller is terminated), ``invalid_sandbox``
+    (``sandbox_dir`` outside your sandbox).
     """
 
     role_prompt: str = RuntimeField(
@@ -703,7 +765,11 @@ class SpawnTool(StatelessRuntimeTool):
     )
     initial_message: str = RuntimeField(
         default="",
-        description="Optional first message sent to the child after spawn.",
+        description=(
+            "Optional first message (the task), sent to the child from you. "
+            "The child replies to you with Send(to=\"parent\") or "
+            "Send(to=\"caller\")."
+        ),
     )
     lazy: bool = RuntimeField(
         default=False,
@@ -721,9 +787,9 @@ class SpawnTool(StatelessRuntimeTool):
     )
     sandbox_dir: str | None = OptionalRuntimeField(
         description=(
-            "Filesystem sandbox path for the child. None auto-allocates "
-            "under the runtime's store_dir. Required for any agent that "
-            "should use the filesystem tool group."
+            "Filesystem sandbox path for the child. A relative path is "
+            "inside YOUR sandbox (e.g. 'work/worker'); it must not leave "
+            "your sandbox. None auto-allocates under the runtime's store_dir."
         ),
     )
     permissions: dict[str, str] | None = OptionalRuntimeField(
@@ -864,6 +930,11 @@ class WaitForTool(StatelessRuntimeTool):
     queued), or when ``timeout_s`` runs out. For fan-in from N workers,
     pass ``max_n=N`` to wait until all N have replied (the deadline
     still wins: compare ``len(envelopes)`` to N).
+
+    One wait blocks at most ``runtime.max_wait_s`` (default 30 min) and
+    never past the run's deadline; a wait cut short returns
+    ``timed_out`` with a ``note``: check workers with ``Peek``, then
+    wait again.
 
     ``predicate_kind``: ``any``, ``from`` (``value`` = an address id, a
     child's label, ``parent`` or ``caller``) or ``thread``."""

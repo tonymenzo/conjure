@@ -85,3 +85,10 @@ class ModelDenied(ConjureError):
 
 class IdempotencyConflict(ConjureError):
     """A retry key was reused for a different message."""
+
+
+class SandboxViolation(ConjureError):
+    """A spawn asked for a ``sandbox_dir`` outside the parent's own
+    sandbox. A relative ``sandbox_dir`` is resolved against the parent's
+    sandbox, so ``work/worker`` lands inside it. Tools map it to
+    ``code=invalid_sandbox``; nothing is recorded or journaled."""

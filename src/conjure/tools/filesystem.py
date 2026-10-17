@@ -24,7 +24,9 @@ prompts and conventions transfer cleanly between engines.
 from __future__ import annotations
 
 import fnmatch
+import os
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -155,7 +157,9 @@ def _enter_sandbox(
 # ---------- implementation functions ----------
 
 
-def read_impl(*, token: str, path: str) -> dict[str, Any]:
+def read_impl(*, token: str, path: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
+    """Read a sandbox text file; ``offset`` (0-based line) and ``limit``
+    (lines; 0 = to the end) page through a long one."""
     res = _enter_sandbox(token, "Read", {"path": path})
     if isinstance(res, dict):
         return res
@@ -174,6 +178,14 @@ def read_impl(*, token: str, path: str) -> dict[str, Any]:
     except OSError as exc:
         return _err("io_error", str(exc))
     rel = str(target.relative_to(sandbox))
+    if offset or limit:
+        lines = content.splitlines(keepends=True)
+        start = max(0, int(offset or 0))
+        end = start + int(limit) if limit and limit > 0 else len(lines)
+        return {
+            "ok": True, "path": rel, "content": "".join(lines[start:end]),
+            "offset": start, "lines": max(0, min(end, len(lines)) - start), "total_lines": len(lines),
+        }
     return {"ok": True, "path": rel, "content": content}
 
 
@@ -228,6 +240,24 @@ def edit_impl(
     return {"ok": True, "path": str(target.relative_to(sandbox))}
 
 
+def _shell() -> str | None:
+    """The shell ``Bash`` commands run under: bash when there is one
+    (``$CONJURE_SHELL`` overrides), else ``None`` for Python's default
+    ``/bin/sh``. Models write bash (``<(...)``, ``[[ ]]``, brace
+    expansion, ``pipefail``); under a POSIX ``/bin/sh`` (dash, or bash
+    in sh mode) those fail with ``syntax error near unexpected token``."""
+    override = os.environ.get("CONJURE_SHELL")
+    if override:
+        return override
+    found = shutil.which("bash")
+    if found:
+        return found
+    for candidate in ("/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"):
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def bash_impl(
     *, token: str, command: str, timeout_s: float = 120.0
 ) -> dict[str, Any]:
@@ -241,11 +271,16 @@ def bash_impl(
     res = _enter_sandbox(token, "Bash", {"command": command})
     if isinstance(res, dict):
         return res
-    sandbox, record, _runtime = res
+    sandbox, record, runtime = res
+    clip = getattr(runtime, "clip_to_deadline", None)
+    if callable(clip):
+        # Never run past the end of the run.
+        timeout_s = clip(timeout_s)
     try:
         proc = subprocess.Popen(
             command,
             shell=True,
+            executable=_shell(),
             cwd=str(sandbox),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -371,13 +406,19 @@ def _walk_files(root: Path):
 
 
 class ReadTool(StatelessRuntimeTool):
-    """Read a UTF-8 text file from the agent's sandbox."""
+    """Read a UTF-8 text file from the agent's sandbox. ``offset`` and
+    ``limit`` (in lines) page through a long file."""
 
     path: str = RuntimeField(description="Path relative to the sandbox.")
+    offset: int = RuntimeField(default=0, description="First line to return (0-based).")
+    limit: int = RuntimeField(default=0, description="Most lines to return (0 = to the end).")
     runtime_token: str = StateField(description="(internal) caller token.")
 
     def _run(self) -> dict[str, Any]:
-        return read_impl(token=self.runtime_token, path=self.path)
+        return read_impl(
+            token=self.runtime_token, path=self.path,
+            offset=int(self.offset or 0), limit=int(self.limit or 0),
+        )
 
 
 class WriteTool(StatelessRuntimeTool):
@@ -413,8 +454,10 @@ class EditTool(StatelessRuntimeTool):
 
 
 class BashTool(StatelessRuntimeTool):
-    """Run a shell command with ``cwd=sandbox``. Captures stdout
-    and stderr. The agent has full shell surface inside the sandbox."""
+    """Run a bash command with ``cwd=sandbox``. Captures stdout
+    and stderr. The agent has full shell surface inside the sandbox.
+    Very long output is cut to its head and tail; the full text is
+    saved under ``.conjure/tool-output/`` (the notice gives the path)."""
 
     command: str = RuntimeField(description="Shell command to run.")
     timeout_s: float = RuntimeField(

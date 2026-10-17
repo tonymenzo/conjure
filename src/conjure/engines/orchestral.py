@@ -19,6 +19,7 @@ to a follow-on iteration.
 from __future__ import annotations
 
 import threading
+import time
 
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -87,6 +88,13 @@ class OrchestralEngine:
         self._toolbase = toolbase_mount
         prompt = system_prompt or self._build_system_prompt(record, runtime)
         self.system_prompt_text = prompt  # provenance
+        # Every tool result is size-capped before the model sees it
+        # (``conjure.tool_output``): one huge output must not overflow
+        # the context and kill the agent.
+        from conjure.tool_output import ToolOutputCap
+
+        self._tool_hooks = [ToolOutputCap(record, runtime, emit=stream_emit)]
+        self._last_meta_note = time.monotonic()
         self._agent = OrchestralAgent(
             llm=llm,
             tools=tools,
@@ -94,6 +102,7 @@ class OrchestralEngine:
             max_tool_interations=max_tool_iterations,
             tool_config=None,
             display_hook=display_hook,
+            tool_hooks=self._tool_hooks,
             debug=False,
         )
         # orchestral checks this between tool calls and stream chunks;
@@ -130,6 +139,7 @@ class OrchestralEngine:
             max_tool_interations=self._max_tool_iterations,
             tool_config=None,
             display_hook=self._display_hook,
+            tool_hooks=self._tool_hooks,
             debug=False,
         )
         self._agent.interrupt_flag = self._interrupt
@@ -361,6 +371,7 @@ class OrchestralEngine:
         """A ``usage`` event with this turn's tokens so far (cumulative
         within the turn, like the other engines'), for the turn header,
         timeline and run record."""
+        self._maybe_note_meta()
         if self._stream_emit is None:
             return
         now = self.usage()
@@ -369,6 +380,23 @@ class OrchestralEngine:
             "tokens_in": now["tokens_in"] - before["tokens_in"],
             "tokens_out": now["tokens_out"] - before["tokens_out"],
         })
+
+    # During a long turn, how often the agent's usage is journaled; the
+    # driver records it at each turn end, but a turn that never ends (a
+    # run cut off by its harness) would otherwise record nothing.
+    META_NOTE_INTERVAL_S = 60.0
+
+    def _maybe_note_meta(self) -> None:
+        now = time.monotonic()
+        if now - self._last_meta_note < self.META_NOTE_INTERVAL_S:
+            return
+        self._last_meta_note = now
+        note = getattr(getattr(self._record, "driver", None), "note_meta", None)
+        if callable(note):
+            try:
+                note()
+            except Exception:
+                pass
 
     @staticmethod
     def _build_system_prompt(record: "AgentRecord", runtime: "Runtime") -> str:

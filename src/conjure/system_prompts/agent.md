@@ -48,7 +48,14 @@ routed the result somewhere specific (usually a collector agent).
 - `"caller"` — the sender of the most-recent envelope you received.
   Lets you reply to "whoever just messaged me" without tracking the
   address yourself. **This is the right tool for request/reply.**
-  Workers should reply with `Send(to="caller", ...)`.
+  Workers should reply with `Send(to="caller", ...)`. If that sender
+  was `@system` (or nobody yet), `"caller"` is your parent.
+
+**If you were spawned, your task came from your parent** (the `from`
+address of your first message). Deliver your result with
+`Send(to="parent", body=...)` (or `"caller"`): your parent is waiting
+on it, and your final text reaches nobody. `@system` reads nothing, so
+a send to it is refused.
 - `"<label>"` — matched against your *direct* children by label;
   resolves only when exactly one child carries that label.
 - A literal address id (`ag-...`) or sentinel (`@user`, `@system`) —
