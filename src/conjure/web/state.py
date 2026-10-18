@@ -25,6 +25,7 @@ from conjure.address import SYSTEM, USER, Address
 from conjure.control import ControlServer
 from conjure.persistence import JOURNAL_FILENAME
 from conjure.runtime import Runtime, _engine_cost
+from conjure.web import files
 
 # Initial chat backlog per agent; older history pages in on demand.
 EVENTS_WINDOW_BYTES = 512 * 1024
@@ -530,11 +531,39 @@ class SessionView:
         now = self.until if self.until is not None else (time.time() if self.live else t_max)
         return {"ok": True, "lanes": lanes, "t_min": t_min, "t_max": t_max, "now": now}
 
-    def sandbox(self, addr_id: str, path: str | None) -> dict[str, Any]:
-        return self.control._sandbox(addr_id, path)  # noqa: SLF001
+    # ----- files view (read-only; see web/files.py) -----
 
-    def sandbox_recent(self, addr_id: str) -> dict[str, Any]:
-        return self.control._sandbox_recent(addr_id, 30)  # noqa: SLF001
+    def files_workspaces(self) -> dict[str, Any]:
+        return {"ok": True, "workspaces": files.workspaces(self._records(), self.runtime)}
+
+    def _workspace(self, addr_id: str) -> Path:
+        addr = self._addr(addr_id)
+        if addr is None:
+            raise files.FileAccessError(f"unknown agent {addr_id!r}")
+        root = files.sandbox_dir(self.runtime.record_for(addr), self.runtime)
+        if root is None:
+            raise files.FileAccessError("this agent has no workspace")
+        if not root.is_dir():
+            raise files.FileAccessError(
+                "this workspace has not been created yet" if self.live
+                else "this workspace is not in this copy of the run"
+            )
+        return root
+
+    def files_list(self, addr_id: str, path: str | None, *, hidden: bool = False) -> dict[str, Any]:
+        return files.listing(self._workspace(addr_id), path, hidden=hidden)
+
+    def files_read(self, addr_id: str, path: str | None) -> dict[str, Any]:
+        return files.read(self._workspace(addr_id), path)
+
+    def files_find(self, addr_id: str, query: str, *, hidden: bool = False) -> dict[str, Any]:
+        return files.find(self._workspace(addr_id), query, hidden=hidden)
+
+    def files_recent(self, addr_id: str, *, hidden: bool = False) -> dict[str, Any]:
+        return files.recent(self._workspace(addr_id), hidden=hidden)
+
+    def files_raw(self, addr_id: str, path: str | None) -> tuple[bytes, str]:
+        return files.raw(self._workspace(addr_id), path)
 
     # ----- writes (live only) -----
 

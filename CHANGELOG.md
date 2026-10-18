@@ -8,6 +8,55 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.11] — 2026-10-18
+
+The files tab browses every workspace in the run and previews what the
+agents wrote, and the graph shows the whole team.
+
+### Added
+
+- **A files view worth opening.** The web UI's files tab shows every
+  workspace in the run: the root's, shared by the agents that work in
+  it, with any nested workspace (an agent given `sandbox_dir`) under it,
+  each labelled with its agents.
+  - A tree that opens folders in place, with keyboard navigation
+    (arrows, Enter, `/` to search), search across the workspace, the
+    recently modified files, and dotfiles on request
+    (`.conjure/tool-output` holds full tool outputs).
+  - Previews: code highlighted with line numbers; markdown rendered,
+    its relative images shown and its links opening the files they
+    name; CSV and TSV as tables; Jupyter notebooks as cells with their
+    outputs; PNG, JPEG, GIF, WebP and SVG images; PDFs in the browser's
+    viewer. Copy a path or download any file.
+  - Live runs refresh the tree and the open file as agents write;
+    `#files/<agent>/<path>` links to a file.
+  - Read-only: listing never creates a workspace, and no path (through
+    `..` or a symlink) leaves one. Images and PDFs load as blobs, so
+    no file an agent wrote is opened as a page.
+
+### Changed
+
+- **The graph shows the whole team.** It fits the team to the pane on
+  load and pans and zooms (scroll or pinch, drag, `f` to fit, `+` `−`
+  `0`), with a minimap once the team is larger than the view.
+  - An org-chart layout: a parent's leaf workers stack in a column
+    under it, so a wide team stays narrow; top-down or left-to-right,
+    chosen to fit the pane unless set.
+  - Messages between a parent and a child ride on the connector between
+    them with a count each way (`↓2 ↑5`); messages across branches and
+    introductions are arcs above the row.
+  - Agent cards show status, model, cost and toolkits; subtrees
+    collapse (`c`, or the fold under a card); hovering an agent lights
+    its connections; `/` finds an agent and brings it into view.
+  - The agent's details slide over the graph's right edge when you click
+    it (`Esc` closes), instead of taking width from the graph.
+
+### Removed
+
+- The web server's `/api/sandbox` and `/api/sandbox_recent` routes, which
+  created a missing sandbox when asked to list it. The files view uses
+  the read-only `/api/files/*` routes.
+
 ## [0.2.10] — 2026-10-18
 
 Collapsed tool calls preview what they do, and a parent waiting on
@@ -562,7 +611,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.10...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.11...HEAD
+[0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/tonymenzo/conjure/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/tonymenzo/conjure/compare/v0.2.7...v0.2.8

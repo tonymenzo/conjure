@@ -49,14 +49,44 @@
       <div id="chat-columns"></div>
     </section>
     <section id="view-graph" class="view">
-      <div class="view-toolbar">
-        <label class="toggle"><input type="checkbox" id="edge-spawn" checked> <span class="legend spawn"></span> spawn</label>
-        <label class="toggle"><input type="checkbox" id="edge-message" checked> <span class="legend message"></span> messages</label>
-        <label class="toggle"><input type="checkbox" id="edge-capability" checked> <span class="legend capability"></span> introductions</label>
-        <span class="dim small">click an agent to inspect · double-click to open its chat</span>
+      <div id="graph-pane" class="pane">
+        <h2 class="pane-title">graph</h2>
+        <div class="graph-bar">
+          <div class="gb-left">
+            <label class="toggle small" title="Who spawned whom"><input type="checkbox" id="edge-spawn" checked> <span class="legend spawn"></span> hierarchy</label>
+            <label class="toggle small" title="Messages, counted each way"><input type="checkbox" id="edge-message" checked> <span class="legend message"></span> messages</label>
+            <label class="toggle small" title="Agents handed each other's address"><input type="checkbox" id="edge-capability" checked> <span class="legend capability"></span> introductions</label>
+          </div>
+          <div class="gb-right">
+            <div class="gb-find">
+              <input id="graph-find" type="search" placeholder="find agent  ( / )" spellcheck="false" autocomplete="off" aria-label="Find an agent">
+              <span id="graph-find-count" class="dim small"></span>
+            </div>
+            <div id="graph-orient" class="seg" title="Layout direction">
+              <button data-o="auto">auto <span id="graph-orient-used" class="dim"></span></button>
+              <button data-o="down" title="Top-down">↓</button>
+              <button data-o="right" title="Left to right">→</button>
+            </div>
+            <button id="graph-expand" class="small-btn" title="Expand every collapsed subtree">expand all</button>
+            <button id="graph-inspector-toggle" class="small-btn" title="Show or hide the selected agent's details">details</button>
+          </div>
+        </div>
+        <div id="graph-wrap" title="Scroll or pinch to zoom · drag to pan · double-click an agent to open its chat">
+          <svg id="graph" role="group" aria-label="Agent graph"></svg>
+          <svg id="graph-minimap" class="hidden" aria-label="Overview: drag to move around"></svg>
+          <div id="graph-zoom" class="graph-ctl" role="group" aria-label="Zoom">
+            <button id="graph-zoom-out" title="Zoom out ( - )">−</button>
+            <button id="graph-zoom-pct" title="Actual size ( 0 )">100%</button>
+            <button id="graph-zoom-in" title="Zoom in ( + )">+</button>
+            <button id="graph-fit" title="Fit the team in view ( f )">fit</button>
+          </div>
+        </div>
       </div>
-      <div id="graph-wrap"><svg id="graph" role="img" aria-label="Agent graph"></svg></div>
-      <aside id="graph-inspector" class="inspector"></aside>
+      <aside id="graph-inspector" class="pane inspector" aria-label="Agent details">
+        <h2 class="pane-title">agent</h2>
+        <button id="graph-inspector-close" class="insp-close icon" title="Close ( Esc )" aria-label="Close">✕</button>
+        <div id="graph-inspector-body"></div>
+      </aside>
     </section>
     <section id="view-timeline" class="view">
       <div class="view-toolbar">
@@ -73,14 +103,27 @@
       <div id="tl-tip" class="tip"></div>
     </section>
     <section id="view-files" class="view">
-      <div id="files-side">
-        <div class="files-head"><span id="files-agent"></span></div>
-        <div id="files-crumbs" class="crumbs"></div>
-        <div id="files-list"></div>
-        <h3 class="sub">recently modified</h3>
-        <div id="files-recent"></div>
+      <div id="files-side" class="pane">
+        <h2 class="pane-title">files</h2>
+        <h3 class="fs-title">workspaces</h3>
+        <div id="files-workspaces"></div>
+        <div class="fs-tools">
+          <input id="files-filter" type="search" placeholder="find files  ( / )" spellcheck="false" autocomplete="off" aria-label="Find files">
+          <div class="fs-bar">
+            <div id="files-tabs" class="seg" role="tablist">
+              <button data-tab="tree" class="active" role="tab">tree</button>
+              <button data-tab="recent" role="tab">recent</button>
+            </div>
+            <label class="toggle small" title="Show dotfiles and dot-folders (.conjure/tool-output holds full tool outputs)"><input type="checkbox" id="files-hidden"> hidden</label>
+          </div>
+        </div>
+        <div id="files-tree" role="tree" tabindex="0" aria-label="Files"></div>
       </div>
-      <div id="files-content"><div class="empty">select a file</div></div>
+      <div id="files-main" class="pane">
+        <h2 class="pane-title">preview</h2>
+        <div id="files-head"></div>
+        <div id="files-content"><div class="empty">select a file</div></div>
+      </div>
     </section>
   </main>
 
@@ -119,6 +162,24 @@
           <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Same, with arrows</dd>
           <dt><kbd>Enter</kbd></dt><dd>Open chat and focus its input</dd>
           <dt><kbd>s</kbd></dt><dd>Open in a new column, side by side</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Graph</h3>
+        <dl>
+          <dt><kbd>f</kbd></dt><dd>Fit the team in view</dd>
+          <dt><kbd>+</kbd><kbd>−</kbd><kbd>0</kbd></dt><dd>Zoom in / out / actual size</dd>
+          <dt><kbd>/</kbd></dt><dd>Find an agent (Enter: next match)</dd>
+          <dt><kbd>c</kbd></dt><dd>Collapse / expand the selected agent's subtree</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Files</h3>
+        <dl>
+          <dt><kbd>/</kbd></dt><dd>Find files in the workspace</dd>
+          <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Move in the tree (when it has focus)</dd>
+          <dt><kbd>→</kbd><kbd>←</kbd></dt><dd>Open / close a folder</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Preview the file</dd>
         </dl>
       </section>
       <section>
@@ -174,6 +235,8 @@
 <script src="/static/vendor/katex/katex.min.js"></script>
 <script src="/static/vendor/highlight/highlight.min.js"></script>
 <script src="/static/code.js"></script>
+<script src="/static/files.js"></script>
+<script src="/static/graph.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

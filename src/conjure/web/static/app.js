@@ -18,6 +18,8 @@
     agents: new Map(),      // addr -> tree node
     order: [],              // addrs in tree (DFS) order, visible only
     selected: null,
+    filePath: null,         // the files view's open file, and its workspace
+    fileWs: null,
     view: "chat",
     columns: [],            // ChatColumn instances
     focusedCol: 0,
@@ -251,7 +253,16 @@
     return [root.el, j];
   }
 
-  function renderMarkdown(text) {
+  /** Set while a file's markdown renders: ``image(src, alt)`` and
+   *  ``link(href, label)`` resolve relative targets (files.js). */
+  let MD_CTX = null;
+  function renderMarkdown(text, ctx) {
+    if (ctx === undefined) return markdownBlocks(text);
+    const prev = MD_CTX;
+    MD_CTX = ctx;
+    try { return markdownBlocks(text); } finally { MD_CTX = prev; }
+  }
+  function markdownBlocks(text) {
     const frag = document.createDocumentFragment();
     const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
     let i = 0;
@@ -331,6 +342,8 @@
     /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/, // 12,13 link
     /(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_])/,        // 14 bare URL
     /\\([\\`*_{}[\]()#+\-.!$|~<>])/,                     // 15 escape
+    /!\[([^\]\n]*)\]\(<?([^\s)>]+)>?(?:\s+"[^"\n]*")?\)/,       // 16,17 image
+    /\[([^\]\n]+)\]\(<?([^\s)>:]+)>?\)/,                    // 18,19 relative link
   ].map((r) => r.source).join("|"), "g");
 
   function inline(el, text) {
@@ -349,6 +362,15 @@
       else if (m[12] !== undefined) el.append(inline(h("a", { href: m[13], target: "_blank", rel: "noopener noreferrer" }), m[12]));
       else if (m[14] !== undefined) el.append(h("a", { href: m[14], target: "_blank", rel: "noopener noreferrer", text: m[14] }));
       else if (m[15] !== undefined) el.append(m[15]);
+      else if (m[16] !== undefined) {
+        const [alt, src] = [m[16], m[17]];
+        if (MD_CTX?.image) el.append(MD_CTX.image(src, alt));
+        else if (/^https?:\/\//.test(src)) el.append(h("a", { href: src, target: "_blank", rel: "noopener noreferrer", text: alt || src }));
+        else el.append(h("span", { class: "md-rel", title: src, text: alt || src }));
+      } else if (m[18] !== undefined) {
+        if (MD_CTX?.link) el.append(MD_CTX.link(m[19], m[18]));
+        else el.append(inline(h("span", { class: "md-rel", title: m[19] }), m[18]));
+      }
     }
     if (last < text.length) el.append(text.slice(last));
     return el;
@@ -375,14 +397,6 @@
     return "ok";
   }
 
-  /** A file's text for the files view, highlighted by its extension. */
-  function highlightFile(d) {
-    const el = h("code", { class: "src" });
-    const CC = window.ConjureCode;
-    if (CC) CC.highlightInto(el, d.content, CC.langForPath(d.path || d.name || ""));
-    else el.textContent = d.content;
-    return el;
-  }
   // Tool calls: one summary line (the command, file or target); the
   // code, diff or output (code.js) one click away.
   function toolCallBlock(name, original, roots) {
@@ -441,6 +455,19 @@
     const data = await res.json();
     if (data && data.ok === false && res.status >= 400) throw new Error(data.error || res.statusText);
     return data;
+  }
+  /** A file's bytes (the files view's images, PDFs and downloads). */
+  async function apiBlob(path, params = {}) {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null && v !== "") q.set(k, v);
+    if (!S.live && S.at != null) q.set("at", S.at);
+    const res = await fetch(`/api/${path}?${q}`, { headers: { "X-Conjure-Token": S.token } });
+    if (res.status === 401) { showGate(); throw new Error("unauthorized"); }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    return res.blob();
   }
   async function post(path, body) {
     const res = await fetch(`/api/${path}`, {
@@ -1157,122 +1184,32 @@
   }
 
   // ---------- graph ----------
+  // ---------- graph (graph.js) ----------
+  const GraphView = window.ConjureGraph({
+    s, api, labelOf, clock, now, money, shortModel, clip, dotColor,
+    ui: () => ({ showInternal: S.showInternal, agents: S.agents, live: S.live }),
+    onSelect: (addr) => { S.selected = addr; renderTreeSelection(); syncHash(); Graph.select(addr); },
+    onOpen: (addr) => openChat(addr),
+  });
   const Graph = {
-    selected: null,
-    data: null,
-    async refresh() {
-      try { this.data = await api("graph"); } catch { return; }
-      this.render();
-    },
+    refresh: () => GraphView.refresh(),
+    render: () => GraphView.render(),
+    key: (e) => GraphView.key(e),
     select(addr) {
-      this.selected = addr;
-      this.render();
+      GraphView.select(addr);
       this.inspect(addr);
     },
+    set selected(addr) { GraphView.selected = addr; },
     async inspect(addr) {
-      const box = $("#graph-inspector");
+      const box = $("#graph-inspector-body");
       if (!addr) { box.replaceChildren(h("div", { class: "empty", text: "select an agent" })); return; }
       let d;
       try { d = await api("agent", { addr }); } catch { return; }
-      box.replaceChildren(h("div", { class: "files-head", text: d.label }),
+      box.replaceChildren(h("div", { class: "insp-title" }, h("span", { class: "dot", style: `background: ${dotColor(S.agents.get(addr)?.status || d.status)}` }), h("b", { text: d.label })),
         inspectorContent(d, S.agents.get(addr)),
-        h("div", { style: "margin-top:10px" }, h("button", { text: "open chat", onclick: () => openChat(addr) })));
-    },
-    render() {
-      const g = this.data;
-      const svg = $("#graph");
-      if (!g) return;
-      const nodes = g.nodes.filter((n) => S.showInternal || !n.internal);
-      const byId = new Map(nodes.map((n) => [n.addr, { ...n, kids: [] }]));
-      const roots = [];
-      for (const n of byId.values()) {
-        const p = n.parent && byId.get(n.parent);
-        if (p) p.kids.push(n); else roots.push(n);
-      }
-      const W = 176, H = 46, GX = 26, GY = 74;
-      const usesUser = g.message.some((m) => m.from === "@user");
-      let leaf = 0;
-      const place = (n, depth) => {
-        n.kids.sort((a, b) => (S.agents.get(a.addr)?.spawned_at || 0) - (S.agents.get(b.addr)?.spawned_at || 0));
-        n.y = (depth + (usesUser ? 1 : 0)) * (H + GY) + 20;
-        if (!n.kids.length) { n.x = leaf++ * (W + GX) + 20; return; }
-        n.kids.forEach((k) => place(k, depth + 1));
-        n.x = (n.kids[0].x + n.kids[n.kids.length - 1].x) / 2;
-      };
-      roots.forEach((r) => place(r, 0));
-      if (usesUser) byId.set("@user", { addr: "@user", label: "you", status: "idle", x: roots[0]?.x ?? 20, y: 20, kids: [], sentinel: true });
-      const width = Math.max(leaf, 1) * (W + GX) + 40;
-      const height = Math.max(...[...byId.values()].map((n) => n.y)) + H + 40;
-      svg.setAttribute("width", width);
-      svg.setAttribute("height", height);
-      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      const defs = s("defs", null,
-        s("marker", { id: "arr-msg", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, s("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--green)" })),
-        s("marker", { id: "arr-cap", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, s("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--amber)" })));
-      const edges = s("g");
-      const center = (n) => ({ x: n.x + W / 2, y: n.y + H / 2 });
-      const anchor = (a, b) => {
-        // Point on a's box border towards b.
-        const ca = center(a), cb = center(b);
-        const dx = cb.x - ca.x, dy = cb.y - ca.y;
-        const sx = dx ? (W / 2) / Math.abs(dx) : Infinity, sy = dy ? (H / 2) / Math.abs(dy) : Infinity;
-        const k = Math.min(sx, sy);
-        return { x: ca.x + dx * k, y: ca.y + dy * k };
-      };
-      const curve = (a, b, bend) => {
-        const p = anchor(a, b), q = anchor(b, a);
-        const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
-        const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
-        const cx = mx - (dy / len) * bend, cy = my + (dx / len) * bend;
-        return { d: `M${p.x},${p.y} Q${cx},${cy} ${q.x},${q.y}`, lx: (mx + cx) / 2, ly: (my + cy) / 2 };
-      };
-      if ($("#edge-spawn").checked) {
-        for (const e of g.spawn) {
-          const a = byId.get(e.from), b = byId.get(e.to);
-          if (!a || !b) continue;
-          const p = { x: a.x + W / 2, y: a.y + H }, q = { x: b.x + W / 2, y: b.y };
-          const my = (p.y + q.y) / 2;
-          edges.append(s("path", { class: "e-spawn", d: `M${p.x},${p.y} C${p.x},${my} ${q.x},${my} ${q.x},${q.y}` }));
-        }
-      }
-      const t = now();
-      if ($("#edge-message").checked) {
-        for (const m of g.message) {
-          const a = byId.get(m.from), b = byId.get(m.to);
-          if (!a || !b || a === b) continue;
-          const c = curve(a, b, 26);
-          const recent = S.live && t - m.last_ts < 6;
-          edges.append(s("path", { class: "e-msg" + (recent ? " recent" : ""), d: c.d, "stroke-width": Math.min(4, 1 + Math.log2(m.count)), "marker-end": "url(#arr-msg)" },
-            s("title", { text: `${labelOf(m.from)} → ${labelOf(m.to)}: ${m.count} message(s), last ${clock(m.last_ts)}` })));
-          if (m.count > 1) edges.append(s("text", { class: "e-label", x: c.lx, y: c.ly, "text-anchor": "middle", text: String(m.count) }));
-        }
-      }
-      if ($("#edge-capability").checked) {
-        for (const e of g.capability) {
-          const a = byId.get(e.from), b = byId.get(e.to);
-          if (!a || !b) continue;
-          edges.append(s("path", { class: "e-cap", d: curve(a, b, -40).d, "marker-end": "url(#arr-cap)" },
-            s("title", { text: `${labelOf(e.from)} was introduced to ${labelOf(e.to)}` })));
-        }
-      }
-      const nodesG = s("g");
-      for (const n of byId.values()) {
-        const live = S.agents.get(n.addr);
-        const status = live?.awaiting_permission ? "awaiting" : n.status;
-        const sub = n.sentinel ? "human" : [live ? (live.model ? shortModel(live.model) : "default model") : null, live?.cost ? money(live.cost) : null, live?.toolkits?.length ? `⚒${live.toolkits.length}` : null].filter(Boolean).join(" · ") || n.status;
-        nodesG.append(s("g", {
-          class: `g-node ${status}${n.addr === (this.selected || S.selected) ? " selected" : ""}`,
-          transform: `translate(${n.x},${n.y})`,
-          onclick: () => { if (!n.sentinel) { S.selected = n.addr; renderTreeSelection(); this.select(n.addr); } },
-          ondblclick: () => { if (!n.sentinel) openChat(n.addr); },
-        },
-          s("rect", { width: W, height: H, rx: 9 }),
-          s("circle", { cx: 14, cy: 16, r: 4.5, class: "", fill: dotColor(status) }),
-          s("text", { x: 26, y: 20, text: clip(n.label, 20) }),
-          s("text", { x: 14, y: 37, class: "sub", text: clip(sub, 26) }),
-          s("title", { text: `${n.label} (${n.addr}) · ${n.status}` })));
-      }
-      svg.replaceChildren(defs, edges, nodesG);
+        h("div", { class: "insp-actions" },
+          h("button", { text: "open chat", onclick: () => openChat(addr) }),
+          h("button", { text: "files", onclick: () => setView("files") })));
     },
   };
   function dotColor(status) {
@@ -1411,64 +1348,22 @@
     return out;
   }
 
-  // ---------- files ----------
-  const Files = {
-    addr: null, path: "", file: null,
-    async open(addr) {
-      if (!addr) return;
-      if (addr !== this.addr) { this.path = ""; this.file = null; $("#files-content").replaceChildren(h("div", { class: "empty", text: "select a file" })); }
-      this.addr = addr;
-      $("#files-agent").textContent = labelOf(addr);
-      await this.list();
-      await this.recent();
-    },
-    async list() {
-      let d;
-      try { d = await api("sandbox", { addr: this.addr, path: this.path }); } catch { return; }
-      const list = $("#files-list");
-      if (!d.ok) { list.replaceChildren(h("div", { class: "dim", text: d.error })); $("#files-crumbs").replaceChildren(); return; }
-      const crumbs = [h("a", { text: "sandbox", onclick: () => { this.path = ""; this.list(); } })];
-      let acc = "";
-      for (const part of (d.path || "").split("/").filter(Boolean)) {
-        acc = acc ? `${acc}/${part}` : part;
-        const p = acc;
-        crumbs.push(" / ", h("a", { text: part, onclick: () => { this.path = p; this.list(); } }));
-      }
-      $("#files-crumbs").replaceChildren(...crumbs);
-      list.replaceChildren(...(d.entries.length ? d.entries.map((e) =>
-        h("div", { class: `fentry${e.is_dir ? " dir" : ""}${e.path === this.file ? " selected" : ""}`, onclick: () => e.is_dir ? (this.path = e.path, this.list()) : this.show(e.path) },
-          h("span", { class: "nm", text: e.name + (e.is_dir ? "/" : "") }), e.is_dir ? null : h("span", { class: "sz", text: size(e.size) })))
-        : [h("div", { class: "dim", text: "empty" })]));
-    },
-    async recent() {
-      let d;
-      try { d = await api("sandbox_recent", { addr: this.addr }); } catch { return; }
-      $("#files-recent").replaceChildren(...((d.entries || []).length ? d.entries.map((e) =>
-        h("div", { class: `fentry${e.path === this.file ? " selected" : ""}`, onclick: () => this.show(e.path), title: clock(e.mtime) },
-          h("span", { class: "nm", text: e.path }), h("span", { class: "sz", text: clock(e.mtime) })))
-        : [h("div", { class: "dim", text: d.error || "nothing yet" })]));
-    },
-    async show(path) {
-      this.file = path;
-      let d;
-      try { d = await api("sandbox", { addr: this.addr, path }); } catch { return; }
-      const box = $("#files-content");
-      if (!d.ok) { box.replaceChildren(h("div", { class: "empty", text: d.error })); return; }
-      const lines = d.content.split("\n");
-      box.replaceChildren(
-        h("div", { class: "file-head" }, h("b", { text: d.path }), ` · ${size(d.size)}${d.truncated ? " · truncated" : ""}`),
-        h("pre", { class: "code" }, h("span", { class: "ln", text: lines.map((_, i) => i + 1).join("\n") }), highlightFile(d)));
-      this.list();
-      this.recent();
-    },
-  };
-  const size = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+  // ---------- files (files.js) ----------
+  const Files = window.ConjureFiles({
+    h, fill, api, apiBlob, renderMarkdown,
+    isLive: () => S.live,
+    onPath: (path, ws) => { S.filePath = path; S.fileWs = path ? ws : null; syncHash(); },
+  });
 
   // ---------- views ----------
   /** ``#<view>/<agent>`` — reloads keep their place, and a link can
    *  point at one agent's chat or timeline. */
   function syncHash() {
-    const hash = `#${S.view}${S.selected ? "/" + S.selected : ""}`;
+    // Files: #files/<workspace>/<path>, the workspace named by its first agent.
+    const inFile = S.view === "files" && S.filePath && S.fileWs;
+    const who = inFile ? S.fileWs : S.selected;
+    const file = inFile ? "/" + S.filePath.split("/").map(encodeURIComponent).join("/") : "";
+    const hash = `#${S.view}${who ? "/" + who + file : ""}`;
     if (location.hash !== hash) history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
   }
   function setView(view) {
@@ -1478,7 +1373,7 @@
     for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.id === `view-${view}`);
     if (view === "graph") { Graph.refresh(); Graph.inspect(S.selected); Graph.selected = S.selected; }
     if (view === "timeline") Timeline.refresh();
-    if (view === "files") Files.open(S.selected);
+    if (view === "files") Files.open(S.filePath && S.fileWs ? S.fileWs : S.selected, S.filePath);
     if (view === "chat" && !S.columns.length && S.selected) openChat(S.selected);
   }
 
@@ -1569,7 +1464,6 @@
       if (S.view === "graph") Graph.render();
       if (S.view === "timeline") Timeline.render();
     });
-    for (const id of ["#edge-spawn", "#edge-message", "#edge-capability"]) $(id).addEventListener("change", () => Graph.render());
     $("#tl-fit").addEventListener("click", () => { Timeline.t0 = Timeline.t1 = null; $("#tl-follow").checked = true; Timeline.render(); });
     $("#tl-follow").addEventListener("change", () => Timeline.render());
 
@@ -1628,11 +1522,13 @@
       if (e.key === "F6" || (e.ctrlKey && e.key.toLowerCase() === "g")) { e.preventDefault(); toggleAuto(); return; }
       if (typing) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (S.view === "graph" && Graph.key(e)) { e.preventDefault(); return; }
       switch (e.key) {
         case "1": setView("chat"); break;
         case "2": setView("graph"); break;
         case "3": setView("timeline"); break;
         case "4": setView("files"); break;
+        case "/": if (S.view === "files") { e.preventDefault(); Files.focusFilter(); } break;
         case "j": case "ArrowDown": e.preventDefault(); moveSelection(1); break;
         case "k": case "ArrowUp": e.preventDefault(); moveSelection(-1); break;
         case "Enter": e.preventDefault(); openChat(S.selected, { focus: true }); break;
@@ -1738,7 +1634,7 @@
       viewBusy = true;
       if (S.view === "graph") await Graph.refresh();
       else if (S.view === "timeline") await Timeline.refresh();
-      else if (S.view === "files" && Files.addr) await Files.recent();
+      else if (S.view === "files" && Files.addr) await Files.refresh();
       viewBusy = false;
     }, POLL_VIEW_MS);
   }
@@ -1767,7 +1663,8 @@
     badge.textContent = S.live ? "live" : "replay";
     badge.className = `badge ${S.live ? "live" : "replay"}`;
     if (!S.live) { $("#auto-toggle").hidden = true; Scrub.init(); }
-    const [hashView, hashAgent] = location.hash.slice(1).split("/");
+    const [hashView, hashAgent, ...hashPath] = location.hash.slice(1).split("/");
+    if (hashView === "files" && hashPath.length) S.filePath = hashPath.map(decodeURIComponent).join("/");
     if (hashAgent) S.selected = hashAgent;
     await refreshSnapshot();
     if (hashAgent && S.agents.has(hashAgent)) openChat(hashAgent);

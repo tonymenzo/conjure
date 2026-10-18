@@ -102,7 +102,7 @@ def test_replay_finds_sandboxes_in_the_pulled_run(tmp_path):
     run = session.parent.parent.parent
     assert view.agent("a-root")["sandbox_dir"] == str(run / "workspace")
     assert view.agent("a-w")["sandbox_dir"] == str(run / "workspace" / "work" / "w")
-    listing = view.sandbox("a-root", None)
+    listing = view.files_list("a-root", None)
     assert listing["ok"], listing
     # Only paths inside the run directory, and only ones that were pulled.
     assert view.agent("a-out")["sandbox_dir"] == "/remote/fleet/elsewhere"
