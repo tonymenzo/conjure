@@ -29,6 +29,23 @@ this file as its notes.
     `..` or a symlink) leaves one. Images and PDFs load as blobs, so
     no file an agent wrote is opened as a page.
 
+### Changed
+
+- **The graph shows the whole team.** It fits the team to the pane on
+  load and pans and zooms (scroll or pinch, drag, `f` to fit, `+` `−`
+  `0`), with a minimap once the team is larger than the view.
+  - An org-chart layout: a parent's leaf workers stack in a column
+    under it, so a wide team stays narrow; top-down or left-to-right,
+    chosen to fit the pane unless set.
+  - Messages between a parent and a child ride on the connector between
+    them with a count each way (`↓2 ↑5`); messages across branches and
+    introductions are arcs above the row.
+  - Agent cards show status, model, cost and toolkits; subtrees
+    collapse (`c`, or the fold under a card); hovering an agent lights
+    its connections; `/` finds an agent and brings it into view.
+  - The agent's details slide over the graph's right edge when you click
+    it (`Esc` closes), instead of taking width from the graph.
+
 ## [0.2.10] — 2026-10-18
 
 Collapsed tool calls preview what they do, and a parent waiting on

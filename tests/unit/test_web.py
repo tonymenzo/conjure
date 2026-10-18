@@ -283,8 +283,11 @@ def test_csp_lets_previews_use_blobs_only(server):
     assert "frame-ancestors 'none'" in csp and "script-src" not in csp  # scripts: 'self' only
 
 
-def test_static_files_js_is_served(server):
-    assert _req(server, "GET", "/static/files.js", token=False)[0] == 200
+def test_static_view_modules_are_served_and_loaded(server):
+    page = _req(server, "GET", "/", token=False)[1]
+    for name in ("files.js", "graph.js"):
+        assert _req(server, "GET", f"/static/{name}", token=False)[0] == 200
+        assert f'src="/static/{name}"'.encode() in page
 
 
 def test_host_header_must_name_the_server(server):

@@ -332,24 +332,109 @@ code, .mono { font-family: var(--mono); }
 
 /* ---------- graph ---------- */
 
-#view-graph { position: relative; }
-#graph-wrap { flex: 1; min-width: 0; overflow: auto; padding-top: 26px; }
-#graph { display: block; }
-.g-node rect { fill: var(--bg-2); stroke: var(--border-quiet); stroke-width: 1.2; }
-.g-node.selected rect { stroke: var(--fg); stroke-width: 2; }
-.g-node.running rect { stroke: var(--yellow); }
-.g-node.error rect { stroke: var(--red); }
-.g-node.awaiting rect { stroke: var(--magenta); }
-.g-node.terminated { opacity: .5; }
-.g-node text { fill: var(--fg); font: 12px var(--mono); }
-.g-node .sub { fill: var(--dim); font-size: 10.5px; }
-.g-node { cursor: pointer; }
-.g-node:hover rect { stroke: var(--green); }
-.e-spawn { stroke: var(--faint); stroke-width: 1.4; fill: none; }
-.e-msg { stroke: var(--green); fill: none; opacity: .55; }
-.e-msg.recent { opacity: 1; stroke-dasharray: 6 4; animation: flow .6s linear infinite; }
-.e-cap { stroke: var(--amber); stroke-dasharray: 4 4; fill: none; opacity: .8; }
-.e-label { fill: var(--green); font: 10px var(--mono); }
+#view-graph { gap: 12px; padding-top: 8px; position: relative; overflow-x: clip; }  /* the closed drawer waits off the right edge */
+#graph-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px 0 0; }
+/* the details drawer: over the graph's right edge, so the graph keeps its width */
+#view-graph .inspector {
+  position: absolute; top: 8px; right: 0; bottom: 0; z-index: 5; width: min(340px, 85%);
+  display: flex; flex-direction: column; overflow: visible; border: 1px solid var(--border);
+  padding: 16px 0 10px 14px; box-shadow: -10px 0 28px #0009;
+  transform: translateX(calc(100% + 24px)); visibility: hidden; transition: transform .18s ease, visibility 0s .18s;
+}
+#view-graph.panel-open .inspector { transform: none; visibility: visible; transition: transform .18s ease; }
+:root[data-theme="light"] #view-graph .inspector { box-shadow: -10px 0 28px #0002; }
+.insp-close { position: absolute; top: -0.75em; right: 12px; background: var(--bg); border: none; padding: 0 6px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+.insp-close:hover { color: var(--green); }
+#graph-inspector-toggle.active { border-color: var(--border-quiet); color: var(--fg); background: var(--green-soft); }
+#graph-inspector-body { flex: 1; min-height: 0; overflow: auto; padding-right: 14px; }
+.insp-title { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 10px; }
+.insp-title .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.insp-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+.graph-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 0 12px 10px; border-bottom: 1px solid var(--faint); font-size: 12px;
+}
+.gb-left, .gb-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.gb-right { gap: 8px; }
+.gb-find { display: flex; align-items: center; gap: 6px; }
+#graph-find { width: 170px; background: var(--bg-2); border: 1px solid var(--faint); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+#graph-find:focus { outline: none; border-color: var(--border-quiet); }
+#graph-orient button { font-size: 11px; }
+
+#graph-wrap {
+  position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background-image: radial-gradient(circle, var(--faint) 1px, transparent 1.2px);
+  background-size: 22px 22px; background-position: 11px 11px;
+}
+:root[data-theme="light"] #graph-wrap { background-image: radial-gradient(circle, var(--bg-3) 1.2px, transparent 1.5px); }
+#graph-wrap.dragging { cursor: grabbing; }
+#graph { display: block; width: 100%; height: 100%; user-select: none; }
+
+/* cards */
+.g-node { cursor: pointer; transition: opacity .15s; }
+.g-node .card { fill: var(--bg-2); stroke: var(--border-quiet); stroke-width: 1; transition: stroke .15s; }
+.g-node:hover .card, .g-node:focus-visible .card { stroke: var(--green); }
+.g-node:focus { outline: none; }
+.g-node.selected .card { stroke: var(--green); stroke-width: 1.8; }
+.g-node.running .card { stroke: var(--yellow); }
+.g-node.error .card { stroke: var(--red); }
+.g-node.awaiting .card { stroke: var(--magenta); stroke-width: 1.6; }
+.g-node.terminated { opacity: .55; }
+.g-node.terminated .card { stroke-dasharray: 4 3; stroke: var(--faint); }
+.g-node.sentinel .card { fill: var(--bg); stroke: var(--cyan); stroke-dasharray: 4 3; }
+.g-node.running .dot, .g-node.awaiting .dot { animation: g-pulse 1.4s ease-in-out infinite; }
+@keyframes g-pulse { 50% { opacity: .35; } }
+.g-node text { font-family: var(--mono); }
+.g-node .name { fill: var(--fg); font-size: 12.5px; font-weight: 700; }
+.g-node .facts { fill: var(--dim); font-size: 10.5px; }
+.g-node .cost { fill: var(--dim); font-size: 10.5px; }
+.g-node .state { font-size: 10px; fill: var(--dim); }
+.g-node .state.running { fill: var(--yellow); }
+.g-node .state.error { fill: var(--red); }
+.g-node .state.awaiting { fill: var(--magenta); }
+.fold rect { fill: var(--bg); stroke: var(--border-quiet); }
+.fold text { fill: var(--dim); font: 11px var(--mono); }
+.fold:hover rect { stroke: var(--green); }
+.fold:hover text, .fold.shut text { fill: var(--green-mid); }
+.fold.shut rect { stroke: var(--green-mid); }
+
+/* edges */
+.e-tree { stroke: var(--faint); stroke-width: 1.3; fill: none; }
+.e-tree.user { stroke-dasharray: 4 3; }
+.e-tree.msg { stroke: var(--green-mid); opacity: .7; }
+.e-msg { stroke: var(--green-mid); fill: none; opacity: .6; }
+.e-tree.recent, .e-msg.recent { opacity: 1; stroke-dasharray: 6 4; animation: flow .6s linear infinite; }
+.e-cap { stroke: var(--amber); stroke-dasharray: 4 4; fill: none; opacity: .75; stroke-width: 1.3; }
+.e-badge rect { fill: var(--bg); stroke: var(--border-quiet); }
+.e-badge text { fill: var(--green-mid); font: 10px var(--mono); }
+
+/* hover: an agent's connections light up, the rest steps back */
+#graph.focusing .g-node:not(.lit), #graph.focusing .e-badge:not(.lit) { opacity: .25; }
+#graph.focusing .e-tree:not(.lit), #graph.focusing .e-msg:not(.lit), #graph.focusing .e-cap:not(.lit) { opacity: .12; }
+#graph.focusing .e-tree.lit, #graph.focusing .e-msg.lit { opacity: 1; }
+#graph.finding .g-node:not(.match) { opacity: .3; }
+#graph .g-node.match .card { stroke: var(--amber); stroke-width: 1.8; }
+
+/* zoom controls, minimap, hint */
+.graph-ctl {
+  position: absolute; right: 12px; bottom: 12px; display: flex; border: 1px solid var(--faint); border-radius: 8px;
+  background: var(--bg); overflow: hidden; box-shadow: 0 2px 10px #0006;
+}
+.graph-ctl button { border: none; border-radius: 0; padding: 3px 10px; min-width: 30px; font-size: 12px; color: var(--dim); }
+.graph-ctl button + button { border-left: 1px solid var(--faint); }
+.graph-ctl button:hover { color: var(--green); background: var(--bg-2); }
+#graph-zoom-pct { min-width: 54px; font-variant-numeric: tabular-nums; }
+#graph-minimap {
+  position: absolute; left: 12px; bottom: 12px; width: 168px; height: 112px; cursor: crosshair;
+  border: 1px solid var(--faint); border-radius: 8px; background: var(--bg); box-shadow: 0 2px 10px #0006;
+}
+#graph-minimap.hidden { display: none; }
+.mm-bg { fill: var(--bg); }
+.mm-node { opacity: .75; }
+.mm-view { fill: var(--green-soft); stroke: var(--green); stroke-width: 1; }
+:root[data-theme="light"] .graph-ctl, :root[data-theme="light"] #graph-minimap { box-shadow: 0 2px 10px #0001; }
 @keyframes flow { to { stroke-dashoffset: -10; } }
 
 /* ---------- timeline ---------- */
@@ -389,7 +474,6 @@ code, .mono { font-family: var(--mono); }
 }
 .fs-title { font-size: 11px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin: 0 0 6px; }
 .fs-empty { color: var(--dim); font-size: 12px; padding: 6px 4px; }
-.files-head { font-weight: 700; margin-bottom: 6px; }  /* the graph inspector's title */
 
 /* workspaces: one row each, a nested one indented under its parent */
 #files-workspaces { display: flex; flex-direction: column; gap: 2px; max-height: 30%; overflow: auto; flex: none; }
@@ -641,6 +725,10 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
   .chat:not(:last-child) { display: none; }
   .chat-head .actions { margin-left: 0; flex-wrap: wrap; }
   .inspector { display: none; }
+  .graph-bar { padding: 0 8px 8px; }
+  .gb-left { gap: 10px; }
+  #graph-find { width: 120px; }
+  #graph-expand { display: none; }
   #view-files { flex-direction: column; }
   #files-side { width: auto; max-height: 45%; }
   #files-main { padding: 14px 10px 8px; }
