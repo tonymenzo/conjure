@@ -55,8 +55,7 @@ parent's sandbox, and agents' shells no longer see credentials.
   every variable whose name contains `KEY`, `TOKEN`, `SECRET`,
   `PASSWORD`, `CREDENTIAL` or `AUTH`, and every configured provider's
   `api_key_env` whatever its name; the conjure process keeps them to
-  call providers. This includes `SSH_AUTH_SOCK`: an agent's `ssh` or
-  `git` over SSH can't use your loaded keys.
+  call providers.
 
 ## [0.2.8] — 2026-10-17
 
