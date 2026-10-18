@@ -773,8 +773,8 @@
       for (const tc of calls || []) {
         const name = tc.name || tc.tool_name;
         const args = tc.args ?? tc.arguments ?? {};
-        this.pendingCalls.push({ name, args });
-        this.block(toolCallBlock(name, args), ts, true);
+        const el = this.block(toolCallBlock(name, args), ts, true);
+        this.pendingCalls.push({ name, args, el });
       }
     }
     toolResult(ev) {
@@ -784,6 +784,17 @@
       if (CC) {
         let call = (this.pendingCalls || []).shift() || null;
         if (call && !resultFits(call, text)) call = null; // out of step: judge by shape
+        const target = call?.el?.matches?.("details.toolcall.rich") ? call.el : call?.el?.querySelector?.("details.toolcall.rich");
+        if (target) {
+          // Fold the result into its call: a status chip on the call's
+          // line, the output inside it.
+          const res = CC.resultForCall(text, failed, call);
+          const summary = target.querySelector(":scope > summary");
+          summary.append(h("span", { class: "res-chip" + (res.bad ? " bad" : ""), text: res.chip }));
+          if (res.bad) target.classList.add("failed");
+          if (res.body) target.append(h("div", { class: "resbody" }, res.body));
+          return;
+        }
         const r = CC.renderResult(text, failed, call);
         if (r) {
           const bad = r.failed ?? failed;

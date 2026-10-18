@@ -670,10 +670,52 @@
       if ((kind === "write" || kind === "edit" || kind === "multiedit") && Object.keys(parsed).every((k) => ["ok", "path", "bytes"].includes(k)))
         return { el: null, summary: `✓ ${kind === "write" ? "wrote" : "edited"} ${parsed.path || pathOf(call?.args) || ""}`.trim() };
       const json = JSON.stringify(parsed, null, 2);
-      if (json.length > 120 || json.includes("\n  ")) return { el: codeBlock(json, { lang: "json", title: "result", collapse: 20 }), summary: compactDict(parsed) || null };
+      const nested = Object.values(parsed).some((v) => v && typeof v === "object");
+      if (JSON.stringify(parsed).length > 120 || nested) return { el: codeBlock(json, { lang: "json", title: "result", collapse: 20 }), summary: compactDict(parsed) || null };
     }
     return null;
   }
+  /** A result folded into its call's line: a short status ``chip``
+   *  for the summary (``exit 0 · 4 lines``, ``✓``, ``error: …``), whether
+   *  it went ``bad``, and the ``body`` (output, file text, JSON or the
+   *  error) shown when the call is opened. */
+  function resultForCall(text, failed, call) {
+    const parsed = parseLiteral(text);
+    const kind = toolKind(call?.name, call?.args);
+    const r = renderResult(text, failed, call);
+    if (kind === "shell" && r?.el) {
+      const sr = shellResult(text, parsed, failed);
+      const lines = lineCount(sr.stdout) + lineCount(sr.stderr);
+      const status = sr.timedOut ? "timed out" : sr.exitCode != null ? `exit ${sr.exitCode}` : failed ? "failed" : "";
+      const cut = (sr.stdout + sr.stderr).match(TRUNCATED);
+      return {
+        chip: [status, lines ? plural(lines, "line") : "no output", cut ? "✂ cut" : ""].filter(Boolean).join(" · "),
+        bad: r.failed, body: r.el,
+      };
+    }
+    const err = parsed && typeof parsed === "object" && parsed.ok === false;
+    // A successful write, edit or send says nothing the call didn't.
+    if (!failed && !err && ["write", "edit", "multiedit", "patch", "send"].includes(kind)) return { chip: "✓", bad: false, body: null };
+    if (failed || err) {
+      const msg = err ? `${parsed.code || "error"}${parsed.error ? ": " + parsed.error : ""}` : String(text || "failed");
+      return { chip: clip(firstLine(msg), 70), bad: true, body: lineCount(msg) > 1 || msg.length > 70 ? codeBlock(msg, { title: "error", className: "err" }) : null };
+    }
+    if (r?.el) {
+      const n = parsed?.content != null ? lineCount(parsed.content) : 0;
+      const chip = kind === "read" ? r.summary : r.summary ? clip(r.summary, 70) : "✓";
+      return { chip: chip || (n ? plural(n, "line") : "✓"), bad: false, body: r.el };
+    }
+    if (parsed && typeof parsed === "object") {
+      const brief = ["write", "edit", "multiedit", "patch", "send"].includes(kind) ? "" : compactDict(parsed);
+      return { chip: brief ? clip(brief, 70) : "✓", bad: false, body: null };
+    }
+    const t = String(text || "").trim();
+    if (!t) return { chip: "✓", bad: false, body: null };
+    const n = lineCount(t);
+    if (n <= 1 && t.length <= 70) return { chip: t, bad: false, body: null };
+    return { chip: plural(n, "line"), bad: false, body: codeBlock(t, { title: "result", collapse: 20 }) };
+  }
+
   function guessKind(parsed) {
     if (!parsed || typeof parsed !== "object") return "other";
     if ("stdout" in parsed && ("exit_code" in parsed || "stderr" in parsed)) return "shell";
@@ -691,5 +733,6 @@
   window.ConjureCode = {
     codeBlock, diffBlock, unifiedDiffBlock, highlightInto, langForPath, langForTag,
     parseLiteral, toolKind, callSummary, renderCall, renderResult, fields, terminal,
+    resultForCall,
   };
 })();

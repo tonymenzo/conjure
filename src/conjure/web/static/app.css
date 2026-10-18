@@ -637,6 +637,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 .hljs-strong { font-weight: 700; }
 .hljs-link { text-decoration: underline; }
 @media (max-width: 640px) {
+  .toolcall.rich > .resbody { margin-left: 0; }
   .toolcall .callbody, .toolres.rich > details > .codeblock, .toolres.rich > .codeblock { margin-left: 0; }
   .toolres.rich { padding-left: 8px; }
   .cb-pre, .codeblock.term .term-out { padding: 6px 8px; font-size: 12px; }
@@ -645,7 +646,16 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 /* collapsed by default: a chevron and hover say the line opens */
 .toolcall.rich > summary, .toolres.rich > details > summary { border-radius: 4px; }
 .toolcall.rich > summary:hover, .toolres.rich > details > summary:hover { background: var(--bg-2); }
-.toolcall.rich > summary::after { content: "▸"; color: var(--faint); flex: none; margin-left: auto; padding: 0 4px; }
+.toolcall.rich > summary::after { content: "▸"; color: var(--faint); flex: none; padding: 0 4px; }
+.toolcall.rich > summary:not(:has(.res-chip))::after { margin-left: auto; }
+.toolcall.rich > summary .res-chip {
+  margin-left: auto; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px; color: var(--dim); padding: 0 7px; border: 1px solid var(--faint); border-radius: 9px; line-height: 17px;
+}
+.toolcall.rich > summary .res-chip.bad { color: var(--red); border-color: var(--red); }
+.toolcall.rich.failed > summary .glyph { color: var(--red); }
+.toolcall.rich > .resbody { margin-left: 18px; }
+.toolcall.rich > .resbody > .codeblock.err pre { color: var(--red); }
 .toolcall.rich[open] > summary::after { content: "▾"; }
 .toolres.rich > details > summary::after { content: " ▸"; color: var(--faint); }
 .toolres.rich > details[open] > summary::after { content: " ▾"; }
