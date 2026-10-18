@@ -483,7 +483,7 @@
       const cmd = commandOf(args);
       const notes = [args.description, args.timeout_s ? `timeout ${args.timeout_s}s` : args.timeout ? `timeout ${Math.round(args.timeout / 1000)}s` : "",
         args.run_in_background ? "background" : ""].filter(Boolean).join(" · ");
-      return h("div", { class: "callbody" }, codeBlock(cmd, { kind: "shell", title: notes || "", collapse: 24 }));
+      return h("div", { class: "callbody" }, codeBlock(cmd, { kind: "shell", title: notes ? `command · ${notes}` : "command", collapse: 24 }));
     }
     if (kind === "write") {
       const path = pathOf(args);

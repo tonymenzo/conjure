@@ -660,3 +660,16 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 .toolres.rich > details > summary::after { content: " ▸"; color: var(--faint); }
 .toolres.rich > details[open] > summary::after { content: " ▾"; }
 .toolres.rich > details:not(:has(> :not(summary))) > summary::after { content: none; }
+
+/* in/out boxes: one padding, one rhythm, aligned under the tool name */
+.codeblock .cb-pre, .codeblock.term .term-out { padding: 8px 12px; }
+.codeblock .cb-pre.numbered { padding-left: 8px; }
+.toolcall.rich > .callbody, .toolcall.rich > .resbody { margin: 6px 0 0 var(--call-indent, 18px); }
+.toolcall.rich > .callbody > .codeblock, .toolcall.rich > .callbody > .fields,
+.toolcall.rich > .resbody > .codeblock { margin: 0; }
+.toolcall.rich > .callbody > .codeblock + .codeblock { margin-top: 6px; }
+.toolcall.rich[open] + .blk.follow { margin-top: 0; }
+@media (max-width: 640px) {
+  .toolcall.rich > .callbody, .toolcall.rich > .resbody { margin-left: 0; }
+  .codeblock .cb-pre, .codeblock.term .term-out { padding: 6px 8px; }
+}
