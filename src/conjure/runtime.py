@@ -716,6 +716,25 @@ class Runtime:
             time.sleep(0.02)
         return False
 
+    def settled(self, addr: Address) -> int | None:
+        """``addr``'s driver cursor when it and all its descendants have
+        ended their turns with nothing unread (no one in that subtree acts
+        again until messaged); ``None`` while any of them may still act.
+        A terminated agent counts as settled at cursor ``-1``."""
+        with self._lock:
+            record = self._records.get(addr)
+            if record is None or record.status == "terminated":
+                return -1
+            driver = record.driver
+            if driver is None or getattr(driver, "busy", True) or record.status not in ("idle", "error"):
+                return None
+            cursor = getattr(driver, "_cursor", 0)
+            if cursor < record.inbox.latest_seq():
+                return None
+            if any(self.settled(child) is None for child in record.children):
+                return None
+            return cursor
+
     # ----- Internal spawn (used by the spawn tool) -----
 
     def _spawn(self, *, parent: Address, spec: AgentSpec) -> Address:

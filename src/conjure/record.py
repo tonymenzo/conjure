@@ -158,6 +158,9 @@ class AgentRecord:
     # the agent read mid-turn isn't pushed to it again as new on its
     # next turn. Pruned as the driver's cursor passes them.
     pulled: set[int] = field(default_factory=set)
+    # The settled state of this agent's children last reported to it by a
+    # wait, so a repeated wait blocks instead of returning at once again.
+    idle_reported: tuple = ()
     # Provenance: what this agent actually ran as (engine, model, system
     # prompt). Journaled as ``agent_meta`` when it changes, so a replay
     # or an export shows it without the live engine.

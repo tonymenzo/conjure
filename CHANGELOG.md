@@ -18,6 +18,13 @@ this file as its notes.
   their one line, which already says it.
 - `Spawn` calls name the child and its model; the result chip is the
   child's address.
+### Fixed
+
+- **A wait on stopped agents ends.** `WaitFor` returns as soon as the
+  agents it depends on (the named sender, or all of the caller's children
+  and their workers) have ended their turns with nothing unread, with
+  `child_idle` naming them, instead of sitting out the timeout for a
+  reply that will not come. Each such state is reported once.
 
 ## [0.2.9] — 2026-10-17
 
