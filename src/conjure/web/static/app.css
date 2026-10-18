@@ -642,3 +642,11 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
   .cb-pre, .codeblock.term .term-out { padding: 6px 8px; font-size: 12px; }
   .toolcall.rich > summary .args { display: none; }
 }
+/* collapsed by default: a chevron and hover say the line opens */
+.toolcall.rich > summary, .toolres.rich > details > summary { border-radius: 4px; }
+.toolcall.rich > summary:hover, .toolres.rich > details > summary:hover { background: var(--bg-2); }
+.toolcall.rich > summary::after { content: "▸"; color: var(--faint); flex: none; margin-left: auto; padding: 0 4px; }
+.toolcall.rich[open] > summary::after { content: "▾"; }
+.toolres.rich > details > summary::after { content: " ▸"; color: var(--faint); }
+.toolres.rich > details[open] > summary::after { content: " ▾"; }
+.toolres.rich > details:not(:has(> :not(summary))) > summary::after { content: none; }

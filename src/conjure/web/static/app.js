@@ -383,9 +383,8 @@
     else el.textContent = d.content;
     return el;
   }
-  // Tool calls: the command, file or diff up front (code.js), the raw
-  // arguments one click away.
-  const OPEN_KINDS = new Set(["shell", "write", "edit", "multiedit", "patch"]);
+  // Tool calls: one summary line (the command, file or target); the
+  // code, diff or output (code.js) one click away.
   function toolCallBlock(name, args) {
     const CC = window.ConjureCode;
     const label = toolName(name);
@@ -404,7 +403,7 @@
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
-    return h("details", { class: `toolcall rich kind-${kind}`, open: OPEN_KINDS.has(kind) ? true : null },
+    return h("details", { class: `toolcall rich kind-${kind}` },
       head, CC.renderCall(name, args, { renderMarkdown }));
   }
   /** Whether a result plausibly answers ``call`` (orchestral's dict
@@ -791,8 +790,7 @@
           const cls = "toolres rich" + (bad ? " failed" : "");
           const summary = r.summary || summarizeResult(text, failed) || "result";
           this.block(r.el
-            ? h("details", { class: cls, open: CC.toolKind(call?.name, call?.args) === "shell" || (!call && r.el.classList.contains("term")) ? true : null },
-                h("summary", { text: summary }), r.el)
+            ? h("details", { class: cls }, h("summary", { text: summary }), r.el)
             : h("div", { class: cls }, h("details", null, h("summary", { text: summary }))), ev.ts, true);
           return;
         }
