@@ -43,7 +43,7 @@ from conjure.tools.primitives import (
 )
 
 
-__version__ = "0.2.9"
+__version__ = "0.2.10"
 
 __all__ = [
     "__version__",

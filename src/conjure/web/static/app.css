@@ -603,7 +603,8 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 .stat-del { color: var(--red); }
 
 /* tool call header and fields */
-.toolcall.rich > summary { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
+.toolcall.rich > summary { display: block; }
+.toolcall.rich > summary > .callhead { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
 .toolcall.rich > summary .glyph { flex: none; margin-right: -4px; }
 .toolcall.rich > summary .name { flex: none; }
 .toolcall.rich > summary .target { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
@@ -642,12 +643,13 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
   .toolres.rich { padding-left: 8px; }
   .cb-pre, .codeblock.term .term-out { padding: 6px 8px; font-size: 12px; }
   .toolcall.rich > summary .args { display: none; }
+  .callpreview { margin-left: 0; }
 }
 /* collapsed by default: a chevron and hover say the line opens */
 .toolcall.rich > summary, .toolres.rich > details > summary { border-radius: 4px; }
 .toolcall.rich > summary:hover, .toolres.rich > details > summary:hover { background: var(--bg-2); }
-.toolcall.rich > summary::after { content: "▸"; color: var(--faint); flex: none; padding: 0 4px; }
-.toolcall.rich > summary:not(:has(.res-chip))::after { margin-left: auto; }
+.toolcall.rich > summary > .callhead::after { content: "▸"; color: var(--faint); flex: none; padding: 0 4px; }
+.toolcall.rich > summary > .callhead:not(:has(.res-chip))::after { margin-left: auto; }
 .toolcall.rich > summary .res-chip {
   margin-left: auto; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
   font-size: 11px; color: var(--dim); padding: 0 7px; border: 1px solid var(--faint); border-radius: 9px; line-height: 17px;
@@ -656,10 +658,33 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 .toolcall.rich.failed > summary .glyph { color: var(--red); }
 .toolcall.rich > .resbody { margin-left: 18px; }
 .toolcall.rich > .resbody > .codeblock.err pre { color: var(--red); }
-.toolcall.rich[open] > summary::after { content: "▾"; }
+.toolcall.rich[open] > summary > .callhead::after { content: "▾"; }
 .toolres.rich > details > summary::after { content: " ▸"; color: var(--faint); }
 .toolres.rich > details[open] > summary::after { content: " ▾"; }
 .toolres.rich > details:not(:has(> :not(summary))) > summary::after { content: none; }
+
+/* collapsed preview: a line or two of what the call writes or says,
+   under its line; opening the call shows the full blocks instead */
+.callpreview {
+  margin: 1px 0 3px var(--call-indent, 18px); padding-left: 10px; border-left: 2px solid var(--faint);
+  font-size: 12px; line-height: 18px; color: var(--dim); min-width: 0;
+}
+.toolcall.rich[open] > summary > .callpreview { display: none; }
+.callpreview .pv-row { display: flex; gap: 8px; align-items: baseline; min-width: 0; white-space: nowrap; }
+.callpreview .pv-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.callpreview code.pv-text { opacity: 0.85; }
+.callpreview .pv-key { flex: none; font-size: 11px; color: var(--faint); }
+.callpreview .pv-key.hidden { visibility: hidden; }
+.callpreview .pv-sign { flex: none; width: 1ch; }
+.callpreview .pv-row.add .pv-sign { color: var(--green-mid); }
+.callpreview .pv-row.del .pv-sign { color: var(--red); }
+.callpreview .pv-row.prose { display: block; white-space: normal; }
+.callpreview .pv-row.prose .pv-key { margin-right: 8px; }
+.callpreview .pv-row.prose .pv-text {
+  white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+}
+.callpreview .pv-row.prose:has(.pv-key) { display: flex; }
+.callpreview .pv-row.prose:has(.pv-key) .pv-key { margin-right: 0; }
 
 /* in/out boxes: one padding, one rhythm, aligned under the tool name */
 .codeblock .cb-pre, .codeblock.term .term-out { padding: 8px 12px; }

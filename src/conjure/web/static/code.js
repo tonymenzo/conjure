@@ -524,8 +524,102 @@
       const more = short.length - shown.length + long.length;
       return { text: shown.join("  "), extra: more ? `+${plural(more, "field")}` : "", dim: true };
     }
-    if (kind === "send") return { prefix: "→", text: String(args.to ?? "?"), extra: clip(plainText(firstLine(typeof args.body === "string" ? args.body : JSON.stringify(args.body ?? ""))), 80) };
+    // The body is the preview's (callPreview), not the summary's.
+    if (kind === "send") return { prefix: "→", text: String(args.to ?? "?") };
+    if (kind === "spawn") {
+      const on = [args.model, args.llm && args.llm !== "default" ? args.llm : "", args.engine && args.engine !== "auto" ? args.engine : ""];
+      const kits = Array.isArray(args.toolkits) && args.toolkits.length ? plural(args.toolkits.length, "toolkit") : "";
+      return { text: String(args.label || "child"), extra: [...on, kits].filter(Boolean).join(" · ") };
+    }
     return null;
+  }
+
+  // ---------- collapsed preview ----------
+
+  const PREVIEW_ROWS = 2;
+  /** Up to ``n`` non-blank lines of ``text``, their shared indent removed. */
+  function leadLines(text, n = PREVIEW_ROWS) {
+    const lines = String(text ?? "").split("\n").filter((l) => l.trim()).slice(0, n);
+    return dedent(lines);
+  }
+  function dedent(lines) {
+    const pad = Math.min(...lines.map((l) => l.match(/^[ \t]*/)[0].length));
+    return Number.isFinite(pad) ? lines.map((l) => l.slice(pad)) : lines;
+  }
+  /** The first paragraph of markdown as one line of plain text (bold,
+   *  code ticks, headings and link targets dropped; ``snake_case`` kept). */
+  function firstParagraph(s) {
+    const para = String(s ?? "").trim().split(/\n\s*\n/)[0] || "";
+    return para.replace(/^\s{0,3}(#{1,6}|>)\s*/gm, "").replace(/\*\*|__|`/g, "")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim();
+  }
+  /** One preview row of code. ``keyHidden`` keeps the key's width so
+   *  a second row lines up under the first. */
+  function codeRow(text, lang, { sign = "", key = "", keyHidden = false } = {}) {
+    const code = h("code", { class: "pv-text" });
+    highlightInto(code, text, lang);
+    const cls = sign === "+" ? " add" : sign === "-" ? " del" : "";
+    return h("div", { class: "pv-row" + cls },
+      key ? h("span", { class: "pv-key" + (keyHidden ? " hidden" : ""), "aria-hidden": keyHidden ? "true" : null, text: key }) : null,
+      sign ? h("span", { class: "pv-sign", "aria-hidden": "true", text: sign }) : null,
+      code);
+  }
+  const proseRow = (text, key = "") =>
+    text ? h("div", { class: "pv-row prose" }, key ? h("span", { class: "pv-key", text: key }) : null, h("span", { class: "pv-text", text: clip(text, 400) })) : null;
+  /** The first removed and first added line of a change. */
+  function changeRows(diffRows, lang) {
+    const del = diffRows.find((r) => r.op === "-");
+    const add = diffRows.find((r) => r.op === "+");
+    const picked = [del, add].filter(Boolean);
+    const texts = dedent(picked.map((r) => r.text));
+    return picked.map((r, k) => codeRow(texts[k], lang, { sign: r.op }));
+  }
+  const unifiedRows = (diff) => String(diff).split("\n")
+    .filter((l) => !/^(\+\+\+|---)/.test(l))
+    .map((l) => ({ op: l[0] === "+" || l[0] === "-" ? l[0] : " ", text: l.slice(1) }));
+
+  /** A line or two under a collapsed call: what it writes, changes,
+   *  says or runs, for a glance down the transcript. Null where the
+   *  summary line already says it (shell, read, search). Opening the
+   *  call replaces it with the full blocks. */
+  function callPreview(name, args) {
+    args = args || {};
+    const kind = toolKind(name, args);
+    let rows = [];
+    if (kind === "write") {
+      const lang = langForPath(pathOf(args));
+      rows = leadLines(args.content ?? args.contents ?? args.text).map((l) => codeRow(l, lang));
+    } else if (kind === "edit") {
+      rows = changeRows(lineDiff(String(args.old_string ?? args.old_str ?? args.old ?? args.old_text ?? ""),
+        String(args.new_string ?? args.new_str ?? args.new ?? args.new_text ?? "")), langForPath(pathOf(args)));
+    } else if (kind === "multiedit") {
+      const all = (args.edits || []).flatMap((e) => lineDiff(String(e?.old_string ?? ""), String(e?.new_string ?? "")));
+      rows = changeRows(all, langForPath(pathOf(args)));
+    } else if (kind === "patch") {
+      const first = (args.changes || []).find(Boolean);
+      const diff = first ? first.diff ?? first.unified_diff ?? first.patch : args.patch ?? args.input;
+      const lang = langForPath(first?.path || "");
+      if (typeof diff === "string" && diff.trim()) rows = changeRows(unifiedRows(diff), lang);
+      else if (typeof first?.content === "string") rows = leadLines(first.content).map((l) => codeRow(l, lang));
+    } else if (kind === "send") {
+      const body = typeof args.body === "string" ? args.body : JSON.stringify(args.body ?? "");
+      rows = [proseRow(firstParagraph(body))];
+    } else if (kind === "spawn") {
+      rows = [proseRow(firstParagraph(args.initial_message || args.role_prompt))];
+    } else if (kind === "other") {
+      // The first long argument: code as code, prose as text.
+      for (const [k, v] of Object.entries(args)) {
+        if (typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
+        if (PROSE_KEYS.has(k)) rows = [proseRow(firstParagraph(v), k)];
+        else {
+          const lang = k in CODE_KEYS ? (CODE_KEYS[k] || langForPath(pathOf(args))) : "";
+          rows = leadLines(v).map((l, i) => codeRow(l, lang, { key: k, keyHidden: i > 0 }));
+        }
+        break;
+      }
+    }
+    rows = rows.filter(Boolean);
+    return rows.length ? h("div", { class: "callpreview" }, rows) : null;
   }
 
   /** The expanded body of a tool call. ``renderMarkdown`` (from app.js)
@@ -751,6 +845,9 @@
     const err = parsed && typeof parsed === "object" && parsed.ok === false;
     // A successful write, edit or send says nothing the call didn't.
     if (!failed && !err && ["write", "edit", "multiedit", "patch", "send"].includes(kind)) return { chip: "✓", bad: false, body: null };
+    // A spawn's result is the child's address.
+    if (!failed && !err && kind === "spawn" && parsed && typeof parsed === "object" && parsed.address)
+      return { chip: `✓ ${parsed.address}`, bad: false, body: null };
     if (failed || err) {
       const msg = err ? `${parsed.code || "error"}${parsed.error ? ": " + parsed.error : ""}` : String(text || "failed");
       return { chip: clip(firstLine(msg), 70), bad: true, body: lineCount(msg) > 1 || msg.length > 70 ? codeBlock(msg, { title: "error", className: "err" }) : null };
@@ -787,7 +884,7 @@
 
   window.ConjureCode = {
     codeBlock, diffBlock, unifiedDiffBlock, highlightInto, langForPath, langForTag,
-    parseLiteral, toolKind, callSummary, renderCall, renderResult, fields, terminal,
+    parseLiteral, toolKind, callSummary, callPreview, renderCall, renderResult, fields, terminal,
     resultForCall, relArgs, relText,
   };
 })();

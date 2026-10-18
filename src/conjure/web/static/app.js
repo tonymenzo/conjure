@@ -397,13 +397,16 @@
     }
     const kind = CC.toolKind(name, args);
     const sum = CC.callSummary(name, args);
-    const head = h("summary", null,
+    // The summary: the call's line, and under it while collapsed a
+    // line or two of what it writes or says.
+    const line = h("span", { class: "callhead" },
       h("span", { class: "glyph", text: "⏺ " }),
       h("span", { class: "name", text: label }),
       sum
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
+    const head = h("summary", null, line, CC.callPreview(name, args));
     const fullPath = original && (original.file_path ?? original.path);
     if (typeof fullPath === "string" && fullPath !== (args.file_path ?? args.path)) head.title = fullPath;
     return h("details", { class: `toolcall rich kind-${kind}` },
@@ -800,7 +803,7 @@
           // line, the output inside it.
           const res = CC.resultForCall(text, failed, call);
           const summary = target.querySelector(":scope > summary");
-          summary.append(h("span", { class: "res-chip" + (res.bad ? " bad" : ""), text: res.chip }));
+          (summary.querySelector(":scope > .callhead") || summary).append(h("span", { class: "res-chip" + (res.bad ? " bad" : ""), text: res.chip }));
           if (res.bad) target.classList.add("failed");
           if (res.body) target.append(h("div", { class: "resbody" }, res.body));
           return;
