@@ -86,6 +86,15 @@ def test_bash_runs_in_sandbox(agent_token):
     assert "b.txt" in out["stdout"]
 
 
+def test_bash_hides_credentials(agent_token, monkeypatch):
+    monkeypatch.setenv("AMSC_TOKEN", "t0ken")
+    monkeypatch.setenv("OPENAI_API_KEY", "k3y")
+    monkeypatch.setenv("FEYNTABLE_NODE", "/usr/bin/node")
+    out = bash_impl(token=agent_token, command="env")
+    assert "t0ken" not in out["stdout"] and "k3y" not in out["stdout"]
+    assert "FEYNTABLE_NODE=/usr/bin/node" in out["stdout"]
+
+
 def test_bash_timeout(agent_token):
     out = bash_impl(token=agent_token, command="sleep 2", timeout_s=0.2)
     assert out["ok"] is False
