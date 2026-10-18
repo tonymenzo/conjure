@@ -144,6 +144,21 @@ def test_agent_detail(session):
     assert session["b"].id in {c["addr"] for c in d["capabilities"]}
     assert d["inbox"][0]["body"] == "ping" and "ts" in d["inbox"][0]
     assert session["view"].agent("nope")["ok"] is False
+    # The sandbox's absolute path(s), for showing tool-call paths
+    # relative to it.
+    sandbox = session["rt"].sandbox_of(session["a"])
+    if sandbox is not None:
+        assert str(sandbox) in d["sandbox_paths"]
+
+
+def test_replay_detail_keeps_the_recorded_sandbox_path(session):
+    rt = session["rt"]
+    rt._journal.flush()
+    view = SessionView.replay_session(session["dir"])
+    rec = view.runtime.record_for(session["a"])
+    rec.recorded_sandbox_dir = "/home/someone/run/workspace"  # where the run was
+    paths = view.agent(session["a"].id)["sandbox_paths"]
+    assert paths[0] == "/home/someone/run/workspace"
 
 
 def test_send_records_user_input(session):

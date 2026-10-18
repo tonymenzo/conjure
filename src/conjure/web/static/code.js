@@ -183,7 +183,7 @@
     const head = h("div", { class: "code-head" },
       h("span", { class: "code-title", text: opts.title || "" }),
       h("span", { class: "code-meta", text: [label, lines > 1 ? plural(lines, "line") : ""].filter(Boolean).join(" · ") }),
-      copyButton(() => code));
+      copyButton(() => opts.copyText ?? code));
     const box = h("div", { class: "codeblock" + (opts.className ? " " + opts.className : "") }, head, pre);
     const limit = opts.collapse ?? COLLAPSE_LINES;
     if (limit && lines > limit + 4) {
@@ -412,6 +412,58 @@
     if (n === "spawn") return "spawn";
     return "other";
   }
+  // ---------- paths relative to the agent's sandbox ----------
+
+  // Argument values that are file data, shown exactly as written.
+  const DATA_KEYS = new Set(["content", "contents", "text", "old_string", "new_string", "old_str", "new_str", "old", "new", "body", "diff", "patch"]);
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const BEFORE = "(^|[\\s'\"=(:,;\\[<>|&])";
+  const AFTER = "(?=$|[\\s'\";)\\]:,<>|&])";
+  /** The prefixes to shorten, longest first: each sandbox root as
+   *  ``.``, and its parent and grandparent as ``..`` and ``../..`` (a
+   *  worker whose sandbox sits inside its parent's often reaches up). */
+  function prefixes(roots) {
+    const out = new Map();
+    for (const root of roots || []) {
+      if (!root) continue;
+      if (!out.has(root)) out.set(root, ".");
+      let dir = root, up = "";
+      for (let k = 0; k < 2; k++) {
+        dir = dir.replace(/\/[^/]+$/, "");
+        up = up ? up + "/.." : "..";
+        if (dir.split("/").filter(Boolean).length < 3) break; // not /home/user
+        if (!out.has(dir)) out.set(dir, up);
+      }
+    }
+    return [...out].sort((a, b) => b[0].length - a[0].length);
+  }
+  /** ``text`` with sandbox paths shortened: ``<root>/work/a.py`` →
+   *  ``work/a.py``, a bare ``<root>`` → ``.``, ``<parent>/x`` → ``../x``. */
+  function relText(text, roots) {
+    if (!roots || !roots.length || typeof text !== "string") return text;
+    let out = text;
+    for (const [root, rel] of prefixes(roots)) {
+      if (!out.includes(root)) continue;
+      const r = reEsc(root);
+      out = out
+        .replace(new RegExp(`${BEFORE}${r}/(?=[^\\s'"])`, "g"), (_m, pre) => pre + (rel === "." ? "" : rel + "/"))
+        .replace(new RegExp(`${BEFORE}${r}/?${AFTER}`, "g"), (_m, pre) => pre + rel);
+    }
+    return out;
+  }
+  /** A call's arguments for display: paths and commands relative to the
+   *  sandbox, file contents untouched. */
+  function relArgs(args, roots) {
+    if (!roots || !roots.length) return args;
+    const walk = (v, key) => {
+      if (typeof v === "string") return DATA_KEYS.has(key) ? v : relText(v, roots);
+      if (Array.isArray(v)) return v.map((x) => walk(x, key));
+      if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+      return v;
+    };
+    return walk(args, "");
+  }
+
   const pathOf = (a) => (a && (a.file_path ?? a.path ?? a.filename ?? a.notebook_path)) || "";
   const commandOf = (a) => {
     const c = a && (a.command ?? a.cmd ?? a.script);
@@ -438,7 +490,9 @@
     if (kind === "shell") {
       const cmd = commandOf(args);
       const n = lineCount(cmd);
-      return { prefix: "$", text: clip(firstLine(cmd), 120), extra: n > 1 ? `+${n - 1} lines` : "" };
+      // ``cd .; …`` (into the sandbox it already runs in) says nothing.
+      const line = firstLine(cmd).replace(/^\s*cd\s+\.\/?\s*(?:;|&&)\s*/, "");
+      return { prefix: "$", text: clip(line || firstLine(cmd), 120), extra: n > 1 ? `+${n - 1} lines` : "" };
     }
     if (kind === "write") {
       const n = lineCount(String(args.content ?? args.contents ?? args.text ?? ""));
@@ -476,14 +530,15 @@
 
   /** The expanded body of a tool call. ``renderMarkdown`` (from app.js)
    *  renders prose fields such as a Send body or a role prompt. */
-  function renderCall(name, args, { renderMarkdown } = {}) {
+  function renderCall(name, args, { renderMarkdown, original } = {}) {
     args = args || {};
     const kind = toolKind(name, args);
     if (kind === "shell") {
       const cmd = commandOf(args);
+      const copyText = original ? commandOf(original) : cmd;
       const notes = [args.description, args.timeout_s ? `timeout ${args.timeout_s}s` : args.timeout ? `timeout ${Math.round(args.timeout / 1000)}s` : "",
         args.run_in_background ? "background" : ""].filter(Boolean).join(" · ");
-      return h("div", { class: "callbody" }, codeBlock(cmd, { kind: "shell", title: notes ? `command · ${notes}` : "command", collapse: 24 }));
+      return h("div", { class: "callbody" }, codeBlock(cmd, { kind: "shell", title: notes ? `command · ${notes}` : "command", collapse: 24, copyText }));
     }
     if (kind === "write") {
       const path = pathOf(args);
@@ -733,6 +788,6 @@
   window.ConjureCode = {
     codeBlock, diffBlock, unifiedDiffBlock, highlightInto, langForPath, langForTag,
     parseLiteral, toolKind, callSummary, renderCall, renderResult, fields, terminal,
-    resultForCall,
+    resultForCall, relArgs, relText,
   };
 })();

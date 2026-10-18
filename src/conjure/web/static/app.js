@@ -385,9 +385,10 @@
   }
   // Tool calls: one summary line (the command, file or target); the
   // code, diff or output (code.js) one click away.
-  function toolCallBlock(name, args) {
+  function toolCallBlock(name, original, roots) {
     const CC = window.ConjureCode;
     const label = toolName(name);
+    const args = CC ? CC.relArgs(original, roots) : original;
     if (!CC) {
       return h("details", { class: "toolcall" },
         h("summary", null, h("span", { class: "glyph", text: "⏺ " }), h("span", { class: "name", text: label }),
@@ -403,8 +404,16 @@
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
+    const fullPath = original && (original.file_path ?? original.path);
+    if (typeof fullPath === "string" && fullPath !== (args.file_path ?? args.path)) head.title = fullPath;
     return h("details", { class: `toolcall rich kind-${kind}` },
-      head, CC.renderCall(name, args, { renderMarkdown }));
+      head, CC.renderCall(name, args, { renderMarkdown, original }));
+  }
+  /** An agent's sandbox paths, longest first (a nested sandbox before
+   *  its parent's). */
+  function sandboxRoots(detail) {
+    const paths = (detail && detail.ok && detail.sandbox_paths) || [];
+    return [...paths].filter((p) => p && p.length > 1).sort((a, b) => b.length - a.length);
   }
   /** Whether a result plausibly answers ``call`` (orchestral's dict
    *  results say what they are; a mismatch means the pairing slipped). */
@@ -635,6 +644,7 @@
       this.live = live;
       this.stream = null;   // {el, text, ts}
       this.turn = null;     // {el, start, tokens, done, src}
+      this.roots = [];      // the agent's sandbox paths (relative display)
     }
     block(el, ts, sub = false) {
       el.classList.add("blk");
@@ -773,8 +783,8 @@
       for (const tc of calls || []) {
         const name = tc.name || tc.tool_name;
         const args = tc.args ?? tc.arguments ?? {};
-        const el = this.block(toolCallBlock(name, args), ts, true);
-        this.pendingCalls.push({ name, args, el });
+        const el = this.block(toolCallBlock(name, args, this.roots), ts, true);
+        this.pendingCalls.push({ name, args: window.ConjureCode ? window.ConjureCode.relArgs(args, this.roots) : args, el });
       }
     }
     toolResult(ev) {
@@ -863,7 +873,15 @@
       this.renderer = new Renderer(this.body, { live: S.live });
       this.seenSeq.clear();
       let data;
-      try { data = await api("events", { addr: this.addr }); } catch { return; }
+      try {
+        const [ev, detail] = await Promise.all([
+          api("events", { addr: this.addr }),
+          api("agent", { addr: this.addr }).catch(() => null),
+        ]);
+        data = ev;
+        // Paths in tool calls show relative to the agent's sandbox.
+        this.renderer.roots = sandboxRoots(detail);
+      } catch { return; }
       if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
       this.offset = data.offset;
@@ -881,6 +899,7 @@
       const data = await api("events", { addr: this.addr, before: this.start });
       const holder = h("div");
       const r = new Renderer(holder, { live: false });
+      r.roots = this.renderer.roots;
       for (const ev of data.events) r.apply(ev);
       r.flush();
       const prevHeight = this.body.scrollHeight;

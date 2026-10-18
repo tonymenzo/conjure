@@ -104,6 +104,9 @@ class SessionView:
             if addr.id in _SENTINELS:
                 continue
             rec.event_log = _LogRef(agents_dir / f"{addr.id}.jsonl")
+            # Where the sandbox was when the run recorded it: its tool
+            # calls name paths under it, wherever the copy is now.
+            rec.recorded_sandbox_dir = rec.spec.sandbox_dir
             # Files view: an export carries sandboxes beside the journal;
             # a session in a store finds them in <store>/sandboxes.
             for cand in (session_dir / "sandboxes" / addr.id, session_dir.parent.parent / "sandboxes" / addr.id):
@@ -352,6 +355,10 @@ class SessionView:
             "oneshot": spec.oneshot,
             "lazy": spec.lazy,
             "sandbox_dir": spec.sandbox_dir,
+            # Every absolute path this agent's sandbox has gone by (here,
+            # and where the run recorded it), so the chat can show paths
+            # in tool calls relative to it.
+            "sandbox_paths": _sandbox_paths(rec, self.runtime),
             "toolkits": {
                 k: v.model_dump(exclude_none=True)
                 for k, v in (getattr(spec, "toolkits", None) or {}).items()
@@ -827,6 +834,23 @@ def _unpriced_model(rec: Any, meta: dict[str, Any], config: dict[str, Any]) -> b
         return PriceBook(entry.get("pricing")).price(model) is None
     except Exception:
         return False
+
+
+def _sandbox_paths(rec: Any, runtime: Any) -> list[str]:
+    paths: list[str] = []
+    candidates = [getattr(rec, "recorded_sandbox_dir", None), rec.spec.sandbox_dir]
+    try:
+        candidates.append(str(runtime.sandbox_of(rec.addr) or ""))
+    except Exception:
+        pass
+    for p in candidates:
+        if not p:
+            continue
+        p = str(p).rstrip("/")
+        for form in (p, os.path.realpath(p) if os.path.isabs(p) else p):
+            if form and form != "/" and form not in paths:
+                paths.append(form)
+    return paths
 
 
 def _moved_sandbox(recorded: str | None, session_dir: Path, config: dict[str, Any]) -> Path | None:
