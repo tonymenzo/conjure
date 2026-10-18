@@ -526,3 +526,119 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
   #view-files { flex-direction: column; }
   #files-side { width: auto; border-right: none; max-height: 40%; }
 }
+
+/* ---------- code: tool calls, results, fences (code.js) ---------- */
+
+:root { --diff-add: rgba(43, 212, 90, 0.11); --diff-del: rgba(255, 65, 54, 0.12); }
+:root[data-theme="light"] { --diff-add: rgba(10, 143, 46, 0.10); --diff-del: rgba(200, 40, 30, 0.09); }
+
+.codeblock {
+  margin: 4px 0 6px; border: 1px solid var(--faint); border-radius: 7px;
+  background: var(--bg-2); overflow: hidden; position: relative;
+}
+.toolcall .callbody, .toolres.rich > details > .codeblock, .toolres.rich > .codeblock { margin-left: 18px; }
+.toolcall .callbody { margin-top: 4px; margin-bottom: 2px; }
+.code-head {
+  display: flex; align-items: center; gap: 10px; padding: 3px 6px 3px 10px;
+  border-bottom: 1px solid var(--faint); background: var(--bg-3);
+  font-size: 11px; color: var(--dim); min-height: 24px;
+}
+.code-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.code-meta { white-space: nowrap; }
+.codeblock .copy { font-size: 10.5px; padding: 0 7px; line-height: 18px; border-color: transparent; color: var(--dim); }
+.codeblock:hover .copy { border-color: var(--faint); }
+.codeblock .copy:hover { color: var(--green); border-color: var(--green); }
+.cb-pre {
+  margin: 0; padding: 8px 12px; font-size: 12.5px; line-height: 1.5;
+  white-space: pre; overflow-x: auto; tab-size: 4; background: none; border: 0; max-height: none;
+}
+.cb-pre.numbered { display: grid; grid-template-columns: auto 1fr; column-gap: 14px; padding-left: 8px; }
+.cb-pre .gutter { color: var(--faint); text-align: right; user-select: none; white-space: pre; }
+.cb-pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
+.cb-pre.shell code::before { content: "$ "; color: var(--green); user-select: none; }
+.cb-pre.shell .heredoc { display: inline-block; min-width: 100%; border-left: 2px solid var(--border-quiet); padding-left: 8px; margin-left: -10px; background: var(--bg); }
+.codeblock.collapsed .cb-pre, .codeblock.collapsed .diff-body {
+  max-height: calc(var(--collapse-lines, 16) * 1.5em + 16px); overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.codeblock .more {
+  display: block; width: 100%; border: 0; border-top: 1px solid var(--faint); border-radius: 0;
+  font-size: 11px; color: var(--dim); padding: 3px 0; background: var(--bg-3);
+}
+.codeblock .more:hover { color: var(--green); }
+/* Override the old tool pre styling inside rich blocks. */
+.toolcall .codeblock pre, .toolres .codeblock pre { margin: 0; border-radius: 0; background: none; max-height: none; white-space: pre; overflow-wrap: normal; }
+.resp .codeblock pre { border: 0; border-radius: 0; margin: 0; background: none; padding: 8px 12px; }
+.resp .codeblock pre.numbered { padding-left: 8px; }
+
+/* terminal output */
+.codeblock.term .term-out { margin: 0; padding: 8px 12px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.codeblock.term .term-lines { display: block; }
+.codeblock.term.collapsed .term-out {
+  max-height: calc(var(--collapse-lines, 16) * 1.5em + 16px); overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(to top, #000 75%, transparent);
+  mask-image: linear-gradient(to top, #000 75%, transparent);
+}
+.term .stdout { color: var(--fg); }
+.term .stderr { color: var(--red); }
+.term .term-cut { display: block; margin: 4px 0; padding: 2px 8px; border-left: 2px solid var(--amber); background: var(--amber-soft); color: var(--amber); white-space: pre-wrap; }
+.badge { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 10.5px; line-height: 16px; border: 1px solid currentColor; }
+.badge.good { color: var(--green-mid); }
+.badge.bad { color: var(--red); }
+
+/* diffs */
+.diff-body { font-size: 12.5px; line-height: 1.5; overflow-x: auto; padding: 4px 0; }
+.dline { display: flex; white-space: pre; min-width: max-content; padding-right: 12px; }
+.dline .dsign { width: 22px; flex: none; text-align: center; color: var(--dim); user-select: none; }
+.dline .dtext { background: none; }
+.dline.add { background: var(--diff-add); }
+.dline.add .dsign { color: var(--green-mid); }
+.dline.del { background: var(--diff-del); }
+.dline.del .dsign { color: var(--red); }
+.dline.skip { color: var(--dim); font-style: italic; }
+.dline.hunk { color: var(--cyan); }
+.stat-add { color: var(--green-mid); }
+.stat-del { color: var(--red); }
+
+/* tool call header and fields */
+.toolcall.rich > summary { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
+.toolcall.rich > summary .glyph { flex: none; margin-right: -4px; }
+.toolcall.rich > summary .name { flex: none; }
+.toolcall.rich > summary .target { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.toolcall.rich > summary .target.cmd { color: var(--cyan); }
+.toolcall.rich > summary .target.dimmed { color: var(--dim); }
+.toolcall.rich > summary .args { flex: none; font-size: 11px; }
+.toolcall.rich[open] > summary .target.cmd { color: var(--dim); }
+.fields { display: grid; gap: 3px; }
+.field { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.field.block { display: block; }
+.field .fkey { color: var(--dim); font-size: 11px; flex: none; min-width: 72px; }
+.field.block > .fkey { display: block; margin-top: 2px; }
+.field .fval { background: var(--bg-3); border-radius: 3px; padding: 0 4px; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.field .prose, .callbody > .prose { border-left: 2px solid var(--faint); padding: 2px 0 2px 10px; margin: 2px 0 4px; }
+.toolres.rich > details > summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toolres.rich.failed > details > summary { white-space: nowrap; }
+.perm .callbody { margin: 6px 0 0; }
+
+/* highlight.js tokens, from the theme's colours */
+.hljs-comment, .hljs-quote { color: var(--dim); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-section, .hljs-meta .hljs-keyword { color: var(--magenta); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta .hljs-string, .hljs-char.escape_ { color: var(--green-mid); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--amber); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-name { color: var(--cyan); }
+.hljs-built_in, .hljs-type, .hljs-selector-class, .hljs-selector-id { color: var(--yellow); }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-params { color: var(--fg); }
+.hljs-variable.language_, .hljs-subst { color: var(--cyan); }
+.hljs-meta, .hljs-meta .hljs-meta-keyword { color: var(--dim); }
+.hljs-deletion { color: var(--red); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+.hljs-link { text-decoration: underline; }
+@media (max-width: 640px) {
+  .toolcall .callbody, .toolres.rich > details > .codeblock, .toolres.rich > .codeblock { margin-left: 0; }
+  .toolres.rich { padding-left: 8px; }
+  .cb-pre, .codeblock.term .term-out { padding: 6px 8px; font-size: 12px; }
+  .toolcall.rich > summary .args { display: none; }
+}

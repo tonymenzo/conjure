@@ -1,0 +1,5 @@
+highlight.js 11.9.0 (BSD-3-Clause, see LICENSE), from cdnjs:
+highlight.min.js (the "common" bundle) followed by languages/fortran,
+latex, cmake, julia and dockerfile, concatenated into one file.
+Colours come from conjure's own tokens in app.css (.hljs-*), not a
+highlight.js theme.

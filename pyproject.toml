@@ -98,7 +98,7 @@ conjure-input = "conjure.cli_input:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-conjure = ["system_prompts/*.md", "py.typed", "web/static/*", "web/static/vendor/katex/*", "web/static/vendor/katex/fonts/*"]
+conjure = ["system_prompts/*.md", "py.typed", "web/static/*", "web/static/vendor/katex/*", "web/static/vendor/katex/fonts/*", "web/static/vendor/highlight/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

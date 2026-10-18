@@ -213,6 +213,8 @@ def test_page_is_public_api_is_not(server):
     status, body = _req(server, "GET", "/", token=False)
     assert status == 200 and b"conjure" in body
     assert _req(server, "GET", "/static/app.js", token=False)[0] == 200
+    assert _req(server, "GET", "/static/code.js", token=False)[0] == 200
+    assert _req(server, "GET", "/static/vendor/highlight/highlight.min.js", token=False)[0] == 200
     assert _req(server, "GET", "/api/snapshot", token=False)[0] == 401
     assert _req(server, "GET", "/api/snapshot", token="wrong")[0] == 401
     status, snap = _req(server, "GET", "/api/snapshot")
