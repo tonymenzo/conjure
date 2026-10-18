@@ -240,6 +240,20 @@ def edit_impl(
     return {"ok": True, "path": str(target.relative_to(sandbox))}
 
 
+# Agents' shells never see credentials: the conjure process needs them to
+# call providers, the commands an agent runs do not.
+_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
+
+
+def _agent_env(runtime: "Runtime | None" = None) -> dict[str, str]:
+    """The environment for an agent's Bash: this process's, without
+    credentials (names containing KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL
+    or AUTH, and every configured provider's api_key_env)."""
+    named = set(getattr(runtime, "secret_env_names", ()) or ())
+    return {k: v for k, v in os.environ.items()
+            if k not in named and not any(m in k.upper() for m in _SECRET_MARKERS)}
+
+
 def _shell() -> str | None:
     """The shell ``Bash`` commands run under: bash when there is one
     (``$CONJURE_SHELL`` overrides), else ``None`` for Python's default
@@ -282,6 +296,7 @@ def bash_impl(
             shell=True,
             executable=_shell(),
             cwd=str(sandbox),
+            env=_agent_env(runtime),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

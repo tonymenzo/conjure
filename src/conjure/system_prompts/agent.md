@@ -10,6 +10,8 @@ mailboxes, and capability passing) with combinators (`AgentMap`,
 - Address id:  `$addr_id`
 - Label:       `$label`
 - Depth:       `$depth` (root is depth 0; max allowed is `$max_depth`)
+- Working directory: `$sandbox` (relative paths in your tools and in
+  your parent's instructions resolve here)
 
 ## Role
 

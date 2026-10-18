@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import ast
+import re
 import json as _json
 
 from rich.console import RenderableType
@@ -903,8 +904,149 @@ def _response_block(
         if name.lower() == "send":
             _add_send_rows(table, bar, tc)
         else:
-            table.add_row(bar, _tool_call_text(tc))
+            _add_tool_call_rows(table, bar, tc)
     return table
+
+
+# ---- code in tool calls: commands, written files, edits ----
+
+_CODE_PREVIEW_LINES = 12
+_DIFF_PREVIEW_LINES = 16
+_OUTPUT_TAIL_LINES = 6
+
+
+def _tool_kind(name: str, args: Any) -> str:
+    n = str(name or "").rsplit("__", 1)[-1].lower() if str(name or "").startswith("mcp__") else str(name or "").lower()
+    if n in ("bash", "shell", "exec_command", "local_shell"):
+        return "shell"
+    if n in ("write", "write_file", "create_file"):
+        return "write"
+    if n in ("edit", "str_replace", "edit_file"):
+        return "patch" if isinstance(args, dict) and isinstance(args.get("changes"), list) else "edit"
+    if n == "multiedit":
+        return "multiedit"
+    return "other"
+
+
+def _path_of(args: dict[str, Any]) -> str:
+    return str(args.get("file_path") or args.get("path") or "")
+
+
+def _bars(n: int, style: str = _AGENT_BAR_STYLE) -> Text:
+    """The speaker bar for a cell ``n`` lines tall."""
+    return Text("\n".join([_AGENT_BAR] * max(1, n)), style=style)
+
+
+def _height(r: RenderableType) -> int:
+    if isinstance(r, Text):
+        return len(r.plain.split("\n"))
+    code = getattr(r, "code", None)
+    return len(code.split("\n")) if isinstance(code, str) else 1
+
+
+def _code_preview(code: str, *, path: str = "", lexer: str = "", numbers: bool = False) -> list[RenderableType]:
+    """``code``'s first lines highlighted (rich ``Syntax``), plus a
+    "… N more lines" row when it's longer."""
+    from rich.syntax import Syntax
+
+    lines = code.rstrip("\n").split("\n")
+    shown = "\n".join(lines[:_CODE_PREVIEW_LINES])
+    lexer = lexer or (Syntax.guess_lexer(path, code) if path else "text")
+    out: list[RenderableType] = [Syntax(
+        shown, lexer, theme="ansi_dark", background_color="default",
+        line_numbers=numbers, word_wrap=False,
+    )]
+    if len(lines) > _CODE_PREVIEW_LINES:
+        more = len(lines) - _CODE_PREVIEW_LINES
+        out.append(Text(f"… {more} more line{'s' if more != 1 else ''}", style="dim italic"))
+    return out
+
+
+def _diff_preview(old: str, new: str) -> Text:
+    """A compact line diff (one line of context), red/green."""
+    import difflib
+
+    body = Text()
+    rows = [
+        line for line in difflib.unified_diff(
+            old.splitlines(), new.splitlines(), lineterm="", n=1
+        )
+        if not line.startswith(("---", "+++", "@@"))
+    ]
+    for line in rows[:_DIFF_PREVIEW_LINES]:
+        style = {"+": "green", "-": "red", "@": "dim cyan"}.get(line[:1], "dim")
+        body.append(line + "\n", style=style)
+    if len(rows) > _DIFF_PREVIEW_LINES:
+        body.append(f"… {len(rows) - _DIFF_PREVIEW_LINES} more lines\n", style="dim italic")
+    body.rstrip()
+    return body
+
+
+def _call_header(name: str, target: str, extra: str = "", *, target_style: str = "") -> Text:
+    head = Text()
+    head.append(_TOOL_CALL_PREFIX, style=f"bold {_TOOL_CALL_STYLE}")
+    head.append(name, style=f"bold {_TOOL_CALL_STYLE}")
+    if target:
+        head.append(" " + target, style=target_style or "default")
+    if extra:
+        head.append("  " + extra, style="dim")
+    return head
+
+
+def _add_tool_call_rows(table: "Table", bar: Text, tc: dict[str, Any]) -> None:
+    """A tool call: a one-line header, then for commands, written files
+    and edits the code itself (highlighted, first lines only)."""
+    def add(r: RenderableType) -> None:
+        table.add_row(_bars(_height(r), bar.style), r)
+
+    name = tc.get("name") or tc.get("tool_name") or "?"
+    shown = str(name).replace("mcp__conjure__", "")
+    args = tc.get("args") or tc.get("arguments") or {}
+    kind = _tool_kind(name, args)
+    if not isinstance(args, dict) or kind == "other":
+        add(_tool_call_text(tc))
+        return
+    try:
+        if kind == "shell":
+            cmd = args.get("command") or ""
+            cmd = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            lines = cmd.rstrip("\n").split("\n")
+            extra = f"+{len(lines) - 1} lines" if len(lines) > 1 else ""
+            add(_call_header(shown, "$ " + lines[0], extra, target_style="cyan"))
+            if len(lines) > 1:
+                for part in _code_preview(cmd, lexer="bash"):
+                    add(part)
+        elif kind == "write":
+            path = _path_of(args)
+            content = str(args.get("content") or "")
+            n = len(content.rstrip("\n").split("\n")) if content else 0
+            add(_call_header(shown, path, f"{n} line{'s' if n != 1 else ''}"))
+            for part in _code_preview(content, path=path, numbers=True):
+                add(part)
+        elif kind == "edit":
+            add(_call_header(shown, _path_of(args)))
+            add(_diff_preview(
+                str(args.get("old_string") or args.get("old_str") or args.get("old") or ""),
+                str(args.get("new_string") or args.get("new_str") or args.get("new") or ""),
+            ))
+        elif kind == "multiedit":
+            edits = args.get("edits") or []
+            add(_call_header(shown, _path_of(args), f"{len(edits)} edits"))
+            for e in edits:
+                add(_diff_preview(str(e.get("old_string") or ""), str(e.get("new_string") or "")))
+        else:  # patch (Codex file changes)
+            changes = [c for c in args.get("changes") or [] if isinstance(c, dict)]
+            add(_call_header(shown, ", ".join(str(c.get("path", "?")) for c in changes)))
+            for c in changes:
+                diff = c.get("diff") or c.get("unified_diff")
+                if isinstance(diff, str) and diff.strip():
+                    body = Text()
+                    for line in diff.rstrip("\n").split("\n")[:_DIFF_PREVIEW_LINES]:
+                        body.append(line + "\n", style={"+": "green", "-": "red", "@": "dim cyan"}.get(line[:1], "dim"))
+                    body.rstrip()
+                    add(body)
+    except Exception:  # a malformed call still shows, plainly
+        add(_tool_call_text(tc))
 
 
 def _add_send_rows(table: "Table", bar: Text, tc: dict[str, Any]) -> None:
@@ -995,6 +1137,44 @@ def _tool_result_block(summary: str, failed: bool) -> RenderableType:
     return table
 
 
+def _shell_result_block(text: str, failed: bool) -> RenderableType | None:
+    """A command's result (``{'exit_code', 'stdout', 'stderr'}``): its
+    exit status and line count, then the last lines of its output."""
+    parsed = _parse_dict(text)
+    if not isinstance(parsed, dict) or not ("stdout" in parsed and ("exit_code" in parsed or "stderr" in parsed)):
+        return None
+    stdout = str(parsed.get("stdout") or "").rstrip("\n")
+    stderr = str(parsed.get("stderr") or "").rstrip("\n")
+    code = parsed.get("exit_code")
+    bad = failed or (code not in (0, None)) or bool(parsed.get("timed_out"))
+    lines = [(line, "dim") for line in stdout.split("\n") if stdout] + [
+        (line, "red") for line in stderr.split("\n") if stderr
+    ]
+    table = _bar_grid()
+    bar = Text(_AGENT_BAR, style="dim magenta")
+    head = Text()
+    head.append(_TOOL_RESULT_PREFIX, style="dim")
+    status = "timed out" if parsed.get("timed_out") else (f"exit {code}" if code is not None else "")
+    if status:
+        head.append(status, style="red" if bad else "green")
+        head.append(" · ", style="dim")
+    head.append(f"{len(lines)} line{'s' if len(lines) != 1 else ''}" if lines else "no output", style="dim")
+    cut = re.search(r"\[\.\.\. (\d+) chars truncated", stdout + stderr)
+    if cut:
+        head.append(f" · ✂ {int(cut.group(1)):,} chars cut (full output saved in the sandbox)", style="yellow")
+    table.add_row(bar, head)
+    tail = lines[-_OUTPUT_TAIL_LINES:]
+    if tail:
+        body = Text()
+        if len(lines) > len(tail):
+            body.append(f"  … {len(lines) - len(tail)} lines above\n", style="dim italic")
+        for line, style in tail:
+            body.append("  " + line + "\n", style=style)
+        body.rstrip()
+        table.add_row(_bars(_height(body), "dim magenta"), body)
+    return table
+
+
 def _format_event(
     event: dict[str, Any],
 ) -> tuple[RenderableType | None, tuple[str, ...]]:
@@ -1014,6 +1194,9 @@ def _format_event(
 
     if kind == "tool":
         failed = bool(event.get("failed"))
+        shell = _shell_result_block(event.get("text", "") or "", failed)
+        if shell is not None:
+            return (shell, ("subordinate",))
         summary = _summarize_tool_result(
             event.get("text", "") or "", failed=failed
         )
@@ -1172,10 +1355,17 @@ def _parse_dict(text: str) -> Any:
     try:
         return ast.literal_eval(text)
     except (ValueError, SyntaxError):
-        try:
-            return _json.loads(text)
-        except (ValueError, TypeError):
-            return None
+        pass
+    try:
+        return _json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    # A capped result (``conjure.tool_output``) has its truncation notice,
+    # with raw newlines, inside a string of the repr.
+    try:
+        return ast.literal_eval(text.replace("\n", "\\n"))
+    except (ValueError, SyntaxError):
+        return None
 
 
 def _clip(s: str, n: int) -> str:

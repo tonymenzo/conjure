@@ -294,7 +294,7 @@ def test_spawning_a_claude_child_with_toolkits_starts_its_servers(tmp_path):
         engine = _build_claude_agent_engine(
             record=rec, runtime=rt, event_log_router=None, control_socket=None
         )
-    sandbox = tmp_path / "sandboxes" / rec.addr.id
+    sandbox = rt.sandbox_of(rec.addr)  # the parent's, shared
     skill = sandbox / ".claude" / "skills" / "hep__mg5" / "SKILL.md"
     for _ in range(250):
         if skill.is_file():

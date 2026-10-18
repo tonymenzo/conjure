@@ -272,7 +272,12 @@
         i++;
         const lang = fence[2].toLowerCase();
         if (lang === "math" || lang === "katex") frag.append(math(code.join("\n"), true));
-        else frag.append(h("pre", null, h("code", { text: code.join("\n") })));
+        else if (window.ConjureCode) {
+          const CC = window.ConjureCode;
+          const hl = CC.langForTag(lang);
+          const shell = ["sh", "bash", "shell", "zsh", "console", "terminal"].includes(lang);
+          frag.append(CC.codeBlock(code.join("\n"), { lang: hl, kind: shell ? "shell" : undefined, langLabel: lang || "", collapse: 40 }));
+        } else frag.append(h("pre", null, h("code", { text: code.join("\n") })));
         continue;
       }
       const dm = displayMathAt(lines, i);
@@ -368,6 +373,58 @@
       }
     }
     return "ok";
+  }
+
+  /** A file's text for the files view, highlighted by its extension. */
+  function highlightFile(d) {
+    const el = h("code", { class: "src" });
+    const CC = window.ConjureCode;
+    if (CC) CC.highlightInto(el, d.content, CC.langForPath(d.path || d.name || ""));
+    else el.textContent = d.content;
+    return el;
+  }
+  // Tool calls: one summary line (the command, file or target); the
+  // code, diff or output (code.js) one click away.
+  function toolCallBlock(name, original, roots) {
+    const CC = window.ConjureCode;
+    const label = toolName(name);
+    const args = CC ? CC.relArgs(original, roots) : original;
+    if (!CC) {
+      return h("details", { class: "toolcall" },
+        h("summary", null, h("span", { class: "glyph", text: "⏺ " }), h("span", { class: "name", text: label }),
+          h("span", { class: "args", text: `(${argsPreview(args)})` })),
+        h("pre", { text: JSON.stringify(args, null, 2) }));
+    }
+    const kind = CC.toolKind(name, args);
+    const sum = CC.callSummary(name, args);
+    const head = h("summary", null,
+      h("span", { class: "glyph", text: "⏺ " }),
+      h("span", { class: "name", text: label }),
+      sum
+        ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
+           sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
+        : h("span", { class: "args", text: `(${argsPreview(args)})` }));
+    const fullPath = original && (original.file_path ?? original.path);
+    if (typeof fullPath === "string" && fullPath !== (args.file_path ?? args.path)) head.title = fullPath;
+    return h("details", { class: `toolcall rich kind-${kind}` },
+      head, CC.renderCall(name, args, { renderMarkdown, original }));
+  }
+  /** An agent's sandbox paths, longest first (a nested sandbox before
+   *  its parent's). */
+  function sandboxRoots(detail) {
+    const paths = (detail && detail.ok && detail.sandbox_paths) || [];
+    return [...paths].filter((p) => p && p.length > 1).sort((a, b) => b.length - a.length);
+  }
+  /** Whether a result plausibly answers ``call`` (orchestral's dict
+   *  results say what they are; a mismatch means the pairing slipped). */
+  function resultFits(call, text) {
+    const parsed = window.ConjureCode.parseLiteral(text);
+    if (!parsed || typeof parsed !== "object" || parsed.ok === false) return true;
+    const kind = window.ConjureCode.toolKind(call.name, call.args);
+    if (kind === "shell") return "stdout" in parsed || "exit_code" in parsed || "returncode" in parsed;
+    if (kind === "read") return "content" in parsed;
+    if ("stdout" in parsed && "exit_code" in parsed) return false;
+    return true;
   }
 
   // ---------- API ----------
@@ -587,6 +644,7 @@
       this.live = live;
       this.stream = null;   // {el, text, ts}
       this.turn = null;     // {el, start, tokens, done, src}
+      this.roots = [];      // the agent's sandbox paths (relative display)
     }
     block(el, ts, sub = false) {
       el.classList.add("blk");
@@ -666,6 +724,7 @@
       }
     }
     startTurn(ts, src) {
+      this.pendingCalls = [];
       const el = this.block(h("div", { class: "turnhdr" }), ts);
       this.turn = { el, start: ts, tokens: 0, done: false, src, firstText: null };
       this.paintTurn();
@@ -718,19 +777,45 @@
       this.toolCalls(toolCalls, ts);
     }
     toolCalls(calls, ts) {
+      // A new model response means the previous batch's results are
+      // all in: results pair with this batch, in order.
+      this.pendingCalls = [];
       for (const tc of calls || []) {
+        const name = tc.name || tc.tool_name;
         const args = tc.args ?? tc.arguments ?? {};
-        this.block(h("details", { class: "toolcall" },
-          h("summary", null,
-            h("span", { class: "glyph", text: "⏺ " }),
-            h("span", { class: "name", text: toolName(tc.name || tc.tool_name) }),
-            h("span", { class: "args", text: `(${argsPreview(args)})` })),
-          h("pre", { text: JSON.stringify(args, null, 2) })), ts, true);
+        const el = this.block(toolCallBlock(name, args, this.roots), ts, true);
+        this.pendingCalls.push({ name, args: window.ConjureCode ? window.ConjureCode.relArgs(args, this.roots) : args, el });
       }
     }
     toolResult(ev) {
       const text = ev.text || "";
       const failed = !!ev.failed;
+      const CC = window.ConjureCode;
+      if (CC) {
+        let call = (this.pendingCalls || []).shift() || null;
+        if (call && !resultFits(call, text)) call = null; // out of step: judge by shape
+        const target = call?.el?.matches?.("details.toolcall.rich") ? call.el : call?.el?.querySelector?.("details.toolcall.rich");
+        if (target) {
+          // Fold the result into its call: a status chip on the call's
+          // line, the output inside it.
+          const res = CC.resultForCall(text, failed, call);
+          const summary = target.querySelector(":scope > summary");
+          summary.append(h("span", { class: "res-chip" + (res.bad ? " bad" : ""), text: res.chip }));
+          if (res.bad) target.classList.add("failed");
+          if (res.body) target.append(h("div", { class: "resbody" }, res.body));
+          return;
+        }
+        const r = CC.renderResult(text, failed, call);
+        if (r) {
+          const bad = r.failed ?? failed;
+          const cls = "toolres rich" + (bad ? " failed" : "");
+          const summary = r.summary || summarizeResult(text, failed) || "result";
+          this.block(r.el
+            ? h("details", { class: cls }, h("summary", { text: summary }), r.el)
+            : h("div", { class: cls }, h("details", null, h("summary", { text: summary }))), ev.ts, true);
+          return;
+        }
+      }
       const summary = summarizeResult(text, failed) || (failed ? "(failed)" : "");
       if (!summary) return;
       const full = text.length > summary.length + 2 || /\n/.test(text);
@@ -788,7 +873,15 @@
       this.renderer = new Renderer(this.body, { live: S.live });
       this.seenSeq.clear();
       let data;
-      try { data = await api("events", { addr: this.addr }); } catch { return; }
+      try {
+        const [ev, detail] = await Promise.all([
+          api("events", { addr: this.addr }),
+          api("agent", { addr: this.addr }).catch(() => null),
+        ]);
+        data = ev;
+        // Paths in tool calls show relative to the agent's sandbox.
+        this.renderer.roots = sandboxRoots(detail);
+      } catch { return; }
       if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
       this.offset = data.offset;
@@ -806,6 +899,7 @@
       const data = await api("events", { addr: this.addr, before: this.start });
       const holder = h("div");
       const r = new Renderer(holder, { live: false });
+      r.roots = this.renderer.roots;
       for (const ev of data.events) r.apply(ev);
       r.flush();
       const prevHeight = this.body.scrollHeight;
@@ -936,7 +1030,9 @@
           h("button", { class: "always", text: "allow always", title: "for this agent, this session", onclick: () => decide("allow", "session") }),
           h("button", { class: "deny", text: "deny", onclick: () => decide("deny", null) })),
         h("div", null, h("div", null, h("b", { text: toolName(r.tool_name) }), h("span", { class: "dim", text: ` · ${clock(r.ts)}` })),
-          h("pre", { text: JSON.stringify(r.args, null, 2) }))));
+          window.ConjureCode
+            ? window.ConjureCode.renderCall(r.tool_name, r.args || {}, { renderMarkdown })
+            : h("pre", { text: JSON.stringify(r.args, null, 2) }))));
       if (this.nearBottom()) this.scrollEnd();
     }
     async send() {
@@ -1358,7 +1454,7 @@
       const lines = d.content.split("\n");
       box.replaceChildren(
         h("div", { class: "file-head" }, h("b", { text: d.path }), ` · ${size(d.size)}${d.truncated ? " · truncated" : ""}`),
-        h("pre", { class: "code" }, h("span", { class: "ln", text: lines.map((_, i) => i + 1).join("\n") }), h("code", { class: "src", text: d.content })));
+        h("pre", { class: "code" }, h("span", { class: "ln", text: lines.map((_, i) => i + 1).join("\n") }), highlightFile(d)));
       this.list();
       this.recent();
     },

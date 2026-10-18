@@ -8,6 +8,55 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-10-17
+
+Agents' code reads as code in the web UI, delegated workers share their
+parent's sandbox, and agents' shells no longer see credentials.
+
+### Added
+
+- **Code in the chat.** A tool call is one line with a status chip
+  (`exit 0 · 4 lines`, `✓`, a red `exit 1`); opening it shows:
+  - `Bash` / shell: the command highlighted as bash, with heredoc bodies
+    in their own language (`python3 - <<'EOF'` as Python);
+  - `Write`: the file, highlighted by extension, with line numbers;
+  - `Edit`, `MultiEdit` and Codex file changes: a red/green diff;
+  - the command's output as a terminal block with an exit badge,
+    stderr in red, and a capped output's truncation notice set apart.
+
+  Other tools show labelled fields; results that are dicts show their
+  key fields on the line. Code fences in replies, the files view and
+  permission prompts are highlighted too, with copy buttons and long
+  blocks collapsed. Highlighting is highlight.js 11.9.0, vendored
+  (BSD-3) so it works offline, coloured from the theme in light and
+  dark.
+- **Relative paths.** Paths and commands in tool calls show relative to
+  the agent's sandbox (`cd work/ufo_sm`, not
+  `cd /home/.../run/workspace/work/ufo_sm`), including in replays of
+  runs recorded on another machine. File contents, copied text and
+  permission prompts keep the exact paths; the full path is on hover.
+  The agent detail API lists the sandbox's paths (`sandbox_paths`).
+- **TUI previews.** The terminal chat shows a command, the first lines
+  of a written file, or an edit's diff under each call, highlighted,
+  and a command result's exit status and last lines.
+
+### Changed
+
+- **A child spawned without `sandbox_dir` shares its parent's
+  sandbox.** It used to get an empty sandbox of its own, so every
+  relative path its parent gave it failed (a worker from `AgentMap`
+  found none of its inputs). A relative `sandbox_dir` still gives it
+  its own directory inside the parent's. Every agent's system prompt
+  states its working directory.
+
+### Security
+
+- **Agents' `Bash` runs without credentials.** Its environment drops
+  every variable whose name contains `KEY`, `TOKEN`, `SECRET`,
+  `PASSWORD`, `CREDENTIAL` or `AUTH`, and every configured provider's
+  `api_key_env` whatever its name; the conjure process keeps them to
+  call providers.
+
 ## [0.2.8] — 2026-10-17
 
 Harness fixes from auditing a 24-trial benchmark campaign.
@@ -486,7 +535,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/tonymenzo/conjure/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/tonymenzo/conjure/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/tonymenzo/conjure/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/tonymenzo/conjure/compare/v0.2.5...v0.2.6

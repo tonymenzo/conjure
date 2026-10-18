@@ -836,18 +836,19 @@ class Runtime:
     def _resolve_child_sandbox(self, parent: Address, spec: AgentSpec) -> AgentSpec:
         """Make a child's ``sandbox_dir`` absolute and contained.
 
-        A relative path is resolved against the parent's sandbox, not
-        the process's working directory (a worker sent to
-        ``work/worker`` used to land beside the workspace and find
-        none of its inputs). A path outside the parent's sandbox
-        raises ``SandboxViolation``. A parent without a sandbox (no
-        store and none set) leaves the spec as written."""
+        No ``sandbox_dir`` shares the parent's sandbox, so the parent's
+        relative paths work unchanged for the child (an empty sandbox of
+        its own left a delegated worker unable to find any input). A
+        relative path is resolved against the parent's sandbox, not
+        the process's working directory. A path outside the parent's
+        sandbox raises ``SandboxViolation``. A parent without a sandbox
+        (no store and none set) leaves the spec as written."""
         raw = spec.sandbox_dir
-        if not raw:
-            return spec
         base = self.sandbox_of(parent)
         if base is None:
             return spec
+        if not raw:
+            return spec.model_copy(update={"sandbox_dir": str(base)})
         path = Path(raw).expanduser()
         if not path.is_absolute():
             path = base / path

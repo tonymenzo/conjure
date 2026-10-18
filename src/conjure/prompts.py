@@ -80,7 +80,7 @@ def _template() -> string.Template:
         text = (
             "You are an agent in the Conjure multi-agent framework.\n\n"
             "Identity: address $addr_id, label $label, depth $depth "
-            "(max $max_depth).\n\nRole: $role_prompt\n"
+            "(max $max_depth), working directory $sandbox.\n\nRole: $role_prompt\n"
         )
     return string.Template(text)
 
@@ -94,6 +94,14 @@ def native_tools(record: "AgentRecord", engine: str) -> str:
     return _ORCHESTRAL_FILES if groups & {"filesystem", "all"} else _ORCHESTRAL_NONE
 
 
+def _sandbox(record: "AgentRecord", runtime: "Runtime") -> str:
+    try:
+        path = runtime.sandbox_of(record.addr)
+    except Exception:
+        path = None
+    return str(path) if path else "(none)"
+
+
 def build_system_prompt(record: "AgentRecord", runtime: "Runtime", engine: str) -> str:
     prompt = _template().safe_substitute(
         engine_title=_ENGINE_TITLES.get(engine, f"{engine} engine"),
@@ -104,6 +112,7 @@ def build_system_prompt(record: "AgentRecord", runtime: "Runtime", engine: str) 
         role_prompt=record.spec.role_prompt,
         depth=str(record.depth),
         max_depth=str(getattr(runtime, "max_depth", 3)),
+        sandbox=_sandbox(record, runtime),
     )
     hub = getattr(runtime, "toolbase", None)
     if hub is not None:
