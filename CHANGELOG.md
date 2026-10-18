@@ -8,6 +8,11 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.11] — 2026-10-18
+
+The files tab browses every workspace in the run and previews what the
+agents wrote, and the graph shows the whole team.
+
 ### Added
 
 - **A files view worth opening.** The web UI's files tab shows every
@@ -45,6 +50,12 @@ this file as its notes.
     its connections; `/` finds an agent and brings it into view.
   - The agent's details slide over the graph's right edge when you click
     it (`Esc` closes), instead of taking width from the graph.
+
+### Removed
+
+- The web server's `/api/sandbox` and `/api/sandbox_recent` routes, which
+  created a missing sandbox when asked to list it. The files view uses
+  the read-only `/api/files/*` routes.
 
 ## [0.2.10] — 2026-10-18
 
@@ -600,7 +611,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.10...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.11...HEAD
+[0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/tonymenzo/conjure/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/tonymenzo/conjure/compare/v0.2.7...v0.2.8
