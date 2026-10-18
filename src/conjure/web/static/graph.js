@@ -350,7 +350,6 @@
         "aria-label": n.sentinel ? null : `${label}, ${status}`,
       },
         s("rect", { class: "card", width: W, height: H, rx: 10 }),
-        n.sentinel ? null : s("rect", { class: "accent", x: 0, y: 8, width: 3, height: H - 16, rx: 1.5, fill: dotColor(status) }),
         s("circle", { class: "dot", cx: 16, cy: 19, r: 4, fill: n.sentinel ? "var(--cyan)" : dotColor(status) }),
         s("text", { class: "name", x: 27, y: 23, text: clip(label, live?.cost ? 15 : 21) }),
         live?.cost ? s("text", { class: "cost", x: W - 12, y: 23, "text-anchor": "end", text: money(live.cost) }) : null,
