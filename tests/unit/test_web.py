@@ -244,6 +244,49 @@ def test_collapsed_calls_carry_a_preview(server):
     assert b"callPreview," in code and b"CC.callPreview(" in app
 
 
+def test_files_routes_browse_the_shared_workspace(server, session):
+    rt = session["rt"]
+    ws = rt.sandbox_of(session["root"])
+    (ws / "results").mkdir(parents=True)
+    (ws / "results" / "fit.json").write_text('{"p1": 9.87}')
+    (ws / "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(16))
+    status, d = _req(server, "GET", "/api/files/workspaces")
+    assert status == 200
+    # The workers share the root's sandbox: one workspace, three agents.
+    [w] = d["workspaces"]
+    assert w["exists"] and sorted(a["label"] for a in w["agents"]) == ["a", "b", "root"]
+    rid = w["id"]
+    status, d = _req(server, "GET", f"/api/files/list?addr={rid}")
+    assert [e["name"] for e in d["entries"]] == ["results", "plot.png"]
+    status, d = _req(server, "GET", f"/api/files/read?addr={rid}&path=results/fit.json")
+    assert d["kind"] == "text" and d["content"] == '{"p1": 9.87}'
+    status, d = _req(server, "GET", f"/api/files/find?addr={rid}&q=fit")
+    assert [e["path"] for e in d["entries"]] == ["results/fit.json"]
+    status, d = _req(server, "GET", f"/api/files/recent?addr={rid}")
+    assert {e["path"] for e in d["entries"]} == {"results/fit.json", "plot.png"}
+    # Any agent's address opens the workspace it works in.
+    status, d = _req(server, "GET", f"/api/files/list?addr={session['a'].id}")
+    assert status == 200 and len(d["entries"]) == 2
+    status, body = _req(server, "GET", f"/api/files/raw?addr={rid}&path=plot.png")
+    assert status == 200 and body.startswith(b"\x89PNG")
+    status, d = _req(server, "GET", f"/api/files/read?addr={rid}&path=../../etc/passwd")
+    assert status == 400 and "escapes" in d["error"]
+    assert _req(server, "GET", f"/api/files/raw?addr={rid}&path=plot.png", token=False)[0] == 401
+
+
+def test_csp_lets_previews_use_blobs_only(server):
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+    conn.request("GET", "/", headers={"Host": f"127.0.0.1:{server.port}"})
+    csp = conn.getresponse().getheader("Content-Security-Policy")
+    conn.close()
+    assert "img-src 'self' data: blob:" in csp and "frame-src blob:" in csp
+    assert "frame-ancestors 'none'" in csp and "script-src" not in csp  # scripts: 'self' only
+
+
+def test_static_files_js_is_served(server):
+    assert _req(server, "GET", "/static/files.js", token=False)[0] == 200
+
+
 def test_host_header_must_name_the_server(server):
     assert _req(server, "GET", "/api/meta", host="evil.example:80")[0] == 421
     assert _req(server, "POST", "/api/send", host="evil.example", body={})[0] == 421

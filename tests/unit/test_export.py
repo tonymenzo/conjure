@@ -125,7 +125,7 @@ def test_export_is_scrubbed_complete_and_viewable(tmp_path):
     child = tree["children"][0]
     assert child["model"] == "gpt-test-1"
     assert view.agent(child["addr"])["system_prompt"] == "You are a careful physicist."
-    files = view.sandbox(child["addr"], None)
+    files = view.files_list(child["addr"], None)
     assert files["ok"] and any(e["name"] == "result.txt" for e in files.get("entries", []))
     record = view.run_record()
     assert record["manifest"]["export"]["scrubbed"] is True

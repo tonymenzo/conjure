@@ -73,14 +73,27 @@
       <div id="tl-tip" class="tip"></div>
     </section>
     <section id="view-files" class="view">
-      <div id="files-side">
-        <div class="files-head"><span id="files-agent"></span></div>
-        <div id="files-crumbs" class="crumbs"></div>
-        <div id="files-list"></div>
-        <h3 class="sub">recently modified</h3>
-        <div id="files-recent"></div>
+      <div id="files-side" class="pane">
+        <h2 class="pane-title">files</h2>
+        <h3 class="fs-title">workspaces</h3>
+        <div id="files-workspaces"></div>
+        <div class="fs-tools">
+          <input id="files-filter" type="search" placeholder="find files  ( / )" spellcheck="false" autocomplete="off" aria-label="Find files">
+          <div class="fs-bar">
+            <div id="files-tabs" class="seg" role="tablist">
+              <button data-tab="tree" class="active" role="tab">tree</button>
+              <button data-tab="recent" role="tab">recent</button>
+            </div>
+            <label class="toggle small" title="Show dotfiles and dot-folders (.conjure/tool-output holds full tool outputs)"><input type="checkbox" id="files-hidden"> hidden</label>
+          </div>
+        </div>
+        <div id="files-tree" role="tree" tabindex="0" aria-label="Files"></div>
       </div>
-      <div id="files-content"><div class="empty">select a file</div></div>
+      <div id="files-main" class="pane">
+        <h2 class="pane-title">preview</h2>
+        <div id="files-head"></div>
+        <div id="files-content"><div class="empty">select a file</div></div>
+      </div>
     </section>
   </main>
 
@@ -119,6 +132,15 @@
           <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Same, with arrows</dd>
           <dt><kbd>Enter</kbd></dt><dd>Open chat and focus its input</dd>
           <dt><kbd>s</kbd></dt><dd>Open in a new column, side by side</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Files</h3>
+        <dl>
+          <dt><kbd>/</kbd></dt><dd>Find files in the workspace</dd>
+          <dt><kbd>↓</kbd><kbd>↑</kbd></dt><dd>Move in the tree (when it has focus)</dd>
+          <dt><kbd>→</kbd><kbd>←</kbd></dt><dd>Open / close a folder</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Preview the file</dd>
         </dl>
       </section>
       <section>
@@ -174,6 +196,7 @@
 <script src="/static/vendor/katex/katex.min.js"></script>
 <script src="/static/vendor/highlight/highlight.min.js"></script>
 <script src="/static/code.js"></script>
+<script src="/static/files.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

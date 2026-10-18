@@ -18,6 +18,8 @@
     agents: new Map(),      // addr -> tree node
     order: [],              // addrs in tree (DFS) order, visible only
     selected: null,
+    filePath: null,         // the files view's open file, and its workspace
+    fileWs: null,
     view: "chat",
     columns: [],            // ChatColumn instances
     focusedCol: 0,
@@ -251,7 +253,16 @@
     return [root.el, j];
   }
 
-  function renderMarkdown(text) {
+  /** Set while a file's markdown renders: ``image(src, alt)`` and
+   *  ``link(href, label)`` resolve relative targets (files.js). */
+  let MD_CTX = null;
+  function renderMarkdown(text, ctx) {
+    if (ctx === undefined) return markdownBlocks(text);
+    const prev = MD_CTX;
+    MD_CTX = ctx;
+    try { return markdownBlocks(text); } finally { MD_CTX = prev; }
+  }
+  function markdownBlocks(text) {
     const frag = document.createDocumentFragment();
     const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
     let i = 0;
@@ -331,6 +342,8 @@
     /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/, // 12,13 link
     /(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_])/,        // 14 bare URL
     /\\([\\`*_{}[\]()#+\-.!$|~<>])/,                     // 15 escape
+    /!\[([^\]\n]*)\]\(<?([^\s)>]+)>?(?:\s+"[^"\n]*")?\)/,       // 16,17 image
+    /\[([^\]\n]+)\]\(<?([^\s)>:]+)>?\)/,                    // 18,19 relative link
   ].map((r) => r.source).join("|"), "g");
 
   function inline(el, text) {
@@ -349,6 +362,15 @@
       else if (m[12] !== undefined) el.append(inline(h("a", { href: m[13], target: "_blank", rel: "noopener noreferrer" }), m[12]));
       else if (m[14] !== undefined) el.append(h("a", { href: m[14], target: "_blank", rel: "noopener noreferrer", text: m[14] }));
       else if (m[15] !== undefined) el.append(m[15]);
+      else if (m[16] !== undefined) {
+        const [alt, src] = [m[16], m[17]];
+        if (MD_CTX?.image) el.append(MD_CTX.image(src, alt));
+        else if (/^https?:\/\//.test(src)) el.append(h("a", { href: src, target: "_blank", rel: "noopener noreferrer", text: alt || src }));
+        else el.append(h("span", { class: "md-rel", title: src, text: alt || src }));
+      } else if (m[18] !== undefined) {
+        if (MD_CTX?.link) el.append(MD_CTX.link(m[19], m[18]));
+        else el.append(inline(h("span", { class: "md-rel", title: m[19] }), m[18]));
+      }
     }
     if (last < text.length) el.append(text.slice(last));
     return el;
@@ -375,14 +397,6 @@
     return "ok";
   }
 
-  /** A file's text for the files view, highlighted by its extension. */
-  function highlightFile(d) {
-    const el = h("code", { class: "src" });
-    const CC = window.ConjureCode;
-    if (CC) CC.highlightInto(el, d.content, CC.langForPath(d.path || d.name || ""));
-    else el.textContent = d.content;
-    return el;
-  }
   // Tool calls: one summary line (the command, file or target); the
   // code, diff or output (code.js) one click away.
   function toolCallBlock(name, original, roots) {
@@ -441,6 +455,19 @@
     const data = await res.json();
     if (data && data.ok === false && res.status >= 400) throw new Error(data.error || res.statusText);
     return data;
+  }
+  /** A file's bytes (the files view's images, PDFs and downloads). */
+  async function apiBlob(path, params = {}) {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null && v !== "") q.set(k, v);
+    if (!S.live && S.at != null) q.set("at", S.at);
+    const res = await fetch(`/api/${path}?${q}`, { headers: { "X-Conjure-Token": S.token } });
+    if (res.status === 401) { showGate(); throw new Error("unauthorized"); }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    return res.blob();
   }
   async function post(path, body) {
     const res = await fetch(`/api/${path}`, {
@@ -1411,64 +1438,22 @@
     return out;
   }
 
-  // ---------- files ----------
-  const Files = {
-    addr: null, path: "", file: null,
-    async open(addr) {
-      if (!addr) return;
-      if (addr !== this.addr) { this.path = ""; this.file = null; $("#files-content").replaceChildren(h("div", { class: "empty", text: "select a file" })); }
-      this.addr = addr;
-      $("#files-agent").textContent = labelOf(addr);
-      await this.list();
-      await this.recent();
-    },
-    async list() {
-      let d;
-      try { d = await api("sandbox", { addr: this.addr, path: this.path }); } catch { return; }
-      const list = $("#files-list");
-      if (!d.ok) { list.replaceChildren(h("div", { class: "dim", text: d.error })); $("#files-crumbs").replaceChildren(); return; }
-      const crumbs = [h("a", { text: "sandbox", onclick: () => { this.path = ""; this.list(); } })];
-      let acc = "";
-      for (const part of (d.path || "").split("/").filter(Boolean)) {
-        acc = acc ? `${acc}/${part}` : part;
-        const p = acc;
-        crumbs.push(" / ", h("a", { text: part, onclick: () => { this.path = p; this.list(); } }));
-      }
-      $("#files-crumbs").replaceChildren(...crumbs);
-      list.replaceChildren(...(d.entries.length ? d.entries.map((e) =>
-        h("div", { class: `fentry${e.is_dir ? " dir" : ""}${e.path === this.file ? " selected" : ""}`, onclick: () => e.is_dir ? (this.path = e.path, this.list()) : this.show(e.path) },
-          h("span", { class: "nm", text: e.name + (e.is_dir ? "/" : "") }), e.is_dir ? null : h("span", { class: "sz", text: size(e.size) })))
-        : [h("div", { class: "dim", text: "empty" })]));
-    },
-    async recent() {
-      let d;
-      try { d = await api("sandbox_recent", { addr: this.addr }); } catch { return; }
-      $("#files-recent").replaceChildren(...((d.entries || []).length ? d.entries.map((e) =>
-        h("div", { class: `fentry${e.path === this.file ? " selected" : ""}`, onclick: () => this.show(e.path), title: clock(e.mtime) },
-          h("span", { class: "nm", text: e.path }), h("span", { class: "sz", text: clock(e.mtime) })))
-        : [h("div", { class: "dim", text: d.error || "nothing yet" })]));
-    },
-    async show(path) {
-      this.file = path;
-      let d;
-      try { d = await api("sandbox", { addr: this.addr, path }); } catch { return; }
-      const box = $("#files-content");
-      if (!d.ok) { box.replaceChildren(h("div", { class: "empty", text: d.error })); return; }
-      const lines = d.content.split("\n");
-      box.replaceChildren(
-        h("div", { class: "file-head" }, h("b", { text: d.path }), ` · ${size(d.size)}${d.truncated ? " · truncated" : ""}`),
-        h("pre", { class: "code" }, h("span", { class: "ln", text: lines.map((_, i) => i + 1).join("\n") }), highlightFile(d)));
-      this.list();
-      this.recent();
-    },
-  };
-  const size = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+  // ---------- files (files.js) ----------
+  const Files = window.ConjureFiles({
+    h, fill, api, apiBlob, renderMarkdown,
+    isLive: () => S.live,
+    onPath: (path, ws) => { S.filePath = path; S.fileWs = path ? ws : null; syncHash(); },
+  });
 
   // ---------- views ----------
   /** ``#<view>/<agent>`` — reloads keep their place, and a link can
    *  point at one agent's chat or timeline. */
   function syncHash() {
-    const hash = `#${S.view}${S.selected ? "/" + S.selected : ""}`;
+    // Files: #files/<workspace>/<path>, the workspace named by its first agent.
+    const inFile = S.view === "files" && S.filePath && S.fileWs;
+    const who = inFile ? S.fileWs : S.selected;
+    const file = inFile ? "/" + S.filePath.split("/").map(encodeURIComponent).join("/") : "";
+    const hash = `#${S.view}${who ? "/" + who + file : ""}`;
     if (location.hash !== hash) history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
   }
   function setView(view) {
@@ -1478,7 +1463,7 @@
     for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.id === `view-${view}`);
     if (view === "graph") { Graph.refresh(); Graph.inspect(S.selected); Graph.selected = S.selected; }
     if (view === "timeline") Timeline.refresh();
-    if (view === "files") Files.open(S.selected);
+    if (view === "files") Files.open(S.filePath && S.fileWs ? S.fileWs : S.selected, S.filePath);
     if (view === "chat" && !S.columns.length && S.selected) openChat(S.selected);
   }
 
@@ -1633,6 +1618,7 @@
         case "2": setView("graph"); break;
         case "3": setView("timeline"); break;
         case "4": setView("files"); break;
+        case "/": if (S.view === "files") { e.preventDefault(); Files.focusFilter(); } break;
         case "j": case "ArrowDown": e.preventDefault(); moveSelection(1); break;
         case "k": case "ArrowUp": e.preventDefault(); moveSelection(-1); break;
         case "Enter": e.preventDefault(); openChat(S.selected, { focus: true }); break;
@@ -1738,7 +1724,7 @@
       viewBusy = true;
       if (S.view === "graph") await Graph.refresh();
       else if (S.view === "timeline") await Timeline.refresh();
-      else if (S.view === "files" && Files.addr) await Files.recent();
+      else if (S.view === "files" && Files.addr) await Files.refresh();
       viewBusy = false;
     }, POLL_VIEW_MS);
   }
@@ -1767,7 +1753,8 @@
     badge.textContent = S.live ? "live" : "replay";
     badge.className = `badge ${S.live ? "live" : "replay"}`;
     if (!S.live) { $("#auto-toggle").hidden = true; Scrub.init(); }
-    const [hashView, hashAgent] = location.hash.slice(1).split("/");
+    const [hashView, hashAgent, ...hashPath] = location.hash.slice(1).split("/");
+    if (hashView === "files" && hashPath.length) S.filePath = hashPath.map(decodeURIComponent).join("/");
     if (hashAgent) S.selected = hashAgent;
     await refreshSnapshot();
     if (hashAgent && S.agents.has(hashAgent)) openChat(hashAgent);

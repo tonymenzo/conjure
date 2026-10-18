@@ -12,8 +12,12 @@ Routes — every ``/api/*`` call needs the session token in an
                               byte-offset tail of an agent's event log
   GET  /api/graph             spawn / message / capability edges
   GET  /api/timeline          per-agent lanes: turns, tools, messages
-  GET  /api/sandbox?addr=&path=
-  GET  /api/sandbox_recent?addr=
+  GET  /api/files/workspaces  every workspace, nested, with its agents
+  GET  /api/files/list?addr=&path=&hidden=
+  GET  /api/files/read?addr=&path=      metadata, and text when it is text
+  GET  /api/files/find?addr=&q=&hidden=
+  GET  /api/files/recent?addr=&hidden=
+  GET  /api/files/raw?addr=&path=       bytes (images, PDFs, downloads)
   POST /api/send              {addr, body}
   POST /api/terminate         {addr, cascade}
   POST /api/permission        {req_id, decision, scope}
@@ -58,7 +62,8 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Content-Security-Policy": (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+        "img-src 'self' data: blob:; frame-src blob:; connect-src 'self'; "
+        "frame-ancestors 'none'"
     ),
 }
 
@@ -188,6 +193,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             at = float(q["at"]) if q.get("at") else None
             view = self.app.provider(at)
+            if url.path == "/api/files/raw":
+                data, ctype = view.files_raw(q.get("addr", ""), q.get("path"))
+                return self._send(HTTPStatus.OK, data, ctype)
             if url.path == "/api/export":
                 filename, data = view.export_archive()
                 self.send_response(HTTPStatus.OK)
@@ -223,12 +231,21 @@ class _Handler(BaseHTTPRequestHandler):
             return view.graph()
         if path == "/api/timeline":
             return view.timeline()
-        if path == "/api/sandbox":
-            return view.sandbox(q.get("addr", ""), q.get("path") or None)
-        if path == "/api/sandbox_recent":
-            return view.sandbox_recent(q.get("addr", ""))
         if path == "/api/run":
             return view.run_record()
+        if path.startswith("/api/files/"):
+            hidden = q.get("hidden") in ("1", "true")
+            addr, rel = q.get("addr", ""), q.get("path")
+            if path == "/api/files/workspaces":
+                return view.files_workspaces()
+            if path == "/api/files/list":
+                return view.files_list(addr, rel, hidden=hidden)
+            if path == "/api/files/read":
+                return view.files_read(addr, rel)
+            if path == "/api/files/find":
+                return view.files_find(addr, q.get("q", ""), hidden=hidden)
+            if path == "/api/files/recent":
+                return view.files_recent(addr, hidden=hidden)
         raise ValueError(f"unknown route {path}")
 
     def do_POST(self) -> None:  # noqa: N802

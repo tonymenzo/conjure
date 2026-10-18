@@ -8,6 +8,27 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+
+- **A files view worth opening.** The web UI's files tab shows every
+  workspace in the run: the root's, shared by the agents that work in
+  it, with any nested workspace (an agent given `sandbox_dir`) under it,
+  each labelled with its agents.
+  - A tree that opens folders in place, with keyboard navigation
+    (arrows, Enter, `/` to search), search across the workspace, the
+    recently modified files, and dotfiles on request
+    (`.conjure/tool-output` holds full tool outputs).
+  - Previews: code highlighted with line numbers; markdown rendered,
+    its relative images shown and its links opening the files they
+    name; CSV and TSV as tables; Jupyter notebooks as cells with their
+    outputs; PNG, JPEG, GIF, WebP and SVG images; PDFs in the browser's
+    viewer. Copy a path or download any file.
+  - Live runs refresh the tree and the open file as agents write;
+    `#files/<agent>/<path>` links to a file.
+  - Read-only: listing never creates a workspace, and no path (through
+    `..` or a symlink) leaves one. Images and PDFs load as blobs, so
+    no file an agent wrote is opened as a page.
+
 ## [0.2.10] — 2026-10-18
 
 Collapsed tool calls preview what they do, and a parent waiting on
