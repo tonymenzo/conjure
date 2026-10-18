@@ -284,6 +284,21 @@ def test_auto_sandbox_parent_contains_children(rt):
     assert Path(rt.record_for(child).spec.sandbox_dir) == rt.sandbox_of(root) / "sub"
 
 
+def test_child_without_sandbox_dir_shares_the_parents(tmp_path):
+    # A worker given relative paths by its parent must find them.
+    rt = Runtime(store_dir=tmp_path / "store")
+    try:
+        ws = tmp_path / "workspace"
+        root = rt.root(AgentSpec(role_prompt="r", label="root", sandbox_dir=str(ws)))
+        out = spawn_impl(token=rt.record_for(root).token, role_prompt="w", label="worker")
+        child = rt.address_by_id(out["address"])
+        assert rt.sandbox_of(child) == ws.resolve()
+        from conjure.prompts import build_system_prompt
+        assert str(ws.resolve()) in build_system_prompt(rt.record_for(child), rt, "orchestral")
+    finally:
+        rt.shutdown()
+
+
 # ---------- 5. waits are bounded ----------
 
 

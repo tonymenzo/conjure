@@ -787,9 +787,12 @@ class SpawnTool(StatelessRuntimeTool):
     )
     sandbox_dir: str | None = OptionalRuntimeField(
         description=(
-            "Filesystem sandbox path for the child. A relative path is "
-            "inside YOUR sandbox (e.g. 'work/worker'); it must not leave "
-            "your sandbox. None auto-allocates under the runtime's store_dir."
+            "Filesystem sandbox for the child. Omit it to share YOUR "
+            "sandbox: the child works in your directory and your relative "
+            "paths work unchanged (agree on who writes where). A relative "
+            "path gives the child its own directory inside yours (e.g. "
+            "'work/worker', copy in what it needs); it must not leave your "
+            "sandbox."
         ),
     )
     permissions: dict[str, str] | None = OptionalRuntimeField(

@@ -467,7 +467,7 @@ def test_orchestral_engine_serves_and_swaps_toolkits(tmp_path):
     assert "calc__add" in names()
     assert len(servers.started) == 1
     # Scoped to the agent's sandbox.
-    assert servers.started[0]["sandbox"] == tmp_path / "sandboxes" / rec.addr.id
+    assert servers.started[0]["sandbox"] == rt.sandbox_of(rec.addr) == rt.sandbox_of(root)
     context_before = engine._agent.context
 
     rt.grant_toolkits(granter=root, target=rec.addr, toolkits=parse_toolkits(["hep/llp"]))
