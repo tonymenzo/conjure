@@ -95,6 +95,27 @@ def test_bash_hides_credentials(agent_token, monkeypatch):
     assert "FEYNTABLE_NODE=/usr/bin/node" in out["stdout"]
 
 
+def test_bash_hides_configured_key_env_whatever_its_name(monkeypatch):
+    from conjure.config import load_config_from_mapping
+    from conjure.runner import _secret_env_names
+    from conjure.tools.filesystem import _agent_env
+
+    cfg = load_config_from_mapping({
+        "llms": {"gw": {"provider": "openai_compatible", "base_url": "http://x/v1",
+                        "api_key_env": "GATEWAY_PAT", "model": "m"}},
+        "root": {"role_prompt": "r", "llm": "gw"},
+    })
+    names = _secret_env_names(cfg)
+    assert "GATEWAY_PAT" in names
+    monkeypatch.setenv("GATEWAY_PAT", "p4t")
+
+    class _RT:
+        secret_env_names = names
+
+    assert "GATEWAY_PAT" not in _agent_env(_RT())
+    assert "GATEWAY_PAT" in _agent_env(None)  # no marker word in the name
+
+
 def test_bash_timeout(agent_token):
     out = bash_impl(token=agent_token, command="sleep 2", timeout_s=0.2)
     assert out["ok"] is False

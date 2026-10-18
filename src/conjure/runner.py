@@ -134,6 +134,9 @@ def build_runtime(
         tool_output_max_chars=config.runtime.tool_output_max_chars,
     )
     runtime.auto_mode = bool(config.runtime.auto_approve)
+    # Every configured provider's key variable, kept out of agents' shells
+    # (``conjure.tools.filesystem._agent_env``) whatever its name.
+    runtime.secret_env_names = _secret_env_names(config)
 
     root_spec = AgentSpec(
         role_prompt=config.root.role_prompt,
@@ -149,6 +152,20 @@ def build_runtime(
     )
     root_addr = runtime.root(root_spec)
     return runtime, root_addr
+
+
+def _secret_env_names(config: Config) -> set[str]:
+    from conjure.llm import key_env_for
+
+    names = set()
+    for cfg in config.llms.values():
+        try:
+            name = cfg.api_key_env or key_env_for(cfg.provider)
+        except Exception:
+            name = cfg.api_key_env
+        if name:
+            names.add(name)
+    return names
 
 
 def _deadline(config: Config) -> float | None:
