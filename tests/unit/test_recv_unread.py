@@ -125,3 +125,29 @@ def test_waiting_parent_learns_a_live_child_stopped_after_a_progress_note():
     first, second = seen["progress"]
     assert bodies(first) == ["in progress"] and second["child_idle"] and not second["envelopes"]
     rt.shutdown()
+
+
+def _stub(record, busy=False):
+    record.status = "idle"
+    record.driver = SimpleNamespace(busy=busy, _cursor=record.inbox.latest_seq(),
+                                    stop=lambda *a, **k: None, join=lambda *a, **k: None)
+
+
+def test_fan_in_ends_once_every_child_has_stopped_and_says_so_once():
+    rt, root, kid = _session()
+    other = rt.record_for(rt._spawn(parent=root.addr, spec=AgentSpec(role_prompt="c", label="other")))
+    helper = rt.record_for(rt._spawn(parent=other.addr, spec=AgentSpec(role_prompt="c", label="helper")))
+    send_impl(token=kid.token, to="parent", body="done")
+    for r in (kid, other):
+        _stub(r)
+    _stub(helper, busy=True)  # other's worker is still running: other may yet reply
+    out = wait_for_impl(token=root.token, max_n=2, timeout_s=2.5)
+    assert bodies(out) == ["done"] and "child_idle" not in out
+    helper.driver.busy = False
+    t0 = time.monotonic()
+    out = wait_for_impl(token=root.token, max_n=2, timeout_s=30)
+    assert out["child_idle"] == ["worker", "other"] or out["child_idle"] == ["other", "worker"]
+    assert time.monotonic() - t0 < 5
+    out = wait_for_impl(token=root.token, timeout_s=2.5)  # already told: block as usual
+    assert "child_idle" not in out and out["timed_out"]
+    rt.shutdown()

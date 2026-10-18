@@ -158,8 +158,9 @@ parallel, or stream replies as they arrive.
 - `WaitFor(predicate_kind, value, timeout_s, max_n?)` — wait for a
   message you haven't seen (e.g. `predicate_kind="from", value="worker"`).
   Returns as soon as one arrives. `max_n=N` waits for N (fan-in).
-  Waiting on one of your agents also ends if it stops (its turn ended
-  with nothing unread): the result has `child_idle`; message it to resume.
+  A wait also ends when the agents it depends on (the sender, or all your
+  children) have stopped with nothing unread: `child_idle` names them;
+  message the ones that stopped short.
 - `Introduce(child, capability)` — hand one of your descendants the
   capability to talk to another address you hold.
 - `Terminate(address, cascade?)` — kill a descendant.

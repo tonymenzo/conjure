@@ -10,10 +10,11 @@ this file as its notes.
 
 ### Fixed
 
-- **A wait on a stopped agent ends.** `WaitFor` on one of your own agents
-  returns as soon as that agent has ended its turn with nothing unread,
-  with `child_idle` and a note to message it, instead of sitting out the
-  timeout for a reply that will not come.
+- **A wait on stopped agents ends.** `WaitFor` returns as soon as the
+  agents it depends on (the named sender, or all of the caller's children
+  and their workers) have ended their turns with nothing unread, with
+  `child_idle` naming them, instead of sitting out the timeout for a
+  reply that will not come. Each such state is reported once.
 
 ## [0.2.9] — 2026-10-17
 

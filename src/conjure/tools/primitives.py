@@ -458,12 +458,11 @@ def wait_for_impl(
     wanted = max_n if max_n is not None else 1
     limit = max_n if max_n is not None else 50
     thread_id = value if predicate_kind == "thread" else ""
-    # Waiting on one of your own agents: stop once it has ended its turn
-    # with nothing unread, since it will not send anything until messaged.
-    watched = _resolve_addr(from_id, runtime, caller_addr) if from_id.startswith("ag-") else None
-    if watched is not None and (watched == caller_addr or not _is_descendant_or_self(
-            runtime, ancestor=caller_addr, descendant=watched)):
-        watched = None
+    # Waiting on your own agents: stop once the ones you wait on (one
+    # sender, or all your children) have ended their turns with nothing
+    # unread, since nothing more comes until you message them. Each such
+    # state is reported once, so waiting again blocks.
+    watched = _watched_agents(runtime, record, caller_addr, from_id) if hasattr(runtime, "settled") else []
     deadline = time.monotonic() + wait_s
     envelopes: list[Envelope] = []
     child_idle = False
@@ -477,16 +476,19 @@ def wait_for_impl(
             max_n=limit - len(envelopes),
             thread_id=thread_id,
             from_id=from_id,
-            timeout_s=0.0 if child_idle else remaining if watched is None else min(2.0, remaining),
+            timeout_s=0.0 if child_idle else min(2.0, remaining) if watched else remaining,
         )
         record.pulled.update(e.seq for e in got)
         envelopes.extend(got)
         if after is not None:
             after = cursor
-        if len(envelopes) >= wanted or child_idle or remaining <= 0 or watched is None:
+        if len(envelopes) >= wanted or child_idle or remaining <= 0 or not watched:
             break
         # One more read after the check catches a reply sent just before going idle.
-        child_idle = runtime.settled(watched)
+        state = tuple((a.id, runtime.settled(a)) for a in watched)
+        child_idle = all(cursor is not None for _, cursor in state) and state != record.idle_reported
+        if child_idle:
+            record.idle_reported = state
     out = {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
@@ -495,13 +497,24 @@ def wait_for_impl(
     out = _wait_outcome(out, got=len(envelopes), wanted=wanted, asked_s=float(timeout_s or 0.0),
                         waited_s=wait_s, reason=reason)
     if child_idle and len(envelopes) < wanted:
-        out["child_idle"] = True
+        idle = [a.label or a.id for a, (_, cursor) in zip(watched, record.idle_reported) if cursor != -1]
+        out["child_idle"] = idle
         out["note"] = (
-            f"{watched.label or watched.id} has ended its turn and has no unread messages, so it will not "
-            "send anything more unless you message it. Peek it to see where it stopped, then Send it "
-            "what to do next."
+            f"{', '.join(idle) or 'Your agents'} ended their turns with nothing unread, so nothing more "
+            "will arrive unless you message them. Check what each delivered (Peek), then Send the ones "
+            "that stopped short what to do next."
         )
     return out
+
+
+def _watched_agents(runtime: Any, record: Any, caller: Any, from_id: str) -> list[Any]:
+    """The agents a wait depends on: the named sender if it is one of the
+    caller's descendants, else (no sender filter) all its live children."""
+    if from_id:
+        addr = _resolve_addr(from_id, runtime, caller) if from_id.startswith("ag-") else None
+        ok = addr is not None and addr != caller and _is_descendant_or_self(runtime, ancestor=caller, descendant=addr)
+        return [addr] if ok else []
+    return sorted((c for c in list(record.children) if runtime.record_for(c).status != "terminated"), key=lambda a: a.id)
 
 
 def terminate_impl(
@@ -968,9 +981,9 @@ class WaitForTool(StatelessRuntimeTool):
     ``timed_out`` with a ``note``: check workers with ``Peek``, then
     wait again.
 
-    Waiting ``from`` one of your own agents also ends when that agent
-    stops (its turn ended with nothing unread): the result has
-    ``child_idle``, and the agent acts again only when messaged.
+    A wait also ends when the agents it depends on (the ``from`` sender,
+    or else all your children) have stopped with nothing unread: the
+    result's ``child_idle`` names them; they act again only when messaged.
 
     ``predicate_kind``: ``any``, ``from`` (``value`` = an address id, a
     child's label, ``parent`` or ``caller``) or ``thread``."""
