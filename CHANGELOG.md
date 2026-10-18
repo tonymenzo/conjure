@@ -8,6 +8,13 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wait on a stopped agent ends.** `WaitFor` on one of your own agents
+  returns as soon as that agent has ended its turn with nothing unread,
+  with `child_idle` and a note to message it, instead of sitting out the
+  timeout for a reply that will not come.
+
 ## [0.2.9] — 2026-10-17
 
 Agents' code reads as code in the web UI, delegated workers share their

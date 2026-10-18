@@ -75,3 +75,53 @@ def test_fan_in_with_max_n_still_waits_for_all():
     out = wait_for_impl(token=root.token, max_n=3, timeout_s=5)
     assert sorted(bodies(out)) == ["w0", "w1", "w2"]
     rt.shutdown()
+
+
+def test_wait_for_a_child_ends_when_it_goes_idle_without_replying():
+    rt, root, kid = _session()
+    kid.status = "idle"
+    kid.driver = SimpleNamespace(busy=False, _cursor=kid.inbox.latest_seq(), stop=lambda *a, **k: None, join=lambda *a, **k: None)
+    t0 = time.monotonic()
+    out = wait_for_impl(token=root.token, predicate_kind="from", value="worker", timeout_s=30)
+    assert out["child_idle"] and out["timed_out"] and time.monotonic() - t0 < 5
+    # A child with an unread message is not idle: the wait runs its course.
+    rt.send_external(to=kid.addr, body="next task")
+    out = wait_for_impl(token=root.token, predicate_kind="from", value="worker", timeout_s=2.5)
+    assert "child_idle" not in out and out["timed_out"]
+    rt.shutdown()
+
+
+def test_waiting_parent_learns_a_live_child_stopped_after_a_progress_note():
+    from conjure.runtime import Runtime as LiveRuntime
+    from conjure.scripted import BehaviorRegistry
+    seen = {}
+
+    def slow(engine, prompt, envelopes):
+        time.sleep(2.5)  # mid-turn for longer than a wait slice
+        send_impl(token=engine.token, to="parent", body="done")
+
+    def progress(engine, prompt, envelopes):
+        send_impl(token=engine.token, to="parent", body="in progress")
+
+    def parent(engine, prompt, envelopes):
+        rt = engine.runtime
+        for label in ["slow", "progress"]:
+            kid = rt._spawn(parent=engine.record.addr, spec=AgentSpec(role_prompt=label, label=label))
+            send_impl(token=engine.token, to=kid.id, body="go")
+            seen[label] = [wait_for_impl(token=engine.token, predicate_kind="from", value=label, timeout_s=20)
+                           for _ in range(2 if label == "progress" else 1)]
+
+    reg = BehaviorRegistry()
+    for name, fn in [("slow", slow), ("progress", progress), ("parent", parent)]:
+        reg.register(name, fn)
+    rt = LiveRuntime(engine_factory=reg.factory())
+    root = rt.root(AgentSpec(role_prompt="parent", label="root"))
+    t0 = time.monotonic()
+    rt.send_external(to=root, body="start")
+    while "progress" not in seen or len(seen["progress"]) < 2:
+        assert time.monotonic() - t0 < 15
+        time.sleep(0.05)
+    assert bodies(seen["slow"][0]) == ["done"]  # busy is not idle
+    first, second = seen["progress"]
+    assert bodies(first) == ["in progress"] and second["child_idle"] and not second["envelopes"]
+    rt.shutdown()

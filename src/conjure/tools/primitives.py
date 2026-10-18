@@ -456,23 +456,52 @@ def wait_for_impl(
     # an agent blocked past the end of the run delivers nothing.
     wait_s, reason = _clipped(runtime, timeout_s)
     wanted = max_n if max_n is not None else 1
-    envelopes, cursor = _collect(
-        record,
-        since_seq=since_seq,
-        min_n=wanted,
-        max_n=max_n if max_n is not None else 50,
-        thread_id=value if predicate_kind == "thread" else "",
-        from_id=from_id,
-        timeout_s=wait_s,
-    )
-    record.pulled.update(e.seq for e in envelopes)
+    limit = max_n if max_n is not None else 50
+    thread_id = value if predicate_kind == "thread" else ""
+    # Waiting on one of your own agents: stop once it has ended its turn
+    # with nothing unread, since it will not send anything until messaged.
+    watched = _resolve_addr(from_id, runtime, caller_addr) if from_id.startswith("ag-") else None
+    if watched is not None and (watched == caller_addr or not _is_descendant_or_self(
+            runtime, ancestor=caller_addr, descendant=watched)):
+        watched = None
+    deadline = time.monotonic() + wait_s
+    envelopes: list[Envelope] = []
+    child_idle = False
+    after = since_seq
+    while True:
+        remaining = max(0.0, deadline - time.monotonic())
+        got, cursor = _collect(
+            record,
+            since_seq=after,
+            min_n=wanted - len(envelopes),
+            max_n=limit - len(envelopes),
+            thread_id=thread_id,
+            from_id=from_id,
+            timeout_s=0.0 if child_idle else remaining if watched is None else min(2.0, remaining),
+        )
+        record.pulled.update(e.seq for e in got)
+        envelopes.extend(got)
+        if after is not None:
+            after = cursor
+        if len(envelopes) >= wanted or child_idle or remaining <= 0 or watched is None:
+            break
+        # One more read after the check catches a reply sent just before going idle.
+        child_idle = runtime.settled(watched)
     out = {
         "ok": True,
         "envelopes": [e.model_dump(by_alias=True) for e in envelopes],
         "next_seq": envelopes[-1].seq if envelopes else (since_seq or 0),
     }
-    return _wait_outcome(out, got=len(envelopes), wanted=wanted, asked_s=float(timeout_s or 0.0),
-                         waited_s=wait_s, reason=reason)
+    out = _wait_outcome(out, got=len(envelopes), wanted=wanted, asked_s=float(timeout_s or 0.0),
+                        waited_s=wait_s, reason=reason)
+    if child_idle and len(envelopes) < wanted:
+        out["child_idle"] = True
+        out["note"] = (
+            f"{watched.label or watched.id} has ended its turn and has no unread messages, so it will not "
+            "send anything more unless you message it. Peek it to see where it stopped, then Send it "
+            "what to do next."
+        )
+    return out
 
 
 def terminate_impl(
@@ -938,6 +967,10 @@ class WaitForTool(StatelessRuntimeTool):
     never past the run's deadline; a wait cut short returns
     ``timed_out`` with a ``note``: check workers with ``Peek``, then
     wait again.
+
+    Waiting ``from`` one of your own agents also ends when that agent
+    stops (its turn ended with nothing unread): the result has
+    ``child_idle``, and the agent acts again only when messaged.
 
     ``predicate_kind``: ``any``, ``from`` (``value`` = an address id, a
     child's label, ``parent`` or ``caller``) or ``thread``."""

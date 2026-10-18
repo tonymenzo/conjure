@@ -38,6 +38,9 @@ class Driver:
         self.agent = agent
         self.runtime = runtime
         self._cursor = 0
+        # True from a wakeup until the loop sleeps again; with the cursor
+        # it tells a waiting parent the agent has nothing left to do.
+        self.busy = False
         self._stop_requested = False
         self._thread: threading.Thread | None = None
         # One supervision event per exhaustion, not one per skipped
@@ -100,7 +103,9 @@ class Driver:
             # An Event coalesces multiple sends. Never sleep while a previous
             # bounded read left a backlog, including messages pulled by tools.
             if record.inbox.latest_seq() <= self._cursor:
+                self.busy = False
                 record.wakeup.wait()
+            self.busy = True
             record.wakeup.clear()
             if self._stop_requested or record.status == "terminated":
                 return

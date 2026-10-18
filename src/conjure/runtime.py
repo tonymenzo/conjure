@@ -716,6 +716,18 @@ class Runtime:
             time.sleep(0.02)
         return False
 
+    def settled(self, addr: Address) -> bool:
+        """True when ``addr`` has ended its turn with nothing unread: it
+        will not act again until someone messages it."""
+        with self._lock:
+            record = self._records.get(addr)
+            if record is None or record.status == "terminated":
+                return True
+            driver = record.driver
+            if driver is None or getattr(driver, "busy", True):
+                return False
+            return record.status in ("idle", "error") and getattr(driver, "_cursor", 0) >= record.inbox.latest_seq()
+
     # ----- Internal spawn (used by the spawn tool) -----
 
     def _spawn(self, *, parent: Address, spec: AgentSpec) -> Address:
