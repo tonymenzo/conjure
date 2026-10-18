@@ -8,6 +8,11 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.10] — 2026-10-18
+
+Collapsed tool calls preview what they do, and a parent waiting on
+workers that have stopped hears so at once.
+
 ### Changed
 
 - **A glance at each tool call.** A collapsed call shows a line or two of
@@ -18,6 +23,7 @@ this file as its notes.
   their one line, which already says it.
 - `Spawn` calls name the child and its model; the result chip is the
   child's address.
+
 ### Fixed
 
 - **A wait on stopped agents ends.** `WaitFor` returns as soon as the
@@ -25,6 +31,9 @@ this file as its notes.
   and their workers) have ended their turns with nothing unread, with
   `child_idle` naming them, instead of sitting out the timeout for a
   reply that will not come. Each such state is reported once.
+- **A refused toolkit grant says what can be granted.** Asking to give a
+  child tools beyond your own grant names the refused tools (the first
+  eight), the bundles you hold in full, and how to grant those instead.
 
 ## [0.2.9] — 2026-10-17
 
@@ -553,7 +562,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.10...HEAD
+[0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/tonymenzo/conjure/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/tonymenzo/conjure/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/tonymenzo/conjure/compare/v0.2.6...v0.2.7
