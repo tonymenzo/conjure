@@ -236,6 +236,14 @@ def test_page_is_public_api_is_not(server):
     assert status == 200 and snap["tree"]["label"] == "root"
 
 
+def test_collapsed_calls_carry_a_preview(server):
+    # app.js builds each call's summary from code.js's callPreview: keep
+    # the export and its use in step.
+    code = _req(server, "GET", "/static/code.js", token=False)[1]
+    app = _req(server, "GET", "/static/app.js", token=False)[1]
+    assert b"callPreview," in code and b"CC.callPreview(" in app
+
+
 def test_host_header_must_name_the_server(server):
     assert _req(server, "GET", "/api/meta", host="evil.example:80")[0] == 421
     assert _req(server, "POST", "/api/send", host="evil.example", body={})[0] == 421

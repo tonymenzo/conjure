@@ -8,6 +8,17 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **A glance at each tool call.** A collapsed call shows a line or two of
+  what it does under its summary: a written file's first lines, an
+  edit's first removed and added line, a Send's or Spawn's message, a
+  tool's code argument (`code`, `proc_card`). Opening the call replaces
+  the preview with the full blocks. Shell, Read and search calls keep
+  their one line, which already says it.
+- `Spawn` calls name the child and its model; the result chip is the
+  child's address.
+
 ## [0.2.9] — 2026-10-17
 
 Agents' code reads as code in the web UI, delegated workers share their
