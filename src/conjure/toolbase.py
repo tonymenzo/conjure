@@ -333,6 +333,19 @@ def expand(kit: str, grant: ToolkitGrant, catalog: Catalog) -> _Expanded:
     return _Expanded(tools=tools, skills=skills)
 
 
+def _beyond_grant(kit: str, grant: ToolkitGrant, extra: set[str], held: set[str], catalog: Catalog) -> str:
+    """What was refused, and what the caller can grant instead."""
+    names = sorted(extra)
+    shown = ", ".join(names[:8]) + (f", ... ({len(names)} in all)" if len(names) > 8 else "")
+    info = catalog.get(kit)
+    bundles = sorted(b for b, tools in (info.bundles if info else {}).items() if tools and set(tools) <= held)
+    whole = " A whole-toolkit grant asks for every tool in it." if grant.is_whole else ""
+    return (f"cannot grant {kit!r} tools beyond your own grant: {shown}.{whole} "
+            f"Grant bundles or tools you hold instead, e.g. {kit}/<bundle> or "
+            f"{{{kit!r}: {{'bundles': [...], 'tools': [...]}}}}; bundles you hold in full: "
+            f"{', '.join(bundles) or 'none'}; check ToolCatalog for your tools.")
+
+
 def check_subset(child: Toolset, parent: Toolset, catalog: Catalog) -> None:
     """Raise ``ToolkitDenied`` unless every grant in ``child`` is covered
     by ``parent``."""
@@ -348,10 +361,7 @@ def check_subset(child: Toolset, parent: Toolset, catalog: Catalog) -> None:
         have = expand(kit, parent[kit], catalog)
         extra_tools = want.tools - have.tools
         if extra_tools:
-            raise ToolkitDenied(
-                f"cannot grant {kit!r} tools {sorted(extra_tools)}: "
-                "not in your own grant"
-            )
+            raise ToolkitDenied(_beyond_grant(kit, grant, extra_tools, have.tools, catalog))
         extra_skills = want.skills - have.skills
         if extra_skills:
             raise ToolkitDenied(

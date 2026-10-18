@@ -169,8 +169,10 @@ def test_subset_allows_narrowing_and_refuses_widening():
     parent = parse_toolkits(["hep/llp"])
     check_subset(parse_toolkits(["hep__Decay"]), parent, cat)
     check_subset(parse_toolkits(["hep/llp"]), parent, cat)
-    with pytest.raises(ToolkitDenied, match="MadGraph"):
+    with pytest.raises(ToolkitDenied, match="MadGraph") as denied:
         check_subset(parse_toolkits(["hep"]), parent, cat)
+    # The refusal says what can be granted instead.
+    assert "whole-toolkit" in str(denied.value) and "bundles you hold in full: llp" in str(denied.value)
     with pytest.raises(ToolkitDenied, match="do not hold"):
         check_subset(parse_toolkits(["calc"]), parent, cat)
     with pytest.raises(ToolkitDenied, match="skills"):
