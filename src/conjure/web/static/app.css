@@ -365,22 +365,20 @@ code, .mono { font-family: var(--mono); }
 #graph-wrap {
   position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none;
   border-radius: 0 0 var(--radius) var(--radius);
-  background-image: radial-gradient(circle, var(--faint) 1px, transparent 1.2px);
-  background-size: 22px 22px; background-position: 11px 11px;
 }
-:root[data-theme="light"] #graph-wrap { background-image: radial-gradient(circle, var(--bg-3) 1.2px, transparent 1.5px); }
 #graph-wrap.dragging { cursor: grabbing; }
 #graph { display: block; width: 100%; height: 100%; user-select: none; }
 
 /* cards */
 .g-node { cursor: pointer; transition: opacity .15s; }
 .g-node .card { fill: var(--bg-2); stroke: var(--border-quiet); stroke-width: 1; transition: stroke .15s; }
-.g-node:hover .card, .g-node:focus-visible .card { stroke: var(--green); }
 .g-node:focus { outline: none; }
-.g-node.selected .card { stroke: var(--green); stroke-width: 1.8; }
 .g-node.running .card { stroke: var(--yellow); }
 .g-node.error .card { stroke: var(--red); }
 .g-node.awaiting .card { stroke: var(--magenta); stroke-width: 1.6; }
+/* selected: a white outline (dark ink in the light theme); hover still shows green */
+.g-node.selected .card { stroke: var(--fg); stroke-width: 2; }
+.g-node:hover .card, .g-node:focus-visible .card { stroke: var(--green); }
 .g-node.terminated { opacity: .55; }
 .g-node.terminated .card { stroke-dasharray: 4 3; stroke: var(--faint); }
 .g-node.sentinel .card { fill: var(--bg); stroke: var(--cyan); stroke-dasharray: 4 3; }

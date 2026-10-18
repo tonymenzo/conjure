@@ -157,9 +157,7 @@
       const svg = $("#graph");
       const vp = s("g", { class: "viewport" });
       const defs = s("defs", null,
-        marker("arr-msg", "var(--green)"), marker("arr-cap", "var(--amber)"),
-        s("filter", { id: "glow", x: "-20%", y: "-40%", width: "140%", height: "180%" },
-          s("feDropShadow", { dx: 0, dy: 0, stdDeviation: 3.5, "flood-color": "var(--green)", "flood-opacity": 0.45 })));
+        marker("arr-msg", "var(--green)"), marker("arr-cap", "var(--amber)"));
       const under = s("g", { class: "edges" });
       const over = s("g", { class: "labels" });
       st.edgeEls = [];
@@ -351,7 +349,7 @@
         role: n.sentinel ? null : "button",
         "aria-label": n.sentinel ? null : `${label}, ${status}`,
       },
-        s("rect", { class: "card", width: W, height: H, rx: 10, filter: selected ? "url(#glow)" : null }),
+        s("rect", { class: "card", width: W, height: H, rx: 10 }),
         n.sentinel ? null : s("rect", { class: "accent", x: 0, y: 8, width: 3, height: H - 16, rx: 1.5, fill: dotColor(status) }),
         s("circle", { class: "dot", cx: 16, cy: 19, r: 4, fill: n.sentinel ? "var(--cyan)" : dotColor(status) }),
         s("text", { class: "name", x: 27, y: 23, text: clip(label, live?.cost ? 15 : 21) }),
@@ -662,7 +660,6 @@
         if (!st.layout) return;
         for (const [a, el] of st.nodeEls) {
           el.classList.toggle("selected", a === addr);
-          el.querySelector(".card")?.setAttribute("filter", a === addr ? "url(#glow)" : "");
         }
         reveal(addr, { onlyIfHidden: true });
       },
