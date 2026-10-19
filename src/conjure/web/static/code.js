@@ -678,14 +678,28 @@
 
   /** Arguments as labelled fields: short values inline, multi-line
    *  strings as code (or prose), objects as highlighted JSON. */
-  function fields(args, { renderMarkdown } = {}) {
+  function fields(args, { renderMarkdown, prose = false, depth = 0 } = {}) {
     if (!args || typeof args !== "object") return codeBlock(String(args ?? ""), {});
     const box = h("div", { class: "fields" });
     const path = pathOf(args);
     for (const [k, v] of Object.entries(args)) {
       if (v == null || v === "") continue;
+      // A message (``prose``): text reads as text, a list of sentences
+      // as a list, a nested record as fields; only code keys stay code.
+      if (prose && renderMarkdown && Array.isArray(v) && v.length && v.every((x) => typeof x === "string")) {
+        const short = v.every((x) => x.length <= 40 && !x.includes("\n"));
+        box.append(short && v.length <= 6
+          ? h("div", { class: "field" }, h("span", { class: "fkey", text: k }), h("span", { class: "fval-list" }, v.map((x) => h("code", { class: "fval", text: x }))))
+          : h("div", { class: "field block" }, h("span", { class: "fkey", text: k }),
+            h("ul", { class: "prose-list" }, v.map((x) => h("li", null, renderMarkdown(x))))));
+        continue;
+      }
+      if (prose && v && typeof v === "object" && !Array.isArray(v) && depth < 2) {
+        box.append(h("div", { class: "field block" }, h("span", { class: "fkey", text: k }), fields(v, { renderMarkdown, prose, depth: depth + 1 })));
+        continue;
+      }
       if (typeof v === "string" && (v.includes("\n") || v.length > 100)) {
-        if (PROSE_KEYS.has(k) && renderMarkdown) {
+        if ((PROSE_KEYS.has(k) || (prose && !(k in CODE_KEYS))) && renderMarkdown) {
           box.append(h("div", { class: "field block" }, h("span", { class: "fkey", text: k }), h("div", { class: "prose" }, renderMarkdown(v))));
         } else {
           const lang = k in CODE_KEYS ? (CODE_KEYS[k] || langForPath(path)) : "";
@@ -953,7 +967,7 @@
       r = { ...r };
       delete r.kind;
     }
-    const box = fields(r, { renderMarkdown });
+    const box = fields(r, { renderMarkdown, prose: true });
     for (const el of box.querySelectorAll("code.fval")) {
       const t = el.textContent;
       if (HASH.test(t)) { el.textContent = `${t.slice(0, 12)}…`; el.title = t; el.classList.add("hash"); }

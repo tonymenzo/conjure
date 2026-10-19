@@ -212,6 +212,13 @@ code, .mono { font-family: var(--mono); }
 .fval.path { cursor: pointer; color: var(--green-mid); text-decoration: underline dotted; }
 .fval.path:hover { color: var(--green); }
 .fval.hash { color: var(--dim); }
+.msgview .field.block > .fields { padding-left: 12px; border-left: 1px solid var(--faint); margin-top: 2px; }
+.msgview .field .prose { margin: 2px 0 2px; }
+.msgview .field .prose p:last-child { margin-bottom: 0; }
+.prose-list { margin: 2px 0 2px; padding-left: 20px; }
+.prose-list li { margin: 2px 0; }
+.prose-list li p { margin: 0; white-space: normal; }
+.fval-list { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* ---------- views ---------- */
 
