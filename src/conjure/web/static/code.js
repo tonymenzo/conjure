@@ -484,7 +484,7 @@
   }
 
   /** The one-line summary after the tool name: what it ran or touched. */
-  function callSummary(name, args) {
+  function callSummary(name, args, { schema = null } = {}) {
     args = args || {};
     const kind = toolKind(name, args);
     if (kind === "shell") {
@@ -514,10 +514,10 @@
       return { text: String(args.pattern ?? args.query ?? ""), extra: where ? `in ${where}` : "" };
     }
     if (kind === "other") {
-      const head = headlineOf(args);
+      const head = headlineOf(args, schema);
       if (head) return { text: head.text };
       const short = [], long = [];
-      for (const [k, v] of Object.entries(args)) {
+      for (const [k, v] of orderedArgs(args, schema)) {
         if (v == null || v === "") continue;
         const text = typeof v === "string" ? v : JSON.stringify(v);
         (text.length <= 40 && !text.includes("\n") ? short : long).push(`${k}=${typeof v === "string" ? JSON.stringify(v) : text}`);
@@ -585,13 +585,18 @@
     "name", "target", "url", "path", "file", "file_path", "filename", "directory", "dir", "model", "value", "address", "id"];
   /** ``{keys, text}`` for a call's headline: ``a b → c d`` for initial
    *  and final states, else the first telling short string. */
-  function headlineOf(args) {
+  function headlineOf(args, schema = null) {
     if (!args || typeof args !== "object") return null;
     const list = (v) => (Array.isArray(v) ? v.join(" ") : typeof v === "string" ? v : null);
     const [ini, fin] = [list(args.initial ?? args.initial_state), list(args.final ?? args.final_state)];
     if (ini && fin) return { keys: ["initial", "final", "initial_state", "final_state"], text: `${ini} → ${fin}` };
     const ok = (v) => typeof v === "string" && v.trim() && v.length <= 160 && !v.includes("\n");
+    // A telling name the tool requires, then any telling name, then the
+    // first required short string.
+    const required = new Set(schema?.required || []);
+    for (const k of HEADLINE_KEYS) if (required.has(k) && ok(args[k])) return { keys: [k], text: args[k] };
     for (const k of HEADLINE_KEYS) if (ok(args[k])) return { keys: [k], text: args[k] };
+    for (const k of schema?.required || []) if (ok(args[k])) return { keys: [k], text: args[k] };
     const first = Object.entries(args).find(([, v]) => ok(v));
     return first ? { keys: [first[0]], text: first[1] } : null;
   }
@@ -602,7 +607,19 @@
    *  says or runs, for a glance down the transcript. Null where the
    *  summary line already says it (shell, read, search). Opening the
    *  call replaces it with the full blocks. */
-  function callPreview(name, args) {
+  /** A call's arguments, required first (in the schema's order), then
+   *  the rest, without those that only repeat the tool's default. */
+  function orderedArgs(args, schema) {
+    const entries = Object.entries(args || {}).filter(([, v]) => v != null && v !== "");
+    if (!schema) return entries;
+    const defaults = schema.defaults || {};
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const req = schema.required || [], order = schema.order || [];
+    const rank = (k) => (req.includes(k) ? req.indexOf(k) : order.includes(k) ? 1000 + order.indexOf(k) : 2000);
+    return entries.filter(([k, v]) => !(k in defaults && same(v, defaults[k]))).sort((a, b) => rank(a[0]) - rank(b[0]));
+  }
+
+  function callPreview(name, args, { schema = null } = {}) {
     args = args || {};
     const kind = toolKind(name, args);
     let rows = [];
@@ -628,7 +645,7 @@
     } else if (kind === "other") {
       // The first long argument (code as code, prose as text), then the
       // rest as ``key value`` pairs: a toolkit call's glance.
-      const head = headlineOf(args);
+      const head = headlineOf(args, schema);
       const used = new Set(head ? head.keys : []);
       for (const [k, v] of Object.entries(args)) {
         if (used.has(k) || typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
@@ -642,7 +659,7 @@
       }
       // Only when a headline took the summary line; otherwise the line
       // already lists these.
-      const rest = Object.entries(args).filter(([k, v]) => !used.has(k) && v != null && v !== "");
+      const rest = orderedArgs(args, schema).filter(([k]) => !used.has(k));
       if (head && rest.length && rows.length < PREVIEW_ROWS) {
         rows.push(h("div", { class: "pv-row kv" }, rest.flatMap(([k, v], i) => [
           i ? h("span", { class: "pv-sep", text: "·" }) : null,

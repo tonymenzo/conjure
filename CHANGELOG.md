@@ -19,7 +19,11 @@ this file as its notes.
 - **Toolkit calls preview their arguments.** A call's line names what
   it is about (`t → W+ b` for initial and final states, the process, the
   action, a path), and the collapsed preview lists the remaining
-  arguments (`model work/ufo_sm · visualize false`). A result that
+  arguments (`model work/ufo_sm · save_diagrams false`): required ones
+  first, and none that only repeat the tool's default. Engines report
+  each tool's argument order, required arguments and defaults, journaled
+  with the agent's provenance so a replay previews the same way (runs
+  from before this release list every argument as passed). A result that
   reports `valid`, `success`, `passed` or `converged` false, or an error
   status, shows as failed.
 - **The activity feed** has one line per event, plus a summary line for a

@@ -381,6 +381,8 @@ class SessionView:
             # and where the run recorded it), so the chat can show paths
             # in tool calls relative to it.
             "sandbox_paths": _sandbox_paths(rec, self.runtime),
+            # Per tool: argument order, required, defaults (call previews).
+            "tool_schemas": _tool_schemas(engine, rec),
             "toolkits": {
                 k: v.model_dump(exclude_none=True)
                 for k, v in (getattr(spec, "toolkits", None) or {}).items()
@@ -884,6 +886,20 @@ def _unpriced_model(rec: Any, meta: dict[str, Any], config: dict[str, Any]) -> b
         return PriceBook(entry.get("pricing")).price(model) is None
     except Exception:
         return False
+
+
+def _tool_schemas(engine: Any, rec: Any) -> dict[str, Any]:
+    """The agent's tool schemas: from its engine when live, else as its
+    journal recorded them."""
+    fn = getattr(engine, "tool_schemas", None)
+    if callable(fn):
+        try:
+            return fn() or {}
+        except Exception:
+            pass
+    meta = getattr(rec, "meta", None) or {}
+    schemas = meta.get("tool_schemas")
+    return schemas if isinstance(schemas, dict) else {}
 
 
 def _sandbox_paths(rec: Any, runtime: Any) -> list[str]:

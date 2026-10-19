@@ -360,6 +360,20 @@ class OrchestralEngine:
             "price_sources": sorted(sources),
         }
 
+    def tool_schemas(self) -> dict[str, dict[str, Any]]:
+        """Each offered tool's argument order, required arguments and
+        defaults (``conjure.tool_schemas``), for the UI's call previews.
+        Recomputed only when the tool list changes."""
+        from conjure.tool_schemas import from_tools
+
+        tools = list(getattr(self._agent, "tools", None) or self._base_tools)
+        key = tuple(id(t) for t in tools)
+        cached = getattr(self, "_schema_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, from_tools(tools))
+            self._schema_cache = cached
+        return cached[1]
+
     def cost(self) -> float:
         """Cumulative cost (USD) of this agent's priced responses."""
         try:

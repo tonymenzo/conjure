@@ -414,7 +414,7 @@
 
   // Tool calls: one summary line (the command, file or target); the
   // code, diff or output (code.js) one click away.
-  function toolCallBlock(name, original, roots) {
+  function toolCallBlock(name, original, roots, schemas) {
     const CC = window.ConjureCode;
     const label = toolName(name);
     const args = CC ? CC.relArgs(original, roots) : original;
@@ -425,7 +425,10 @@
         h("pre", { text: JSON.stringify(args, null, 2) }));
     }
     const kind = CC.toolKind(name, args);
-    const sum = CC.callSummary(name, args);
+    // The tool's argument schema, when the engine reported one: previews
+    // then lead with required arguments and skip defaults.
+    const schema = schemas?.[name] || schemas?.[String(name).replace(/^mcp__(conjure|spawn|toolbase)__/, "")] || null;
+    const sum = CC.callSummary(name, args, { schema });
     // Agents by name, not address (Send → worker, WaitFor value="worker").
     const named = (t) => (t ? String(t).replace(/\bag-[a-z0-9]{8,}\b/g, (id) => (S.agents.has(id) ? labelOf(id) : id)) : t);
     if (sum) { sum.text = named(sum.text); sum.extra = named(sum.extra); }
@@ -438,7 +441,7 @@
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
-    const preview = CC.callPreview(name, args);
+    const preview = CC.callPreview(name, args, { schema });
     for (const el of preview?.querySelectorAll(".pv-val") || []) el.textContent = named(el.textContent);
     const head = h("summary", null, line, preview);
     const fullPath = original && (original.file_path ?? original.path);
@@ -761,6 +764,7 @@
       this.stream = null;   // {el, text, ts}
       this.turn = null;     // {el, start, tokens, done, src}
       this.roots = [];      // the agent's sandbox paths (relative display)
+      this.schemas = {};    // tool name -> {order, required, defaults}
     }
     block(el, ts, sub = false) {
       el.classList.add("blk");
@@ -899,7 +903,7 @@
       for (const tc of calls || []) {
         const name = tc.name || tc.tool_name;
         const args = tc.args ?? tc.arguments ?? {};
-        const el = this.block(toolCallBlock(name, args, this.roots), ts, true);
+        const el = this.block(toolCallBlock(name, args, this.roots, this.schemas), ts, true);
         this.pendingCalls.push({ name, args: window.ConjureCode ? window.ConjureCode.relArgs(args, this.roots) : args, el });
       }
     }
@@ -997,6 +1001,7 @@
         data = ev;
         // Paths in tool calls show relative to the agent's sandbox.
         this.renderer.roots = sandboxRoots(detail);
+        this.renderer.schemas = (detail && detail.tool_schemas) || {};
       } catch { return; }
       if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
@@ -1016,6 +1021,7 @@
       const holder = h("div");
       const r = new Renderer(holder, { live: false });
       r.roots = this.renderer.roots;
+      r.schemas = this.renderer.schemas;
       for (const ev of data.events) r.apply(ev);
       r.flush();
       const prevHeight = this.body.scrollHeight;
@@ -1052,6 +1058,7 @@
       try { this.detail = await api("agent", { addr: this.addr }); } catch { return; }
       if (!this.detail.ok) return;
       this.mergeInbox(this.detail.inbox || []);
+      if (this.detail.tool_schemas && this.renderer) this.renderer.schemas = this.detail.tool_schemas;   // a live grant adds tools
       this.updateHeader();
       if (this.inspectorOpen) this.renderInspector();
     }
