@@ -514,17 +514,12 @@
       return { text: String(args.pattern ?? args.query ?? ""), extra: where ? `in ${where}` : "" };
     }
     if (kind === "other") {
-      const head = headlineOf(args, schema);
-      if (head) return { text: head.text };
-      const short = [], long = [];
-      for (const [k, v] of orderedArgs(args, schema)) {
-        if (v == null || v === "") continue;
-        const text = typeof v === "string" ? v : JSON.stringify(v);
-        (text.length <= 40 && !text.includes("\n") ? short : long).push(`${k}=${typeof v === "string" ? JSON.stringify(v) : text}`);
-      }
-      const shown = short.slice(0, 3);
-      const more = short.length - shown.length + long.length;
-      return { text: shown.join("  "), extra: more ? `+${plural(more, "field")}` : "", dim: true };
+      const { shown } = lineArgs(args);
+      // Counted as the preview lists them (the tool's defaults left out).
+      const onLine = new Set(shown.map(([k]) => k));
+      const more = orderedArgs(args, schema).filter(([k]) => !onLine.has(k)).length;
+      const fmt = ([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v)}`;
+      return { text: shown.map(fmt).join("  "), extra: more ? `+${plural(more, "field")}` : "", dim: true };
     }
     // The body is the preview's (callPreview), not the summary's.
     if (kind === "send") return { prefix: "→", text: String(args.to ?? "?") };
@@ -580,25 +575,17 @@
     .filter((l) => !/^(\+\+\+|---)/.test(l))
     .map((l) => ({ op: l[0] === "+" || l[0] === "-" ? l[0] : " ", text: l.slice(1) }));
 
-  // The argument that says what a toolkit call is about, in this order.
-  const HEADLINE_KEYS = ["process", "query", "pattern", "expression", "formula", "reaction", "action", "what", "task",
-    "name", "target", "url", "path", "file", "file_path", "filename", "directory", "dir", "model", "value", "address", "id"];
-  /** ``{keys, text}`` for a call's headline: ``a b → c d`` for initial
-   *  and final states, else the first telling short string. */
-  function headlineOf(args, schema = null) {
-    if (!args || typeof args !== "object") return null;
-    const list = (v) => (Array.isArray(v) ? v.join(" ") : typeof v === "string" ? v : null);
-    const [ini, fin] = [list(args.initial ?? args.initial_state), list(args.final ?? args.final_state)];
-    if (ini && fin) return { keys: ["initial", "final", "initial_state", "final_state"], text: `${ini} → ${fin}` };
-    const ok = (v) => typeof v === "string" && v.trim() && v.length <= 160 && !v.includes("\n");
-    // A telling name the tool requires, then any telling name, then the
-    // first required short string.
-    const required = new Set(schema?.required || []);
-    for (const k of HEADLINE_KEYS) if (required.has(k) && ok(args[k])) return { keys: [k], text: args[k] };
-    for (const k of HEADLINE_KEYS) if (ok(args[k])) return { keys: [k], text: args[k] };
-    for (const k of schema?.required || []) if (ok(args[k])) return { keys: [k], text: args[k] };
-    const first = Object.entries(args).find(([, v]) => ok(v));
-    return first ? { keys: [first[0]], text: first[1] } : null;
+  /** The short arguments a call's line shows (the first three, as
+   *  passed), and how many more there are. */
+  function lineArgs(args) {
+    const short = [];
+    let long = 0;
+    for (const [k, v] of Object.entries(args || {})) {
+      if (v == null || v === "") continue;
+      const text = typeof v === "string" ? v : JSON.stringify(v);
+      if (text.length <= 40 && !text.includes("\n")) short.push([k, v]); else long++;
+    }
+    return { shown: short.slice(0, 3), more: short.length - Math.min(3, short.length) + long };
   }
   const kvText = (v) => (Array.isArray(v) ? v.map((x) => (x && typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ")
     : v && typeof v === "object" ? JSON.stringify(v) : String(v));
@@ -643,11 +630,11 @@
     } else if (kind === "spawn") {
       rows = [proseRow(firstParagraph(args.initial_message || args.role_prompt))];
     } else if (kind === "other") {
-      // The first long argument (code as code, prose as text), then the
-      // rest as ``key value`` pairs: a toolkit call's glance.
-      const head = headlineOf(args, schema);
-      const used = new Set(head ? head.keys : []);
-      for (const [k, v] of Object.entries(args)) {
+      // What the call's line had no room for: the first long argument
+      // (code as code, prose as text), then the rest as ``key value``
+      // pairs, required first and without the tool's defaults.
+      const used = new Set(lineArgs(args).shown.map(([k]) => k));
+      for (const [k, v] of orderedArgs(args, schema)) {
         if (used.has(k) || typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
         used.add(k);
         if (PROSE_KEYS.has(k)) rows = [proseRow(firstParagraph(v), k)];
@@ -657,10 +644,8 @@
         }
         break;
       }
-      // Only when a headline took the summary line; otherwise the line
-      // already lists these.
       const rest = orderedArgs(args, schema).filter(([k]) => !used.has(k));
-      if (head && rest.length && rows.length < PREVIEW_ROWS) {
+      if (rest.length && rows.length < PREVIEW_ROWS) {
         rows.push(h("div", { class: "pv-row kv" }, rest.flatMap(([k, v], i) => [
           i ? h("span", { class: "pv-sep", text: "·" }) : null,
           h("span", { class: "pv-key", text: k }),

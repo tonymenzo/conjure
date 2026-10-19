@@ -16,16 +16,14 @@ this file as its notes.
   team's workspace (a file path opens in the files view) and long
   hashes shortened. `Send` calls preview and show their message the
   same way, and tool calls name agents instead of their addresses.
-- **Toolkit calls preview their arguments.** A call's line names what
-  it is about (`t → W+ b` for initial and final states, the process, the
-  action, a path), and the collapsed preview lists the remaining
-  arguments (`model work/ufo_sm · save_diagrams false`): required ones
-  first, and none that only repeat the tool's default. Engines report
-  each tool's argument order, required arguments and defaults, journaled
-  with the agent's provenance so a replay previews the same way (runs
-  from before this release list every argument as passed). A result that
-  reports `valid`, `success`, `passed` or `converged` false, or an error
-  status, shows as failed.
+- **Toolkit calls preview their arguments.** Under a collapsed call, the
+  preview lists the arguments its line had no room for (`initial t ·
+  final W+, b`): required ones first, and none that only repeat the
+  tool's default. Engines report each tool's argument order, required
+  arguments and defaults, journaled with the agent's provenance so a
+  replay previews the same way (runs from before this release list the
+  arguments as passed). A result that reports `valid`, `success`,
+  `passed` or `converged` false, or an error status, shows as failed.
 - **The activity feed** has one line per event, plus a summary line for a
   message; click a message to read it in place. Filters show or hide
   messages, tool calls and lifecycle events.
