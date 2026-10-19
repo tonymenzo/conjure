@@ -8,8 +8,10 @@ Routes — every ``/api/*`` call needs the session token in an
   GET  /api/meta              session name, live/replay, journal bounds
   GET  /api/snapshot          tree + cost + activity + permissions
   GET  /api/agent?addr=       one agent's spec, capabilities, inbox
-  GET  /api/events?addr=&since=&before=
+  GET  /api/events?addr=&since=&before=&limit=
                               byte-offset tail of an agent's event log
+  GET  /api/inbox?addr=&after=&until=   messages to an agent, by time
+  GET  /api/replay            the quiet stretches a player can skip
   GET  /api/graph             spawn / message / capability edges
   GET  /api/timeline          per-agent lanes: turns, tools, messages
   GET  /api/files/workspaces  every workspace, nested, with its agents
@@ -226,7 +228,16 @@ class _Handler(BaseHTTPRequestHandler):
                 q.get("addr", ""),
                 since=int(q["since"]) if q.get("since") else None,
                 before=int(q["before"]) if q.get("before") else None,
+                limit=int(q["limit"]) if q.get("limit") else None,
             )
+        if path == "/api/inbox":
+            return view.inbox(
+                q.get("addr", ""),
+                after=float(q["after"]) if q.get("after") else None,
+                until=float(q["until"]) if q.get("until") else None,
+            )
+        if path == "/api/replay":
+            return view.replay_index()
         if path == "/api/graph":
             return view.graph()
         if path == "/api/timeline":

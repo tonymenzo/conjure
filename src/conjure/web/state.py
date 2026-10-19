@@ -12,6 +12,7 @@ view below works identically on either.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
@@ -29,6 +30,10 @@ from conjure.web import files
 
 # Initial chat backlog per agent; older history pages in on demand.
 EVENTS_WINDOW_BYTES = 512 * 1024
+# A replay's player reads ahead in pages of at most this much.
+EVENTS_PAGE_LIMIT = 4 * 1024 * 1024
+# Quiet stretches at least this long are what "skip idle" jumps over.
+IDLE_GAP_S = 2.0
 _SENTINELS = {USER.id, SYSTEM.id}
 
 
@@ -158,6 +163,31 @@ class SessionView:
         if self.session_dir is not None:
             return self.session_dir / "agents" / f"{rec.addr.id}.jsonl"
         return None
+
+    def _status(self, rec: Any) -> str:
+        """``rec.status``, except that a replay at an instant shows an
+        agent mid-turn then as running (the journal records structure,
+        and the event log says when each turn ran)."""
+        if self.live or self.until is None or rec.status == "terminated":
+            return rec.status
+        return "running" if rec.addr.id in self._busy_at_until() else rec.status
+
+    def _busy_at_until(self) -> set[str]:
+        busy = getattr(self, "_busy_cache", None)
+        if busy is None:
+            busy = set()
+            for addr, rec in self._records().items():
+                evs = [e for e in self._parsed_log(self.log_path(rec)) if (e.get("ts") or 0) <= (self.until or 0)]
+                turns, _tools, _errors = _turns_and_tools(evs)
+                if turns and turns[-1]["end"] is None:
+                    busy.add(addr.id)
+            self._busy_cache = busy
+        return busy
+
+    def _sandbox_paths(self, rec: Any) -> list[str]:
+        # A replay's paths are fixed, and resolving ones recorded on
+        # another machine is slow (every component is a failed lookup).
+        return _sandbox_paths(rec, self.runtime, realpath=os.path.realpath if self.live else _cached_realpath)
 
     def _require_live(self) -> None:
         if not self.live:
@@ -313,7 +343,7 @@ class SessionView:
             node = {
                 "addr": addr.id,
                 "label": addr.label or addr.id,
-                "status": rec.status,
+                "status": self._status(rec),
                 "awaiting_permission": addr.id in awaiting,
                 "depth": rec.depth,
                 "parent": rec.parent.id if rec.parent else None,
@@ -332,7 +362,7 @@ class SessionView:
                 "toolkits": toolkit_items(getattr(spec, "toolkits", None)),
                 # Where its files are (and were, in a replay): the UI shows
                 # paths in messages relative to these.
-                "sandbox_paths": _sandbox_paths(rec, self.runtime),
+                "sandbox_paths": self._sandbox_paths(rec),
                 "inbox_size": len(rec.inbox),
                 "spawned_at": rec.spawned_at,
                 "children": kids,
@@ -361,7 +391,7 @@ class SessionView:
             "ok": True,
             "addr": addr.id,
             "label": addr.label or addr.id,
-            "status": rec.status,
+            "status": self._status(rec),
             "depth": rec.depth,
             "parent": _ref(rec.parent),
             "children": [_ref(c) for c in sorted(rec.children, key=lambda c: c.id)],
@@ -380,7 +410,7 @@ class SessionView:
             # Every absolute path this agent's sandbox has gone by (here,
             # and where the run recorded it), so the chat can show paths
             # in tool calls relative to it.
-            "sandbox_paths": _sandbox_paths(rec, self.runtime),
+            "sandbox_paths": self._sandbox_paths(rec),
             # Per tool: argument order, required, defaults (call previews).
             "tool_schemas": _tool_schemas(engine, rec),
             "toolkits": {
@@ -390,14 +420,7 @@ class SessionView:
             "toolbase_loadout": getattr(spec, "toolbase_loadout", None),
             "spawned_at": rec.spawned_at,
             "inbox": [
-                {
-                    "seq": e.seq,
-                    "ts": e.ts,
-                    "from": e.from_.id,
-                    "from_label": e.from_.label or e.from_.id,
-                    "kind": (e.headers or {}).get("kind", "msg"),
-                    "body": e.body,
-                }
+                _envelope_row(e)
                 for e in rec.inbox.read_recent(max_n=200)
                 if self.until is None or e.ts <= self.until
             ],
@@ -424,13 +447,16 @@ class SessionView:
         since: int | None = None,
         before: int | None = None,
         window: int = EVENTS_WINDOW_BYTES,
+        limit: int | None = None,
     ) -> dict[str, Any]:
         """Byte-offset tail of one agent's event log.
 
         ``since`` returns everything appended after that offset (the
-        live poll). ``before`` returns up to ``window`` bytes ending
-        there (paging back through history). Neither returns the last
-        ``window`` bytes. Offsets always land on line boundaries.
+        live poll), or at most about ``limit`` bytes of it (a replay's
+        player reading ahead). ``before`` returns up to ``window`` bytes
+        ending there (paging back through history). Neither returns the
+        last ``window`` bytes. Offsets always land on line boundaries;
+        at an instant, ``offset`` is just past the last event by then.
         """
         addr = self._addr(addr_id)
         if addr is None:
@@ -440,7 +466,8 @@ class SessionView:
             return {"ok": True, "events": [], "start": 0, "offset": 0, "size": 0}
         size = path.stat().st_size
         if since is not None:
-            start, end = min(max(0, since), size), size
+            start = min(max(0, since), size)
+            end = size if limit is None else min(size, start + max(1, min(limit, EVENTS_PAGE_LIMIT)))
         else:
             end = size if before is None else min(max(0, before), size)
             start = max(0, end - window)
@@ -453,16 +480,57 @@ class SessionView:
                 start = fh.tell()
             fh.seek(start)
             data = fh.read(max(0, end - start))
+            if since is not None and end < size and not data.endswith(b"\n"):
+                data += fh.readline()  # finish the line the page cut
         cut = data.rfind(b"\n") + 1  # only complete lines
-        events = _parse_lines(data[:cut])
-        if self.until is not None:
-            events = [e for e in events if (e.get("ts") or 0) <= self.until]
+        if self.until is None:
+            events, used = _parse_lines(data[:cut]), cut
+        else:
+            events, used = _lines_until(data[:cut], self.until)
         return {
             "ok": True,
             "events": events,
             "start": start,
-            "offset": start + cut,
+            "offset": start + used,
             "size": size,
+        }
+
+    def inbox(
+        self, addr_id: str, *, after: float | None = None, until: float | None = None, limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Messages to one agent with ``after < ts <= until`` (``until``
+        defaults to the view's instant), oldest first, at most ``limit``
+        of the earliest; ``more`` says whether some were left out."""
+        addr = self._addr(addr_id)
+        if addr is None:
+            return {"ok": False, "error": f"unknown agent: {addr_id}"}
+        hi = self.until if until is None else (until if self.until is None else min(until, self.until))
+        rows = [
+            e for e in self.runtime.record_for(addr).inbox.read_recent(max_n=100_000)
+            if (after is None or e.ts > after) and (hi is None or e.ts <= hi)
+        ]
+        return {"ok": True, "inbox": [_envelope_row(e) for e in rows[:limit]], "more": len(rows) > limit}
+
+    def replay_index(self, min_gap: float = IDLE_GAP_S) -> dict[str, Any]:
+        """When anything happened, as the stretches with nothing: every
+        gap of at least ``min_gap`` seconds between consecutive events
+        (the journal, every agent's log, every message). A player skips
+        these when asked to skip idle time."""
+        stamps: list[float] = [
+            e["ts"] for e in self._journal_entries() if isinstance(e.get("ts"), (int, float))
+        ]
+        for rec in self._records().values():
+            stamps += [e["ts"] for e in self._parsed_log(self.log_path(rec)) if isinstance(e.get("ts"), (int, float))]
+            stamps += [e.ts for e in rec.inbox.read_recent(max_n=100_000)]
+        if self.until is not None:
+            stamps = [t for t in stamps if t <= self.until]
+        stamps.sort()
+        gaps = [[a, b] for a, b in zip(stamps, stamps[1:]) if b - a >= min_gap]
+        return {
+            "ok": True,
+            "start": stamps[0] if stamps else None,
+            "end": stamps[-1] if stamps else None,
+            "gaps": gaps,
         }
 
     def graph(self) -> dict[str, Any]:
@@ -478,7 +546,7 @@ class SessionView:
                 {
                     "addr": addr.id,
                     "label": addr.label or addr.id,
-                    "status": rec.status,
+                    "status": self._status(rec),
                     "depth": rec.depth,
                     "parent": rec.parent.id if rec.parent else None,
                     "internal": bool(rec.spec.internal),
@@ -533,7 +601,7 @@ class SessionView:
                 {
                     "addr": addr.id,
                     "label": addr.label or addr.id,
-                    "status": rec.status,
+                    "status": self._status(rec),
                     "depth": rec.depth,
                     "parent": rec.parent.id if rec.parent else None,
                     "internal": bool(rec.spec.internal),
@@ -693,6 +761,10 @@ class ReplayCache:
         self._size = size
         self._views: OrderedDict[float | None, SessionView] = OrderedDict()
         self._lock = threading.Lock()
+        self._build = threading.Lock()
+        # Every instant reads the same files: parse each once.
+        self._parse_cache: dict[str, _ParsedLog] = {}
+        self._parse_lock = threading.Lock()
 
     def at(self, until: float | None) -> SessionView:
         # Exact instant: rounding could land just before an event the
@@ -703,11 +775,19 @@ class ReplayCache:
             if view is not None:
                 self._views.move_to_end(key)
                 return view
-        view = SessionView.replay_session(self.session_dir, until=key)
-        with self._lock:
-            self._views[key] = view
-            while len(self._views) > self._size:
-                self._views.popitem(last=False)
+        # One build at a time: a player's requests for a new instant
+        # arrive together, and should share one view.
+        with self._build:
+            with self._lock:
+                view = self._views.get(key)
+                if view is not None:
+                    return view
+            view = SessionView.replay_session(self.session_dir, until=key)
+            view._parse_cache, view._cache_lock = self._parse_cache, self._parse_lock  # noqa: SLF001
+            with self._lock:
+                self._views[key] = view
+                while len(self._views) > self._size:
+                    self._views.popitem(last=False)
         return view
 
 
@@ -785,6 +865,49 @@ def _model_name(engine: Any) -> str | None:
         return fn()
     except Exception:
         return None
+
+
+def _envelope_row(e: Any) -> dict[str, Any]:
+    return {
+        "seq": e.seq,
+        "ts": e.ts,
+        "from": e.from_.id,
+        "from_label": e.from_.label or e.from_.id,
+        "kind": (e.headers or {}).get("kind", "msg"),
+        "body": e.body,
+    }
+
+
+def _lines_until(data: bytes, until: float) -> tuple[list[dict[str, Any]], int]:
+    """The events in ``data`` up to the first stamped after ``until``,
+    and how many bytes they span (logs are written in time order)."""
+    out: list[dict[str, Any]] = []
+    pos = used = 0
+    for raw in data.splitlines(keepends=True):
+        pos += len(raw)
+        line = raw.strip()
+        if not line:
+            used = pos
+            continue
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            used = pos
+            continue
+        if not isinstance(ev, dict):
+            used = pos
+            continue
+        ts = ev.get("ts")
+        if isinstance(ts, (int, float)) and ts > until:
+            break
+        out.append(ev)
+        used = pos
+    return out, used
+
+
+@functools.lru_cache(maxsize=4096)
+def _cached_realpath(path: str) -> str:
+    return os.path.realpath(path)
 
 
 def _parse_lines(data: bytes) -> list[dict[str, Any]]:
@@ -902,7 +1025,7 @@ def _tool_schemas(engine: Any, rec: Any) -> dict[str, Any]:
     return schemas if isinstance(schemas, dict) else {}
 
 
-def _sandbox_paths(rec: Any, runtime: Any) -> list[str]:
+def _sandbox_paths(rec: Any, runtime: Any, *, realpath: Any = os.path.realpath) -> list[str]:
     paths: list[str] = []
     candidates = [getattr(rec, "recorded_sandbox_dir", None), rec.spec.sandbox_dir]
     try:
@@ -913,7 +1036,7 @@ def _sandbox_paths(rec: Any, runtime: Any) -> list[str]:
         if not p:
             continue
         p = str(p).rstrip("/")
-        for form in (p, os.path.realpath(p) if os.path.isabs(p) else p):
+        for form in (p, realpath(p) if os.path.isabs(p) else p):
             if form and form != "/" and form not in paths:
                 paths.append(form)
     return paths
