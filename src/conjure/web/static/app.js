@@ -438,7 +438,9 @@
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
-    const head = h("summary", null, line, CC.callPreview(name, args));
+    const preview = CC.callPreview(name, args);
+    for (const el of preview?.querySelectorAll(".pv-val") || []) el.textContent = named(el.textContent);
+    const head = h("summary", null, line, preview);
     const fullPath = original && (original.file_path ?? original.path);
     if (typeof fullPath === "string" && fullPath !== (args.file_path ?? args.path)) head.title = fullPath;
     return h("details", { class: `toolcall rich kind-${kind}` },

@@ -514,6 +514,8 @@
       return { text: String(args.pattern ?? args.query ?? ""), extra: where ? `in ${where}` : "" };
     }
     if (kind === "other") {
+      const head = headlineOf(args);
+      if (head) return { text: head.text };
       const short = [], long = [];
       for (const [k, v] of Object.entries(args)) {
         if (v == null || v === "") continue;
@@ -578,6 +580,24 @@
     .filter((l) => !/^(\+\+\+|---)/.test(l))
     .map((l) => ({ op: l[0] === "+" || l[0] === "-" ? l[0] : " ", text: l.slice(1) }));
 
+  // The argument that says what a toolkit call is about, in this order.
+  const HEADLINE_KEYS = ["process", "query", "pattern", "expression", "formula", "reaction", "action", "what", "task",
+    "name", "target", "url", "path", "file", "file_path", "filename", "directory", "dir", "model", "value", "address", "id"];
+  /** ``{keys, text}`` for a call's headline: ``a b → c d`` for initial
+   *  and final states, else the first telling short string. */
+  function headlineOf(args) {
+    if (!args || typeof args !== "object") return null;
+    const list = (v) => (Array.isArray(v) ? v.join(" ") : typeof v === "string" ? v : null);
+    const [ini, fin] = [list(args.initial ?? args.initial_state), list(args.final ?? args.final_state)];
+    if (ini && fin) return { keys: ["initial", "final", "initial_state", "final_state"], text: `${ini} → ${fin}` };
+    const ok = (v) => typeof v === "string" && v.trim() && v.length <= 160 && !v.includes("\n");
+    for (const k of HEADLINE_KEYS) if (ok(args[k])) return { keys: [k], text: args[k] };
+    const first = Object.entries(args).find(([, v]) => ok(v));
+    return first ? { keys: [first[0]], text: first[1] } : null;
+  }
+  const kvText = (v) => (Array.isArray(v) ? v.map((x) => (x && typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ")
+    : v && typeof v === "object" ? JSON.stringify(v) : String(v));
+
   /** A line or two under a collapsed call: what it writes, changes,
    *  says or runs, for a glance down the transcript. Null where the
    *  summary line already says it (shell, read, search). Opening the
@@ -606,15 +626,29 @@
     } else if (kind === "spawn") {
       rows = [proseRow(firstParagraph(args.initial_message || args.role_prompt))];
     } else if (kind === "other") {
-      // The first long argument: code as code, prose as text.
+      // The first long argument (code as code, prose as text), then the
+      // rest as ``key value`` pairs: a toolkit call's glance.
+      const head = headlineOf(args);
+      const used = new Set(head ? head.keys : []);
       for (const [k, v] of Object.entries(args)) {
-        if (typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
+        if (used.has(k) || typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
+        used.add(k);
         if (PROSE_KEYS.has(k)) rows = [proseRow(firstParagraph(v), k)];
         else {
           const lang = k in CODE_KEYS ? (CODE_KEYS[k] || langForPath(pathOf(args))) : "";
           rows = leadLines(v).map((l, i) => codeRow(l, lang, { key: k, keyHidden: i > 0 }));
         }
         break;
+      }
+      // Only when a headline took the summary line; otherwise the line
+      // already lists these.
+      const rest = Object.entries(args).filter(([k, v]) => !used.has(k) && v != null && v !== "");
+      if (head && rest.length && rows.length < PREVIEW_ROWS) {
+        rows.push(h("div", { class: "pv-row kv" }, rest.flatMap(([k, v], i) => [
+          i ? h("span", { class: "pv-sep", text: "·" }) : null,
+          h("span", { class: "pv-key", text: k }),
+          h("span", { class: "pv-val", text: clip(kvText(v), 60) }),
+        ])));
       }
     }
     rows = rows.filter(Boolean);
@@ -857,6 +891,10 @@
       };
     }
     const err = parsed && typeof parsed === "object" && parsed.ok === false;
+    // A tool that ran but reports a negative outcome (valid=false,
+    // status=error) is a failure to the reader.
+    const negative = !!parsed && typeof parsed === "object" && (["valid", "success", "passed", "converged"].some((k) => parsed[k] === false)
+      || /^(error|failed|failure|invalid)$/i.test(String(parsed.status ?? "")));
     // A successful write, edit or send says nothing the call didn't.
     if (!failed && !err && ["write", "edit", "multiedit", "patch", "send"].includes(kind)) return { chip: "✓", bad: false, body: null };
     // A spawn's result is the child's address.
@@ -869,11 +907,11 @@
     if (r?.el) {
       const n = parsed?.content != null ? lineCount(parsed.content) : 0;
       const chip = kind === "read" ? r.summary : r.summary ? clip(r.summary, 70) : "✓";
-      return { chip: chip || (n ? plural(n, "line") : "✓"), bad: false, body: r.el };
+      return { chip: chip || (n ? plural(n, "line") : "✓"), bad: negative, body: r.el };
     }
     if (parsed && typeof parsed === "object") {
       const brief = ["write", "edit", "multiedit", "patch", "send"].includes(kind) ? "" : compactDict(parsed);
-      return { chip: brief ? clip(brief, 70) : "✓", bad: false, body: null };
+      return { chip: brief ? clip(brief, 70) : "✓", bad: negative, body: null };
     }
     const t = String(text || "").trim();
     if (!t) return { chip: "✓", bad: false, body: null };

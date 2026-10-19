@@ -946,6 +946,10 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--green-mid); outl
 .callpreview code.pv-text { opacity: 0.85; }
 .callpreview .pv-key { flex: none; font-size: 11px; color: var(--faint); }
 .callpreview .pv-key.hidden { visibility: hidden; }
+.callpreview .pv-row.kv { gap: 6px; overflow: hidden; }
+.callpreview .pv-row.kv .pv-val { color: var(--fg); opacity: .8; flex: none; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; }
+.callpreview .pv-row.kv .pv-val:last-child { flex: 0 1 auto; min-width: 0; }
+.callpreview .pv-sep { color: var(--faint); flex: none; }
 .callpreview .pv-sign { flex: none; width: 1ch; }
 .callpreview .pv-row.add .pv-sign { color: var(--green-mid); }
 .callpreview .pv-row.del .pv-sign { color: var(--red); }
