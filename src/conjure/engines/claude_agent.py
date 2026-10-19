@@ -400,6 +400,15 @@ class ClaudeAgentEngine:
         )
         return future.result(timeout=600)
 
+    def tool_schemas(self) -> dict[str, dict[str, Any]]:
+        """Argument schemas of the toolkit tools this agent is served, by
+        the name Claude Code calls them (``mcp__toolbase__...``). The
+        CLI's own tools have their own previews."""
+        from conjure.tool_schemas import from_tools
+
+        served = getattr(self, "_served_tools", None) or []
+        return from_tools(served, name=lambda _spec, tool: f"mcp__toolbase__{tool.get_name()}")
+
     def cost(self) -> float:
         # Subscription sessions are flat-rate — don't bill them.
         if self._uses_subscription:
@@ -564,6 +573,7 @@ class ClaudeAgentEngine:
         served = await asyncio.to_thread(self._toolbase.sync)
         if served is None:
             return
+        self._served_tools = list(served)
         if self._toolkits_synced and served:
             # A live grant: the system prompt only listed the first set.
             self._grant_note = grant_note(served, "mcp__toolbase__", self._toolbase.skill_names())

@@ -484,7 +484,7 @@
   }
 
   /** The one-line summary after the tool name: what it ran or touched. */
-  function callSummary(name, args) {
+  function callSummary(name, args, { schema = null } = {}) {
     args = args || {};
     const kind = toolKind(name, args);
     if (kind === "shell") {
@@ -514,15 +514,12 @@
       return { text: String(args.pattern ?? args.query ?? ""), extra: where ? `in ${where}` : "" };
     }
     if (kind === "other") {
-      const short = [], long = [];
-      for (const [k, v] of Object.entries(args)) {
-        if (v == null || v === "") continue;
-        const text = typeof v === "string" ? v : JSON.stringify(v);
-        (text.length <= 40 && !text.includes("\n") ? short : long).push(`${k}=${typeof v === "string" ? JSON.stringify(v) : text}`);
-      }
-      const shown = short.slice(0, 3);
-      const more = short.length - shown.length + long.length;
-      return { text: shown.join("  "), extra: more ? `+${plural(more, "field")}` : "", dim: true };
+      const { shown } = lineArgs(args);
+      // Counted as the preview lists them (the tool's defaults left out).
+      const onLine = new Set(shown.map(([k]) => k));
+      const more = orderedArgs(args, schema).filter(([k]) => !onLine.has(k)).length;
+      const fmt = ([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v)}`;
+      return { text: shown.map(fmt).join("  "), extra: more ? `+${plural(more, "field")}` : "", dim: true };
     }
     // The body is the preview's (callPreview), not the summary's.
     if (kind === "send") return { prefix: "→", text: String(args.to ?? "?") };
@@ -578,11 +575,38 @@
     .filter((l) => !/^(\+\+\+|---)/.test(l))
     .map((l) => ({ op: l[0] === "+" || l[0] === "-" ? l[0] : " ", text: l.slice(1) }));
 
+  /** The short arguments a call's line shows (the first three, as
+   *  passed), and how many more there are. */
+  function lineArgs(args) {
+    const short = [];
+    let long = 0;
+    for (const [k, v] of Object.entries(args || {})) {
+      if (v == null || v === "") continue;
+      const text = typeof v === "string" ? v : JSON.stringify(v);
+      if (text.length <= 40 && !text.includes("\n")) short.push([k, v]); else long++;
+    }
+    return { shown: short.slice(0, 3), more: short.length - Math.min(3, short.length) + long };
+  }
+  const kvText = (v) => (Array.isArray(v) ? v.map((x) => (x && typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ")
+    : v && typeof v === "object" ? JSON.stringify(v) : String(v));
+
   /** A line or two under a collapsed call: what it writes, changes,
    *  says or runs, for a glance down the transcript. Null where the
    *  summary line already says it (shell, read, search). Opening the
    *  call replaces it with the full blocks. */
-  function callPreview(name, args) {
+  /** A call's arguments, required first (in the schema's order), then
+   *  the rest, without those that only repeat the tool's default. */
+  function orderedArgs(args, schema) {
+    const entries = Object.entries(args || {}).filter(([, v]) => v != null && v !== "");
+    if (!schema) return entries;
+    const defaults = schema.defaults || {};
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const req = schema.required || [], order = schema.order || [];
+    const rank = (k) => (req.includes(k) ? req.indexOf(k) : order.includes(k) ? 1000 + order.indexOf(k) : 2000);
+    return entries.filter(([k, v]) => !(k in defaults && same(v, defaults[k]))).sort((a, b) => rank(a[0]) - rank(b[0]));
+  }
+
+  function callPreview(name, args, { schema = null } = {}) {
     args = args || {};
     const kind = toolKind(name, args);
     let rows = [];
@@ -602,20 +626,31 @@
       if (typeof diff === "string" && diff.trim()) rows = changeRows(unifiedRows(diff), lang);
       else if (typeof first?.content === "string") rows = leadLines(first.content).map((l) => codeRow(l, lang));
     } else if (kind === "send") {
-      const body = typeof args.body === "string" ? args.body : JSON.stringify(args.body ?? "");
-      rows = [proseRow(firstParagraph(body))];
+      rows = [proseRow(bodySummary(args.body))];
     } else if (kind === "spawn") {
       rows = [proseRow(firstParagraph(args.initial_message || args.role_prompt))];
     } else if (kind === "other") {
-      // The first long argument: code as code, prose as text.
-      for (const [k, v] of Object.entries(args)) {
-        if (typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
+      // What the call's line had no room for: the first long argument
+      // (code as code, prose as text), then the rest as ``key value``
+      // pairs, required first and without the tool's defaults.
+      const used = new Set(lineArgs(args).shown.map(([k]) => k));
+      for (const [k, v] of orderedArgs(args, schema)) {
+        if (used.has(k) || typeof v !== "string" || !(v.includes("\n") || v.length > 40)) continue;
+        used.add(k);
         if (PROSE_KEYS.has(k)) rows = [proseRow(firstParagraph(v), k)];
         else {
           const lang = k in CODE_KEYS ? (CODE_KEYS[k] || langForPath(pathOf(args))) : "";
           rows = leadLines(v).map((l, i) => codeRow(l, lang, { key: k, keyHidden: i > 0 }));
         }
         break;
+      }
+      const rest = orderedArgs(args, schema).filter(([k]) => !used.has(k));
+      if (rest.length && rows.length < PREVIEW_ROWS) {
+        rows.push(h("div", { class: "pv-row kv" }, rest.flatMap(([k, v], i) => [
+          i ? h("span", { class: "pv-sep", text: "·" }) : null,
+          h("span", { class: "pv-key", text: k }),
+          h("span", { class: "pv-val", text: clip(kvText(v), 60) }),
+        ])));
       }
     }
     rows = rows.filter(Boolean);
@@ -664,10 +699,11 @@
       }));
     }
     if (kind === "send" && renderMarkdown) {
-      const body = typeof args.body === "string" ? args.body : JSON.stringify(args.body, null, 2);
       const rest = { ...args };
       delete rest.body;
-      return h("div", { class: "callbody" }, fields(rest), h("div", { class: "prose" }, renderMarkdown(body || "")));
+      const body = parseBody(args.body);
+      return h("div", { class: "callbody" }, fields(rest),
+        typeof body === "string" ? h("div", { class: "prose" }, renderMarkdown(body || "")) : messageView(body, { renderMarkdown }));
     }
     return h("div", { class: "callbody" }, fields(args, { renderMarkdown }));
   }
@@ -678,14 +714,28 @@
 
   /** Arguments as labelled fields: short values inline, multi-line
    *  strings as code (or prose), objects as highlighted JSON. */
-  function fields(args, { renderMarkdown } = {}) {
+  function fields(args, { renderMarkdown, prose = false, depth = 0 } = {}) {
     if (!args || typeof args !== "object") return codeBlock(String(args ?? ""), {});
     const box = h("div", { class: "fields" });
     const path = pathOf(args);
     for (const [k, v] of Object.entries(args)) {
       if (v == null || v === "") continue;
+      // A message (``prose``): text reads as text, a list of sentences
+      // as a list, a nested record as fields; only code keys stay code.
+      if (prose && renderMarkdown && Array.isArray(v) && v.length && v.every((x) => typeof x === "string")) {
+        const short = v.every((x) => x.length <= 40 && !x.includes("\n"));
+        box.append(short && v.length <= 6
+          ? h("div", { class: "field" }, h("span", { class: "fkey", text: k }), h("span", { class: "fval-list" }, v.map((x) => h("code", { class: "fval", text: x }))))
+          : h("div", { class: "field block" }, h("span", { class: "fkey", text: k }),
+            h("ul", { class: "prose-list" }, v.map((x) => h("li", null, renderMarkdown(x))))));
+        continue;
+      }
+      if (prose && v && typeof v === "object" && !Array.isArray(v) && depth < 2) {
+        box.append(h("div", { class: "field block" }, h("span", { class: "fkey", text: k }), fields(v, { renderMarkdown, prose, depth: depth + 1 })));
+        continue;
+      }
       if (typeof v === "string" && (v.includes("\n") || v.length > 100)) {
-        if (PROSE_KEYS.has(k) && renderMarkdown) {
+        if ((PROSE_KEYS.has(k) || (prose && !(k in CODE_KEYS))) && renderMarkdown) {
           box.append(h("div", { class: "field block" }, h("span", { class: "fkey", text: k }), h("div", { class: "prose" }, renderMarkdown(v))));
         } else {
           const lang = k in CODE_KEYS ? (CODE_KEYS[k] || langForPath(path)) : "";
@@ -843,6 +893,10 @@
       };
     }
     const err = parsed && typeof parsed === "object" && parsed.ok === false;
+    // A tool that ran but reports a negative outcome (valid=false,
+    // status=error) is a failure to the reader.
+    const negative = !!parsed && typeof parsed === "object" && (["valid", "success", "passed", "converged"].some((k) => parsed[k] === false)
+      || /^(error|failed|failure|invalid)$/i.test(String(parsed.status ?? "")));
     // A successful write, edit or send says nothing the call didn't.
     if (!failed && !err && ["write", "edit", "multiedit", "patch", "send"].includes(kind)) return { chip: "✓", bad: false, body: null };
     // A spawn's result is the child's address.
@@ -855,11 +909,11 @@
     if (r?.el) {
       const n = parsed?.content != null ? lineCount(parsed.content) : 0;
       const chip = kind === "read" ? r.summary : r.summary ? clip(r.summary, 70) : "✓";
-      return { chip: chip || (n ? plural(n, "line") : "✓"), bad: false, body: r.el };
+      return { chip: chip || (n ? plural(n, "line") : "✓"), bad: negative, body: r.el };
     }
     if (parsed && typeof parsed === "object") {
       const brief = ["write", "edit", "multiedit", "patch", "send"].includes(kind) ? "" : compactDict(parsed);
-      return { chip: brief ? clip(brief, 70) : "✓", bad: false, body: null };
+      return { chip: brief ? clip(brief, 70) : "✓", bad: negative, body: null };
     }
     const t = String(text || "").trim();
     if (!t) return { chip: "✓", bad: false, body: null };
@@ -882,9 +936,93 @@
     return [status, lines ? plural(lines, "line") : "no output", cut ? `✂ ${Number(cut[1]).toLocaleString()} chars cut` : "", clip(last.trim(), 100)].filter(Boolean).join(" · ");
   }
 
+  // ---------- messages between agents ----------
+
+  const HASH = /^(?:sha\d*[:-])?[0-9a-f]{32,}$/i;
+  /** A workspace-relative file path worth linking ("results/fit.json"). */
+  const isRelPath = (v) => typeof v === "string" && v.length < 300 && !/\s/.test(v) && !/^(\/|~|\.\.|[a-z][\w+.-]*:)/i.test(v)
+    && (v.includes("/") || /\.[a-z0-9]{1,8}$/i.test(v)) && !/^\d+(\.\d+)*$/.test(v);
+  /** A message body as sent: agents often send JSON as a string. */
+  function parseBody(body) {
+    if (typeof body !== "string") return body;
+    const t = body.trim();
+    if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
+      try { return JSON.parse(t); } catch { /* prose that happens to start with a brace */ }
+    }
+    return body;
+  }
+  const shortScalar = (v) => {
+    const s = String(v);
+    return HASH.test(s) ? `${s.slice(0, 10)}…` : clip(s.replace(/\s+/g, " "), 48);
+  };
+  function compactFields(o) {
+    const parts = [];
+    let more = 0;
+    for (const [k, v] of Object.entries(o)) {
+      if (v == null || v === "") continue;
+      if (parts.length >= 3) { more++; continue; }
+      if (Array.isArray(v)) parts.push(`${k}=[${v.length}]`);
+      else if (typeof v === "object") parts.push(`${k}={…}`);
+      else parts.push(`${k}=${shortScalar(v)}`);
+    }
+    return parts.join(" · ") + (more ? ` · +${more}` : "");
+  }
+  /** One line for a message: its first paragraph, or for a structured
+   *  one its kind and first few fields, paths relative to ``roots``. */
+  function bodySummary(body, roots) {
+    const b = parseBody(body);
+    if (typeof b === "string") return firstParagraph(relText(b, roots));
+    if (Array.isArray(b)) return `${b.length} item${b.length === 1 ? "" : "s"}`;
+    if (!b || typeof b !== "object") return String(b ?? "");
+    const r = relArgs(b, roots);
+    const keys = Object.keys(r);
+    const inner = keys.length === 1 ? r[keys[0]] : null;
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) return `${keys[0]} · ${compactFields(inner)}`;
+    const kind = typeof r.kind === "string" ? r.kind : typeof r.type === "string" ? r.type : "";
+    if (kind) {
+      const rest = { ...r };
+      delete rest.kind; delete rest.type;
+      return `${kind} · ${compactFields(rest)}`;
+    }
+    return compactFields(r);
+  }
+  /** A message, readable: prose as markdown; a structured one as
+   *  labelled fields under its kind, file paths relative to ``roots``
+   *  and opening in the files view (``openPath``), long hashes shortened. */
+  function messageView(body, { roots, renderMarkdown, openPath } = {}) {
+    const b = parseBody(body);
+    if (typeof b === "string") {
+      const text = relText(b, roots);
+      return renderMarkdown ? h("div", { class: "resp" }, renderMarkdown(text)) : h("pre", { text });
+    }
+    if (!b || typeof b !== "object" || Array.isArray(b)) return codeBlock(JSON.stringify(b, null, 2), { lang: "json" });
+    let r = relArgs(b, roots);
+    let kind = "";
+    const keys = Object.keys(r);
+    if (keys.length === 1 && r[keys[0]] && typeof r[keys[0]] === "object" && !Array.isArray(r[keys[0]])) {
+      kind = keys[0];
+      r = r[keys[0]];
+    } else if (typeof r.kind === "string") {
+      kind = r.kind;
+      r = { ...r };
+      delete r.kind;
+    }
+    const box = fields(r, { renderMarkdown, prose: true });
+    for (const el of box.querySelectorAll("code.fval")) {
+      const t = el.textContent;
+      if (HASH.test(t)) { el.textContent = `${t.slice(0, 12)}…`; el.title = t; el.classList.add("hash"); }
+      else if (openPath && isRelPath(t)) {
+        el.classList.add("path");
+        el.title = "open in files";
+        el.addEventListener("click", (e) => { e.stopPropagation(); openPath(t); });
+      }
+    }
+    return h("div", { class: "msgview" }, kind ? h("span", { class: "msg-kind", text: kind }) : null, box);
+  }
+
   window.ConjureCode = {
     codeBlock, diffBlock, unifiedDiffBlock, highlightInto, langForPath, langForTag,
     parseLiteral, toolKind, callSummary, callPreview, renderCall, renderResult, fields, terminal,
-    resultForCall, relArgs, relText,
+    resultForCall, relArgs, relText, bodySummary, messageView, parseBody,
   };
 })();

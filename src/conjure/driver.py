@@ -239,6 +239,7 @@ class Driver:
             model, source = model_info(engine, record.spec)
             usage = _engine_usage(engine) or {}
             prompt = getattr(engine, "system_prompt_text", None)
+            schemas = getattr(engine, "tool_schemas", None)
             self.runtime.note_agent_meta(
                 record.addr,
                 {
@@ -250,6 +251,9 @@ class Driver:
                     # A replay's tree and header show these.
                     "tokens": usage.get("tokens"),
                     "unpriced_tokens": usage.get("unpriced_tokens"),
+                    # Argument order, required and defaults per tool: the
+                    # UI's call previews, in a replay as live.
+                    "tool_schemas": (schemas() or None) if callable(schemas) else None,
                 },
             )
         except Exception:

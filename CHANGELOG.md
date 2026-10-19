@@ -8,6 +8,50 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.12] — 2026-10-18
+
+Messages between agents, toolkit calls and the timeline read clearly, and
+the run record's tokens agree with the agent tree.
+
+### Changed
+
+- **Messages read as messages.** In the activity feed and the chat, a
+  message between agents sent as JSON shows as labelled fields under
+  its kind (`handoff`, `correction_request`), with paths relative to the
+  team's workspace (a file path opens in the files view) and long
+  hashes shortened. `Send` calls preview and show their message the
+  same way, and tool calls name agents instead of their addresses.
+- **Toolkit calls preview their arguments.** Under a collapsed call, the
+  preview lists the arguments its line had no room for (`initial t ·
+  final W+, b`): required ones first, and none that only repeat the
+  tool's default. Engines report each tool's argument order, required
+  arguments and defaults, journaled with the agent's provenance so a
+  replay previews the same way (runs from before this release list the
+  arguments as passed). A result that reports `valid`, `success`,
+  `passed` or `converged` false, or an error status, shows as failed.
+- **The activity feed** has one line per event, plus a summary line for a
+  message; click a message to read it in place. Filters show or hide
+  messages, tool calls and lifecycle events.
+- **The timeline** draws the agent tree in its lanes, turns as bars with
+  tool calls as a strip inside them (failures in red), and messages as
+  arrows between lanes. It sits in a titled pane with zoom controls,
+  and its rows grow to fill the pane for a small team.
+- **The replay scrubber** marks where messages, errors and failed tool
+  calls happened.
+- Agents that share a name are numbered (`specialist #1`, `#2`) wherever
+  they are named.
+- The agent tree no longer prints "default model" on every agent whose
+  model isn't known, and the chat and graph say so when they're empty.
+
+### Fixed
+
+- **The run record's tokens match the agent tree's.** Its tokens were
+  output only, so an agent that read 2.3M tokens and wrote 6.7k showed
+  6.7k beside the tree's 2.3M. It now shows tokens in and out (as the
+  tree counts them) with an output column, and marks tokens on a model
+  with no known price as "unpriced" instead of $0. A live run's record
+  includes its latest spawns and messages.
+
 ## [0.2.11] — 2026-10-18
 
 The files tab browses every workspace in the run and previews what the
@@ -611,7 +655,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.11...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.12...HEAD
+[0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/tonymenzo/conjure/compare/v0.2.8...v0.2.9

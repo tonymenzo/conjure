@@ -55,6 +55,21 @@
   /** replaceChildren that, like h(), skips null / false. */
   const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
   const SVG = "http://www.w3.org/2000/svg";
+  /** A small line icon that takes the text colour (glyphs like ✉ blur
+   *  into a box at this size). */
+  function icon(name) {
+    const paths = {
+      mail: [["rect", { x: 1.75, y: 3.25, width: 12.5, height: 9.5, rx: 1.6 }], ["path", { d: "M2.5 4.5 8 8.75 13.5 4.5" }]],
+    }[name];
+    const el = document.createElementNS(SVG, "svg");
+    for (const [k, v] of Object.entries({ class: `ico ico-${name}`, viewBox: "0 0 16 16", width: 13, height: 13, fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) el.setAttribute(k, v);
+    for (const [tag, attrs] of paths) {
+      const part = document.createElementNS(SVG, tag);
+      for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+      el.append(part);
+    }
+    return el;
+  }
   function s(tag, attrs, ...kids) {
     const el = document.createElementNS(SVG, tag);
     for (const [k, v] of Object.entries(attrs || {})) {
@@ -399,7 +414,7 @@
 
   // Tool calls: one summary line (the command, file or target); the
   // code, diff or output (code.js) one click away.
-  function toolCallBlock(name, original, roots) {
+  function toolCallBlock(name, original, roots, schemas) {
     const CC = window.ConjureCode;
     const label = toolName(name);
     const args = CC ? CC.relArgs(original, roots) : original;
@@ -410,7 +425,13 @@
         h("pre", { text: JSON.stringify(args, null, 2) }));
     }
     const kind = CC.toolKind(name, args);
-    const sum = CC.callSummary(name, args);
+    // The tool's argument schema, when the engine reported one: previews
+    // then lead with required arguments and skip defaults.
+    const schema = schemas?.[name] || schemas?.[String(name).replace(/^mcp__(conjure|spawn|toolbase)__/, "")] || null;
+    const sum = CC.callSummary(name, args, { schema });
+    // Agents by name, not address (Send → worker, WaitFor value="worker").
+    const named = (t) => (t ? String(t).replace(/\bag-[a-z0-9]{8,}\b/g, (id) => (S.agents.has(id) ? labelOf(id) : id)) : t);
+    if (sum) { sum.text = named(sum.text); sum.extra = named(sum.extra); }
     // The summary: the call's line, and under it while collapsed a
     // line or two of what it writes or says.
     const line = h("span", { class: "callhead" },
@@ -420,7 +441,9 @@
         ? [h("span", { class: "target" + (kind === "shell" ? " cmd" : "") + (sum.dim ? " dimmed" : ""), text: `${sum.prefix ? sum.prefix + " " : ""}${sum.text}` }),
            sum.extra ? h("span", { class: "args", text: sum.extra }) : null]
         : h("span", { class: "args", text: `(${argsPreview(args)})` }));
-    const head = h("summary", null, line, CC.callPreview(name, args));
+    const preview = CC.callPreview(name, args, { schema });
+    for (const el of preview?.querySelectorAll(".pv-val") || []) el.textContent = named(el.textContent);
+    const head = h("summary", null, line, preview);
     const fullPath = original && (original.file_path ?? original.path);
     if (typeof fullPath === "string" && fullPath !== (args.file_path ?? args.path)) head.title = fullPath;
     return h("details", { class: `toolcall rich kind-${kind}` },
@@ -518,6 +541,19 @@
       kids.forEach((c, i) => walk(c, nextPrefix, i === kids.length - 1, false));
     };
     walk(snap.tree, "", true, true);
+    // Agents that share a name get a number, in spawn order, wherever
+    // they're named (tree, chat, graph, timeline, run record).
+    const byLabel = new Map();
+    for (const n of S.agents.values()) {
+      if (!byLabel.has(n.label)) byLabel.set(n.label, []);
+      byLabel.get(n.label).push(n);
+    }
+    for (const group of byLabel.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => (a.spawned_at || 0) - (b.spawned_at || 0) || a.addr.localeCompare(b.addr));
+      group.forEach((n, i) => { n.base_label = n.label; n.label = `${n.label} #${i + 1}`; });
+    }
+    S.topRoots = topRoots();
     if (!S.selected && snap.tree) select(snap.tree.addr, { quiet: true });
     renderTree();
     renderActivity();
@@ -542,7 +578,7 @@
     for (const { node, prefix, isLast, isRoot } of S.order) {
       const guide = isRoot ? "" : prefix + (isLast ? "└─ " : "├─ ");
       const meta = [];
-      meta.push(node.model ? shortModel(node.model) : "default model");
+      if (node.model) meta.push(shortModel(node.model));
       if (node.cost) meta.push(money(node.cost));
       if (node.unpriced_tokens) meta.push(`${kfmt(node.unpriced_tokens)} tok unpriced`);
       else if (!node.cost && node.tokens) meta.push(`${kfmt(node.tokens)} tok`);
@@ -575,33 +611,86 @@
     return S.agents.get(addr)?.label || fallback || addr;
   }
 
-  function renderActivity() {
-    const box = $("#activity");
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+  /** Every agent's workspace paths that aren't inside another one,
+   *  longest first: messages show paths relative to the team's workspace. */
+  function topRoots() {
+    const all = new Set();
+    for (const n of S.agents.values()) for (const p of n.sandbox_paths || []) if (p && p.length > 1) all.add(p);
+    const paths = [...all];
+    return paths.filter((p) => !paths.some((q) => q !== p && p.startsWith(q + "/"))).sort((a, b) => b.length - a.length);
+  }
+  /** Open a path from a message (relative to the root's workspace) in the files view. */
+  function openPath(path) {
+    if (!S.snap?.tree) return;
+    S.filePath = path;
+    S.fileWs = S.snap.tree.addr;
+    setView("files");
+  }
+
+  // ---------- activity feed ----------
+  // One line per event (who, and a summary); a message opens in place.
+  const ACT_FILTERS = (() => {
+    try { return new Set(JSON.parse(localStorage.getItem("conjure-activity-filters")) || ["msg", "tool", "life"]); }
+    catch { return new Set(["msg", "tool", "life"]); }
+  })();
+  const actOpen = new Set();
+  function activityRows() {
+    const CC = window.ConjureCode;
     const rows = [];
-    for (const a of S.snap.activity || []) {
+    (S.snap.activity || []).forEach((a, i) => {
       const kind = a.headers?.kind;
+      const key = `m:${a.ts}:${a.from}:${a.to}:${i}`;
       if (a.from === "@system" && typeof a.body === "object" && a.body?.kind === "child_event") {
-        rows.push({ ts: a.ts, cls: "tool", who: labelOf(a.body.child_addr, a.body.child_label), arrow: "·", body: `${a.body.event}${a.body.reason ? " — " + a.body.reason : ""}` });
-        continue;
+        const ev = String(a.body.event || "");
+        const tone = /error|fail|exhaust|crash/i.test(ev) ? "bad" : /terminat|ended|stopp/i.test(ev) ? "ended" : "ok";
+        rows.push({ key, ts: a.ts, cat: "life", tone, who: labelOf(a.body.child_addr, a.body.child_label), body: `${ev}${a.body.reason ? " — " + a.body.reason.replace(/\bag-[a-z0-9]{8,}\b/g, (id) => labelOf(id)) : ""}` });
+        return;
       }
-      rows.push({
-        ts: a.ts,
-        cls: kind === "toolkit_request" ? "req" : "",
-        who: `${labelOf(a.from, a.from_label)} → ${labelOf(a.to, a.to_label)}`,
-        arrow: kind === "toolkit_request" ? "⚒" : "",
-        body: kind === "toolkit_request" ? `requests ${Object.keys(a.body?.toolkits || {}).join(", ")}` : clip(bodyText(a.body), 160),
-      });
-    }
+      if (kind === "toolkit_request") {
+        rows.push({ key, ts: a.ts, cat: "msg", tone: "req", who: labelOf(a.from, a.from_label), to: labelOf(a.to, a.to_label),
+          body: `requests toolkits: ${Object.keys(a.body?.toolkits || {}).join(", ")}`, msg: a });
+        return;
+      }
+      rows.push({ key, ts: a.ts, cat: "msg", who: labelOf(a.from, a.from_label), to: labelOf(a.to, a.to_label),
+        body: CC ? CC.bodySummary(a.body, S.topRoots) : clip(bodyText(a.body), 160), msg: a });
+    });
     for (const e of S.snap.tool_events || []) {
       if (e.kind !== "tool_call") continue;
-      rows.push({ ts: e.ts, cls: "tool", who: labelOf(e.from, e.from_label), arrow: "⏺", body: toolName(e.tool) });
+      rows.push({ key: `t:${e.ts}:${e.from}:${e.tool}`, ts: e.ts, cat: "tool", who: labelOf(e.from, e.from_label), body: toolName(e.tool) });
     }
     rows.sort((a, b) => a.ts - b.ts);
-    box.replaceChildren(...rows.slice(-150).map((r) =>
-      h("div", { class: `act ${r.cls}` },
+    return rows.filter((r) => ACT_FILTERS.has(r.cat)).slice(-150);
+  }
+  function renderActivity() {
+    const box = $("#activity");
+    for (const b of document.querySelectorAll(".act-filters button")) b.classList.toggle("active", ACT_FILTERS.has(b.dataset.f));
+    const rows = activityRows();
+    const sig = JSON.stringify([rows.map((r) => r.key), [...ACT_FILTERS], [...actOpen], S.agents.size]);
+    if (sig === renderActivity.sig) return;
+    renderActivity.sig = sig;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+    const CC = window.ConjureCode;
+    fill(box, rows.length ? rows.map((r) => {
+      const open = actOpen.has(r.key);
+      const glyph = { msg: icon("mail"), tool: "⏺", life: "●" }[r.cat];
+      // A message: who → whom, and the summary under it; anything else on one line.
+      const line = h("div", { class: `act-line${r.msg ? " two" : ""}` },
         h("span", { class: "t", text: clock(r.ts) }),
-        h("span", null, h("span", { class: "who", text: r.who }), r.arrow ? h("span", { class: "arrow", text: ` ${r.arrow} ` }) : " ", h("span", { class: "body", text: r.body })))));
+        h("span", { class: `g ${r.cat} ${r.tone || ""}`, "aria-hidden": "true" }, r.tone === "req" ? "⚒" : glyph),
+        h("span", { class: "who" }, r.who, r.to ? h("span", { class: "arrow", text: " → " }) : null, r.to || null),
+        h("span", { class: "sum", text: r.body }));
+      const el = h("div", { class: `act ${r.cat}${r.tone ? " " + r.tone : ""}${open ? " open" : ""}${r.msg ? " expandable" : ""}`, dataset: { key: r.key } }, line);
+      if (r.msg) {
+        line.title = open ? "click to fold" : "click to read the message";
+        line.addEventListener("click", () => { if (!actOpen.delete(r.key)) actOpen.add(r.key); renderActivity(); });
+        if (open) {
+          el.append(h("div", { class: "act-body" }, CC
+            ? CC.messageView(r.msg.body, { roots: S.topRoots, renderMarkdown, openPath })
+            : h("pre", { text: bodyText(r.msg.body) })));
+        }
+      }
+      return el;
+    }) : h("div", { class: "act-empty", text: ACT_FILTERS.size ? "nothing yet" : "every kind is filtered out" }));
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
@@ -675,6 +764,7 @@
       this.stream = null;   // {el, text, ts}
       this.turn = null;     // {el, start, tokens, done, src}
       this.roots = [];      // the agent's sandbox paths (relative display)
+      this.schemas = {};    // tool name -> {order, required, defaults}
     }
     block(el, ts, sub = false) {
       el.classList.add("blk");
@@ -813,7 +903,7 @@
       for (const tc of calls || []) {
         const name = tc.name || tc.tool_name;
         const args = tc.args ?? tc.arguments ?? {};
-        const el = this.block(toolCallBlock(name, args, this.roots), ts, true);
+        const el = this.block(toolCallBlock(name, args, this.roots, this.schemas), ts, true);
         this.pendingCalls.push({ name, args: window.ConjureCode ? window.ConjureCode.relArgs(args, this.roots) : args, el });
       }
     }
@@ -911,6 +1001,7 @@
         data = ev;
         // Paths in tool calls show relative to the agent's sandbox.
         this.renderer.roots = sandboxRoots(detail);
+        this.renderer.schemas = (detail && detail.tool_schemas) || {};
       } catch { return; }
       if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
@@ -930,6 +1021,7 @@
       const holder = h("div");
       const r = new Renderer(holder, { live: false });
       r.roots = this.renderer.roots;
+      r.schemas = this.renderer.schemas;
       for (const ev of data.events) r.apply(ev);
       r.flush();
       const prevHeight = this.body.scrollHeight;
@@ -966,6 +1058,7 @@
       try { this.detail = await api("agent", { addr: this.addr }); } catch { return; }
       if (!this.detail.ok) return;
       this.mergeInbox(this.detail.inbox || []);
+      if (this.detail.tool_schemas && this.renderer) this.renderer.schemas = this.detail.tool_schemas;   // a live grant adds tools
       this.updateHeader();
       if (this.inspectorOpen) this.renderInspector();
     }
@@ -978,17 +1071,18 @@
         this.seenSeq.add(e.seq);
         let el;
         if (e.from === "@system" && e.body && e.body.kind === "child_event") {
-          el = h("div", { class: "metablk blk", text: `⚙ ${e.body.child_label || e.body.child_addr}: ${e.body.event}${e.body.reason ? " — " + e.body.reason : ""}` });
+          const reason = e.body.reason ? String(e.body.reason).replace(/\bag-[a-z0-9]{8,}\b/g, (id) => labelOf(id)) : "";
+          el = h("div", { class: "metablk blk", text: `⚙ ${labelOf(e.body.child_addr, e.body.child_label || e.body.child_addr)}: ${e.body.event}${reason ? " — " + reason : ""}` });
         } else if (e.kind === "toolkit_request") {
           el = h("div", { class: "msgblk blk" },
             h("div", { class: "from", text: `⚒ ${labelOf(e.from, e.from_label)} requests toolkits` }),
             h("pre", { text: `${JSON.stringify(e.body.toolkits)}${e.body.reason ? "\nreason: " + e.body.reason : ""}` }));
         } else {
           el = h("div", { class: "msgblk blk" },
-            h("div", { class: "from", text: `✉ ${labelOf(e.from, e.from_label)} · ${clock(e.ts)}` }),
-            typeof e.body === "string"
-              ? h("div", { class: "resp" }, renderMarkdown(e.body))
-              : h("pre", { text: bodyText(e.body) }));
+            h("div", { class: "from" }, icon("mail"), ` ${labelOf(e.from, e.from_label)} · ${clock(e.ts)}`),
+            window.ConjureCode
+              ? window.ConjureCode.messageView(e.body, { roots: S.topRoots, renderMarkdown, openPath })
+              : typeof e.body === "string" ? h("div", { class: "resp" }, renderMarkdown(e.body)) : h("pre", { text: bodyText(e.body) }));
         }
         el.dataset.ts = e.ts;
         const after = [...this.body.children].find((c) => c.dataset.ts && parseFloat(c.dataset.ts) > e.ts);
@@ -1103,7 +1197,7 @@
           h("div", { class: `budget${node.subtree_cost > d.budget ? " over" : ""}` }, h("i", { style: `width:${Math.min(100, (100 * node.subtree_cost) / d.budget).toFixed(1)}%` })))
       : h("span", { class: "dim", text: node ? `uncapped · subtree ${money(node.subtree_cost)}` : "uncapped" });
     const kits = Object.entries(d.toolkits || {});
-    const chipLink = (r) => h("span", { class: "chip link", text: r.label, title: r.addr, onclick: () => select(r.addr) });
+    const chipLink = (r) => h("span", { class: "chip link", text: labelOf(r.addr, r.label), title: r.addr, onclick: () => select(r.addr) });
     frag.append(
       h("dl", { class: "kv" },
         h("dt", { text: "address" }), h("dd", { text: d.addr }),
@@ -1205,7 +1299,7 @@
       if (!addr) { box.replaceChildren(h("div", { class: "empty", text: "select an agent" })); return; }
       let d;
       try { d = await api("agent", { addr }); } catch { return; }
-      box.replaceChildren(h("div", { class: "insp-title" }, h("span", { class: "dot", style: `background: ${dotColor(S.agents.get(addr)?.status || d.status)}` }), h("b", { text: d.label })),
+      box.replaceChildren(h("div", { class: "insp-title" }, h("span", { class: "dot", style: `background: ${dotColor(S.agents.get(addr)?.status || d.status)}` }), h("b", { text: labelOf(addr, d.label) })),
         inspectorContent(d, S.agents.get(addr)),
         h("div", { class: "insp-actions" },
           h("button", { text: "open chat", onclick: () => openChat(addr) }),
@@ -1243,64 +1337,110 @@
       if (!d) return;
       const wrap = $("#timeline-wrap");
       const svg = $("#timeline");
-      const LABEL = 210, ROW = 26, TOP = 26;
-      const lanesAll = orderLanes(d.lanes);
-      const lanes = lanesAll.filter((l) => S.showInternal || !l.internal);
-      const width = Math.max(600, wrap.clientWidth - 4);
-      const height = TOP + lanes.length * ROW + 10;
+      const LABEL = 236, TOP = 30;
+      const lanes = orderLanes(d.lanes).filter((l) => S.showInternal || !l.internal);
+      const width = Math.max(600, wrap.clientWidth - 2);
+      // Rows grow to fill the pane when the team is small.
+      const ROW = Math.round(Math.max(30, Math.min(46, lanes.length ? (wrap.clientHeight - TOP - 16) / lanes.length : 40)));
+      const height = Math.max(TOP + lanes.length * ROW + 16, wrap.clientHeight - 2);
       const [t0, t1] = this.domain();
       this.view = { t0, t1, LABEL, width };
-      const x = (t) => LABEL + ((t - t0) / (t1 - t0)) * (width - LABEL - 10);
+      const PW = width - LABEL - 16;
+      const x = (t) => LABEL + ((t - t0) / (t1 - t0)) * PW;
       svg.setAttribute("width", width);
       svg.setAttribute("height", height);
+      const span = $("#tl-span");
+      if (span) span.textContent = dur(t1 - t0);
+      const idx = new Map(lanes.map((l, i) => [l.addr, i]));
+      const yOf = (i) => TOP + i * ROW;
       const g = s("g");
-      // axis
+      g.append(s("defs", null, s("marker", { id: "tl-arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" },
+        s("path", { d: "M0,1 L10,5 L0,9 z", fill: "var(--amber)" }))));
+      lanes.forEach((l, i) => g.append(s("rect", {
+        class: `tl-lane-bg${i % 2 ? " alt" : ""}${l.addr === S.selected ? " selected" : ""}`, x: 0, y: yOf(i), width, height: ROW,
+      })));
+      // Time axis and its grid.
       const axis = s("g", { class: "tl-axis" });
-      const step = niceStep((t1 - t0) / Math.max(2, (width - LABEL) / 110));
+      const step = niceStep((t1 - t0) / Math.max(2, PW / 120));
+      const fmt = (t) => (step >= 60 ? clock(t).slice(0, 5) : clock(t));
       for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
         const xx = x(t);
-        axis.append(s("line", { x1: xx, x2: xx, y1: TOP - 6, y2: height }), s("text", { x: xx + 3, y: TOP - 10, text: clock(t) }));
+        if (xx < LABEL) continue;
+        axis.append(s("line", { class: "grid", x1: xx, x2: xx, y1: TOP - 4, y2: height }), s("text", { x: xx + 4, y: TOP - 10, text: fmt(t) }));
       }
+      axis.append(s("line", { class: "split", x1: LABEL - 8, x2: LABEL - 8, y1: 0, y2: height }));
       g.append(axis);
-      const clipId = "tlclip";
-      g.append(s("clipPath", { id: clipId }, s("rect", { x: LABEL, y: 0, width: width - LABEL, height })));
-      const plot = s("g", { "clip-path": `url(#${clipId})` });
+      // Lane labels: the agent tree, as in the sidebar.
+      const indent = (depth) => 12 + Math.min(depth, 8) * 14;
+      const labels = s("g", { class: "tl-labels" });
       lanes.forEach((l, i) => {
-        const y = TOP + i * ROW;
-        const mid = y + ROW / 2;
-        g.append(s("rect", { class: `tl-lane-bg${i % 2 ? " alt" : ""}${l.addr === S.selected ? " selected" : ""}`, x: 0, y, width, height: ROW }));
-        g.append(s("text", {
-          class: `tl-label${l.status === "terminated" ? " terminated" : ""}`, x: 8 + Math.min(l.depth, 6) * 12, y: mid + 4,
-          text: clip(l.label, 24 - Math.min(l.depth, 6)), onclick: () => select(l.addr),
-        }));
+        const mid = yOf(i) + ROW / 2;
+        const pi = l.parent != null ? idx.get(l.parent) : undefined;
+        if (pi !== undefined) {
+          const gx = indent(lanes[pi].depth) + 4;
+          labels.append(s("path", { class: "tl-guide", d: `M${gx},${yOf(pi) + ROW / 2 + 6} V${mid - 4} Q${gx},${mid} ${gx + 4},${mid} H${indent(l.depth) - 2}` }));
+        }
+        const node = S.agents.get(l.addr);
+        const status = node?.awaiting_permission ? "awaiting" : (node?.status || l.status);
+        const nx = indent(l.depth) + 13;
+        labels.append(
+          s("circle", { cx: indent(l.depth) + 4, cy: mid, r: 3.5, fill: dotColor(status) }),
+          s("text", {
+            class: `tl-label${l.status === "terminated" ? " terminated" : ""}${l.addr === S.selected ? " selected" : ""}`, x: nx, y: mid + 4,
+            text: clip(labelOf(l.addr, l.label), Math.max(6, Math.floor((LABEL - 20 - nx) / 7.3))), onclick: () => select(l.addr),
+          }, s("title", { text: `${labelOf(l.addr, l.label)}${node?.model ? ` · ${node.model}` : ""} · ${status}` })));
+      });
+      g.append(labels);
+      g.append(s("clipPath", { id: "tlclip" }, s("rect", { x: LABEL, y: 0, width: width - LABEL, height })));
+      const plot = s("g", { "clip-path": "url(#tlclip)" });
+      const arrows = s("g", { class: "tl-arrows" });
+      lanes.forEach((l, i) => {
+        const y = yOf(i), mid = y + ROW / 2;
+        const name = labelOf(l.addr, l.label);
         const end = l.end ?? (S.live ? now() : d.t_max);
         plot.append(s("line", { class: "tl-life", x1: x(l.start), x2: x(end), y1: mid, y2: mid }));
         for (const turn of l.turns) {
           const te = turn.end ?? (S.live ? now() : end);
           plot.append(s("rect", {
             class: `tl-turn${turn.errored ? " errored" : ""}${turn.end == null ? " open" : ""}`,
-            x: x(turn.start), y: y + 6, width: Math.max(2, x(te) - x(turn.start)), height: ROW - 12, rx: 2,
-            "data-tip": `${l.label} · turn ${clock(turn.start)} · ${dur(te - turn.start)}${turn.errored ? " · errored" : ""}`,
+            x: x(turn.start), y: mid - 8, width: Math.max(2, x(te) - x(turn.start)), height: 16, rx: 3,
+            "data-tip": `${name} · turn ${clock(turn.start)} · ${dur(te - turn.start)}${turn.errored ? " · errored" : ""}`,
           }));
         }
+        // Tool calls as a thin strip inside the turn; failures stand out.
         for (const tc of l.tools) {
           const te = tc.done ?? tc.ts;
           plot.append(s("rect", {
-            class: `tl-tool${tc.failed ? " failed" : ""}`, x: x(tc.ts) - 1, y: y + 3, width: Math.max(2.5, x(te) - x(tc.ts)), height: ROW - 6, rx: 1,
-            "data-tip": `${l.label} · ${toolName(tc.name)} · ${clock(tc.ts)}${tc.done ? " · " + dur(tc.done - tc.ts) : ""}${tc.failed ? " · failed" : ""}`,
+            class: `tl-tool${tc.failed ? " failed" : ""}`,
+            x: x(tc.ts) - (tc.failed ? 1 : 0.5), y: tc.failed ? mid - 8 : mid - 3, width: Math.max(tc.failed ? 2.5 : 1.5, x(te) - x(tc.ts)), height: tc.failed ? 16 : 6,
+            "data-tip": `${name} · ${toolName(tc.name)} · ${clock(tc.ts)}${tc.done ? " · " + dur(tc.done - tc.ts) : ""}${tc.failed ? " · failed" : ""}`,
           }));
         }
         for (const m of l.messages) {
           const xx = x(m.ts);
-          plot.append(s("path", { class: "tl-msg", d: `M${xx - 4},${y + 1} L${xx + 4},${y + 1} L${xx},${y + 7} z`, "data-tip": `${l.label} ← ${labelOf(m.from, m.from_label)} · ${clock(m.ts)}` }));
+          const si = idx.get(m.from);
+          const tip = `${labelOf(m.from, m.from_label)} → ${name} · ${clock(m.ts)}`;
+          if ($("#tl-arrows").checked && si !== undefined && si !== i) {
+            const y1 = yOf(si) + ROW / 2, y2 = si < i ? y + 5 : y + ROW - 5;
+            arrows.append(s("line", { class: "tl-arrow", x1: xx, x2: xx, y1, y2, "marker-end": "url(#tl-arr)", "data-tip": tip }));
+          } else if (si === undefined) {
+            plot.append(s("path", { class: "tl-msg", d: `M${xx - 4},${y + 2} L${xx + 4},${y + 2} L${xx},${y + 8} z`, "data-tip": tip }));
+          }
         }
-        for (const e of l.errors) plot.append(s("circle", { class: "tl-err", cx: x(e.ts), cy: mid, r: 4, "data-tip": `${l.label} · error · ${e.text}` }));
+        for (const e of l.errors) plot.append(s("circle", { class: "tl-err", cx: x(e.ts), cy: mid, r: 4, "data-tip": `${name} · error · ${e.text}` }));
       });
+      plot.append(arrows);
       g.append(plot);
       if (S.live) { const xn = x(now()); if (xn > LABEL) g.append(s("line", { class: "tl-now", x1: xn, x2: xn, y1: TOP - 6, y2: height })); }
-      else if (S.at != null) { const xa = x(S.at); g.append(s("line", { class: "tl-cursor", x1: xa, x2: xa, y1: TOP - 6, y2: height })); }
-      if (!lanes.length) g.append(s("text", { x: 20, y: 60, class: "tl-label", text: "no agents yet" }));
+      else if (S.at != null) { const xa = x(S.at); if (xa > LABEL) g.append(s("line", { class: "tl-cursor", x1: xa, x2: xa, y1: TOP - 6, y2: height })); }
+      if (!lanes.length) g.append(s("text", { x: width / 2, y: 90, "text-anchor": "middle", class: "tl-empty", text: "no agents yet" }));
       svg.replaceChildren(g);
+    },
+    /** Zoom about the middle of the plot (the zoom buttons). */
+    zoomBy(factor) {
+      if (!this.view) return;
+      if (this.t0 == null) { this.t0 = this.view.t0; this.t1 = this.view.t1; }
+      this.zoom(factor, this.view.LABEL + (this.view.width - this.view.LABEL) / 2);
     },
     zoom(factor, atX) {
       const v = this.view;
@@ -1399,6 +1539,23 @@
         if (t >= lo && t <= hi) { range.value = Math.round(((t - lo) / (hi - lo)) * 1000); this.goto(t); }
       });
       this.setLabel(null);
+      api("timeline").then((d) => this.ticks(d)).catch(() => {});
+    },
+    /** Marks along the scrubber where messages, errors and failed tool
+     *  calls happened, so the interesting moments are easy to find. */
+    ticks(d) {
+      const svg = $("#scrub-ticks");
+      const [lo, hi] = this.bounds();
+      if (!svg || !(hi > lo)) return;
+      const at = (t) => ((t - lo) / (hi - lo)) * 1000;
+      const marks = [];
+      for (const l of d.lanes || []) {
+        for (const m of l.messages || []) marks.push(s("rect", { class: "tick msg", x: at(m.ts) - 1.5, y: 9, width: 3, height: 7 }));
+        for (const tc of l.tools || []) if (tc.failed) marks.push(s("rect", { class: "tick fail", x: at(tc.ts) - 1.5, y: 5, width: 3, height: 11 }));
+        for (const e of l.errors || []) marks.push(s("rect", { class: "tick err", x: at(e.ts) - 2, y: 2, width: 4, height: 14 }));
+      }
+      svg.setAttribute("viewBox", "0 0 1000 16");
+      svg.replaceChildren(...marks);
     },
     bounds() { return [S.meta.started ?? 0, S.meta.last_event ?? 1]; },
     timeFor(v) { const [lo, hi] = this.bounds(); return lo + (v / 1000) * (hi - lo); },
@@ -1466,6 +1623,17 @@
     });
     $("#tl-fit").addEventListener("click", () => { Timeline.t0 = Timeline.t1 = null; $("#tl-follow").checked = true; Timeline.render(); });
     $("#tl-follow").addEventListener("change", () => Timeline.render());
+    $("#tl-arrows").addEventListener("change", () => Timeline.render());
+    $("#tl-zoom-in").addEventListener("click", () => Timeline.zoomBy(1 / 1.5));
+    $("#tl-zoom-out").addEventListener("click", () => Timeline.zoomBy(1.5));
+    $("#tl-span").addEventListener("click", () => { Timeline.t0 = Timeline.t1 = null; $("#tl-follow").checked = true; Timeline.render(); });
+    for (const b of document.querySelectorAll(".act-filters button")) {
+      b.addEventListener("click", () => {
+        if (!ACT_FILTERS.delete(b.dataset.f)) ACT_FILTERS.add(b.dataset.f);
+        store.set("conjure-activity-filters", JSON.stringify([...ACT_FILTERS]));
+        renderActivity();
+      });
+    }
 
     const wrap = $("#timeline-wrap");
     wrap.addEventListener("wheel", (e) => {
@@ -1560,15 +1728,20 @@
       const secs = (x) => (x == null ? "—" : dur(x));
       const ex = m.export;
       const agents = (sm.agents || []).filter((a) => !a.internal);
+      // Cost as the top bar shows it: tokens on a model with no known
+      // price are "unpriced", never a misleading $0.
+      const costText = (usd, unpriced) => (unpriced && !usd ? "unpriced" : `${money(usd || 0)}${unpriced ? " + unpriced" : ""}`);
+      const tokTitle = (a) => `${(a.tokens || 0).toLocaleString()} tokens in and out · ${(a.tokens_out || 0).toLocaleString()} output${a.unpriced_tokens ? ` · ${(a.unpriced_tokens).toLocaleString()} unpriced` : ""}`;
       const row = (a) => h("tr", { onclick: () => { $("#run").hidden = true; setView("chat"); openChat(a.id, { focus: false }); } },
-        h("td", { text: a.label || a.id }),
+        h("td", { text: labelOf(a.id, a.label || a.id) }),
         h("td", { text: ENGINE_NAMES[a.engine] || a.engine || "—" }),
         h("td", { text: a.model ? shortModel(a.model) : "—", title: a.model_source ? `${a.model} (${a.model_source})` : "" }),
         h("td", { class: "num", text: a.turns ?? 0 }),
         h("td", { class: "num", text: `${a.tool_calls ?? 0}${a.tool_errors ? ` (${a.tool_errors}✗)` : ""}` }),
-        h("td", { class: "num", text: kfmt(a.tokens_out || 0) }),
+        h("td", { class: "num", text: kfmt(a.tokens ?? a.tokens_out ?? 0), title: tokTitle(a) }),
+        h("td", { class: "num dim", text: kfmt(a.tokens_out || 0) }),
         h("td", { class: "num", text: secs(a.active_s) }),
-        h("td", { class: "num", text: money(a.cost_usd || 0) }));
+        h("td", { class: `num${a.unpriced_tokens && !a.cost_usd ? " dim" : ""}`, text: costText(a.cost_usd, a.unpriced_tokens) }));
       const kv = (pairs) => h("dl", { class: "run-kv" }, pairs.filter(([, v]) => v != null && v !== "").flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: String(v) })]));
       const pkgs = Object.entries(env.packages || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
       const clis = Object.entries(env.clis || {}).map(([k, v]) => `${k}: ${v}`).join(" · ");
@@ -1583,10 +1756,10 @@
           stat(String(sm.messages ?? 0), "messages"),
           stat(`${t.turns ?? 0}${t.errored_turns ? ` (${t.errored_turns}✗)` : ""}`, "turns"),
           stat(`${t.tool_calls ?? 0}${t.tool_errors ? ` (${t.tool_errors}✗)` : ""}`, "tool calls"),
-          stat(kfmt(t.tokens_out || 0), "output tokens"),
-          stat(money(t.cost_usd || 0), "cost"))),
+          stat(kfmt(t.tokens ?? t.tokens_out ?? 0), `tokens · ${kfmt(t.tokens_out || 0)} output`),
+          stat(t.unpriced_tokens && !t.cost_usd ? "unpriced" : money(t.cost_usd || 0), t.unpriced_tokens ? `cost · + ${kfmt(t.unpriced_tokens)} tokens unpriced` : "cost"))),
         h("section", null, h("h3", { text: "Agents" }), h("div", { class: "run-table-wrap" }, h("table", { class: "run-table" },
-          h("thead", null, h("tr", null, ["agent", "engine", "model"].map((x) => h("th", { text: x })), ["turns", "tool calls", "tokens", "active", "cost"].map((x) => h("th", { class: "num", text: x })))),
+          h("thead", null, h("tr", null, ["agent", "engine", "model"].map((x) => h("th", { text: x })), ["turns", "tool calls", "tokens", "output", "active", "cost"].map((x) => h("th", { class: "num", text: x, title: x === "tokens" ? "input + output, as the agent tree counts them" : null })))),
           h("tbody", null, agents.map(row))))),
         h("section", null, h("h3", { text: "Environment" }), kv([
           ["session", m.session || sm.session], ["started", m.started_at_iso], ["platform", env.platform], ["python", env.python],
