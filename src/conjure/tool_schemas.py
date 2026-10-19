@@ -41,7 +41,8 @@ def from_tools(tools: Iterable[Any], *, name: Callable[[Any, Any], str] | None =
             continue
         # orchestral leaves defaults out of the schema the model sees;
         # a pydantic tool still declares them on its fields.
-        fields = getattr(tool, "model_fields", None) or {}
+        cls = tool if isinstance(tool, type) else type(tool)   # pydantic: fields live on the class
+        fields = getattr(cls, "model_fields", None) or {}
         for arg in schema["order"]:
             if arg in schema["required"] or arg in schema["defaults"] or arg not in fields:
                 continue
