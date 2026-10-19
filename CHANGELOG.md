@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.13] — 2026-10-19
+
+A replay plays back smoothly, at any speed, from a proper player.
+
 ### Added
 
 - **Replay plays back smoothly.** The bar under a replay is now a player.
@@ -677,7 +681,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.12...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.13...HEAD
+[0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
