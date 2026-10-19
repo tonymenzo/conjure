@@ -90,8 +90,10 @@ views tmux can't show:
 - a **timeline** of each agent's turns, tool calls and incoming messages;
 - a sandbox **file browser**.
 
-`--replay` reopens any journaled session with a time scrubber, so you can
-watch it unfold again. The server binds to loopback, and every API call
+`--replay` reopens any journaled session with a player, so you can watch
+it unfold again: play it at any speed from ¼× to 2000×, skip the idle
+stretches, step from event to event, or drag to any moment. It ends on
+the same read-only view you started from. The server binds to loopback, and every API call
 needs the session token printed in the URL. On a remote host, use
 `ssh -L 8765:localhost:8765`.
 

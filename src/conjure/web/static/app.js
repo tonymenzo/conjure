@@ -3,8 +3,9 @@
  * Data flow: one /api/snapshot poll (tree, cost, activity, permissions)
  * drives the always-visible chrome; each open chat column tails its
  * agent's event log by byte offset; graph / timeline / files refresh
- * only while visible. In replay mode nothing polls — every view
- * re-reads when the scrubber moves, passing ?at=<instant>.
+ * only while visible. In replay mode nothing polls: every view reads
+ * the session as of the playhead (?at=<instant>), and while the
+ * player runs each chat reads its log ahead and reveals it on time.
  */
 "use strict";
 (() => {
@@ -31,6 +32,7 @@
   const POLL_DETAIL_MS = 2000;
   const POLL_VIEW_MS = 2000;
   const MAX_COLUMNS = 4;
+  const READ_AHEAD_BYTES = 256 * 1024;
 
   // ---------- tiny DOM helpers ----------
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -57,12 +59,20 @@
   const SVG = "http://www.w3.org/2000/svg";
   /** A small line icon that takes the text colour (glyphs like ✉ blur
    *  into a box at this size). */
-  function icon(name) {
+  function icon(name, size = 13) {
+    const solid = { fill: "currentColor" };
     const paths = {
       mail: [["rect", { x: 1.75, y: 3.25, width: 12.5, height: 9.5, rx: 1.6 }], ["path", { d: "M2.5 4.5 8 8.75 13.5 4.5" }]],
+      play: [["path", { d: "M4.9 3.2v9.6L12.1 8z", ...solid }]],
+      pause: [["rect", { x: 4, y: 3, width: 2.6, height: 10, rx: 0.7, ...solid, stroke: "none" }], ["rect", { x: 9.4, y: 3, width: 2.6, height: 10, rx: 0.7, ...solid, stroke: "none" }]],
+      start: [["path", { d: "M3.75 3.5v9" }], ["path", { d: "M12.5 3.7v8.6L6.2 8z", ...solid }]],
+      end: [["path", { d: "M12.25 3.5v9" }], ["path", { d: "M3.5 3.7v8.6L9.8 8z", ...solid }]],
+      prev: [["path", { d: "M10 3.5 5.5 8l4.5 4.5" }]],
+      next: [["path", { d: "M6 3.5 10.5 8 6 12.5" }]],
+      skip: [["path", { d: "M2.75 4 6.75 8l-4 4" }], ["path", { d: "M8.25 4l4 4-4 4" }]],
     }[name];
     const el = document.createElementNS(SVG, "svg");
-    for (const [k, v] of Object.entries({ class: `ico ico-${name}`, viewBox: "0 0 16 16", width: 13, height: 13, fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) el.setAttribute(k, v);
+    for (const [k, v] of Object.entries({ class: `ico ico-${name}`, viewBox: "0 0 16 16", width: size, height: size, fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) el.setAttribute(k, v);
     for (const [tag, attrs] of paths) {
       const part = document.createElementNS(SVG, tag);
       for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
@@ -468,10 +478,12 @@
   }
 
   // ---------- API ----------
-  async function api(path, params = {}) {
+  /** ``at`` is the replay instant to read at (default: the playhead;
+   *  null: the end, the whole record). */
+  async function api(path, params = {}, { at = S.at } = {}) {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v != null && v !== "") q.set(k, v);
-    if (!S.live && S.at != null) q.set("at", S.at);
+    if (!S.live && at != null) q.set("at", at);
     const res = await fetch(`/api/${path}?${q}`, { headers: { "X-Conjure-Token": S.token } });
     setConn(res.ok || res.status < 500);
     if (res.status === 401) { showGate(); throw new Error("unauthorized"); }
@@ -571,7 +583,7 @@
     const tree = $("#tree");
     // Same reason as the chat header: only rebuild on a visible change.
     const sig = JSON.stringify(S.order.map(({ node, prefix, isLast }) => [node.addr, node.label, node.status,
-      node.awaiting_permission, node.model, node.cost?.toFixed?.(4), node.toolkits?.length, node.oneshot, prefix, isLast]));
+      node.awaiting_permission, node.model, node.cost?.toFixed?.(4), kfmt(node.tokens), kfmt(node.unpriced_tokens), node.toolkits?.length, node.oneshot, prefix, isLast]));
     if (sig === renderTree.sig) return;
     renderTree.sig = sig;
     const frag = document.createDocumentFragment();
@@ -765,6 +777,7 @@
       this.turn = null;     // {el, start, tokens, done, src}
       this.roots = [];      // the agent's sandbox paths (relative display)
       this.schemas = {};    // tool name -> {order, required, defaults}
+      this.clock = null;    // replay at an instant: the playhead, for an open turn's elapsed time
     }
     block(el, ts, sub = false) {
       el.classList.add("blk");
@@ -858,8 +871,8 @@
     paintTurn() {
       const t = this.turn;
       if (!t) return;
-      const live = this.live && !t.done;
-      const end = t.done ? t.end : live ? Date.now() / 1000 : t.firstText || t.start;
+      const live = !t.done && (this.live || !!this.clock);
+      const end = t.done ? t.end : this.live ? Date.now() / 1000 : this.clock ? Math.max(t.start, this.clock()) : t.firstText || t.start;
       t.el.classList.toggle("live", live && !t.firstText);
       fill(t.el,
         h("span", { class: live ? "spin" : "dim", text: live ? "◆" : "◇" }),
@@ -869,7 +882,7 @@
         t.errored ? h("span", { style: "color:var(--red)", text: "errored" }) : null,
       );
     }
-    tick() { if (this.turn && !this.turn.done && this.live) this.paintTurn(); }
+    tick() { if (this.turn && !this.turn.done && (this.live || this.clock)) this.paintTurn(); }
     /** Re-render the streaming reply as markdown at most every 150 ms:
      *  tables and math appear as they arrive, without re-typesetting
      *  per token. */
@@ -988,16 +1001,22 @@
     scrollEnd() { this.body.scrollTop = this.body.scrollHeight; }
     async load() {
       const epoch = ++this.epoch;
+      // A replay reads at one instant throughout, though the playhead moves on.
+      const at = S.live ? null : S.at;
       this.loaded = false;
+      this.reading = false;
       this.body.replaceChildren();
       this.renderer = new Renderer(this.body, { live: S.live });
+      if (at != null) this.renderer.clock = () => Player.t ?? at;
       this.seenSeq.clear();
-      let data;
+      let data, ahead = null;
       try {
-        const [ev, detail] = await Promise.all([
-          api("events", { addr: this.addr }),
-          api("agent", { addr: this.addr }).catch(() => null),
+        const [ev, detail, inbox] = await Promise.all([
+          api("events", { addr: this.addr }, { at }),
+          api("agent", { addr: this.addr }, { at }).catch(() => null),
+          at != null ? api("inbox", { addr: this.addr, after: at }, { at: null }).catch(() => null) : null,
         ]);
+        ahead = inbox;
         data = ev;
         // Paths in tool calls show relative to the agent's sandbox.
         this.renderer.roots = sandboxRoots(detail);
@@ -1006,12 +1025,69 @@
       if (epoch !== this.epoch) return;   // retargeted meanwhile
       this.start = data.start;
       this.offset = data.offset;
+      // Replay: where the player picks up. What comes after the instant
+      // is read ahead of the playhead and shown as its time comes.
+      this.cursor = at;
+      this.readOffset = data.offset;
+      this.eof = data.offset >= data.size;
+      this.buffer = [];
+      this.inboxBuf = ahead?.inbox || [];
+      this.inboxMore = !!ahead?.more;
       this.loaded = true;
       if (data.start > 0) this.body.append(this.olderButton());
       for (const ev of data.events) this.renderer.apply(ev);
-      if (!S.live) this.renderer.flush();
-      await this.refreshDetail();
+      // At the end the record is complete; at an instant a reply may
+      // still be streaming.
+      if (!S.live && at == null) this.renderer.flush();
+      await this.refreshDetail(at);
+      if (epoch !== this.epoch) return;
       this.scrollEnd();
+    }
+    /** Replay: show what happened up to ``t`` from the read-ahead
+     *  buffers, and keep them ahead of the playhead. Seeking reloads
+     *  instead, so ``t`` only moves forward here. */
+    advance(t) {
+      if (!this.loaded || this.cursor == null || t < this.cursor) return;
+      this.cursor = t;
+      const stick = this.nearBottom();
+      let shown = 0;
+      while (this.buffer.length && !((this.buffer[0].ts || 0) > t)) { this.renderer.apply(this.buffer.shift()); shown++; }
+      const envs = [];
+      while (this.inboxBuf.length && this.inboxBuf[0].ts <= t) envs.push(this.inboxBuf.shift());
+      if (envs.length) this.mergeInbox(envs, { stick: false });
+      if ((shown || envs.length) && stick) this.scrollEnd();
+      if (Math.floor(t) !== this.tickSec) { this.tickSec = Math.floor(t); this.renderer.tick(); }
+      this.readAhead(t);
+    }
+    async readAhead(t) {
+      if (this.reading) return;
+      const horizon = t + Math.max(30, Player.speed * 6);
+      const lastTs = () => (this.buffer.length ? this.buffer[this.buffer.length - 1].ts || 0 : -Infinity);
+      const needEvents = () => !this.eof && this.buffer.length < 4000 && lastTs() < horizon;
+      const needInbox = () => this.inboxMore && this.inboxBuf.length < 100;
+      if (!needEvents() && !needInbox()) return;
+      const epoch = this.epoch;
+      this.reading = true;
+      try {
+        while (epoch === this.epoch && needEvents()) {
+          const d = await api("events", { addr: this.addr, since: this.readOffset, limit: READ_AHEAD_BYTES }, { at: null });
+          if (epoch !== this.epoch) return;
+          for (const ev of d.events) this.buffer.push(ev);
+          const moved = d.offset > this.readOffset;
+          this.readOffset = d.offset;
+          this.eof = d.offset >= d.size;
+          if (!moved) break;
+        }
+        if (epoch === this.epoch && needInbox()) {
+          const after = this.inboxBuf.length ? this.inboxBuf[this.inboxBuf.length - 1].ts : this.cursor;
+          const d = await api("inbox", { addr: this.addr, after }, { at: null });
+          if (epoch !== this.epoch) return;
+          for (const e of d.inbox) this.inboxBuf.push(e);
+          this.inboxMore = d.more && d.inbox.length > 0;
+        }
+      } catch { /* the next frame tries again */ } finally {
+        if (epoch === this.epoch) this.reading = false;
+      }
     }
     olderButton() {
       return h("button", { class: "older", text: "load earlier", onclick: (e) => this.loadOlder(e.target) });
@@ -1054,8 +1130,8 @@
       for (const ev of data.events) this.renderer.apply(ev);
       if (stick) this.scrollEnd();
     }
-    async refreshDetail() {
-      try { this.detail = await api("agent", { addr: this.addr }); } catch { return; }
+    async refreshDetail(at = S.live ? null : S.at) {
+      try { this.detail = await api("agent", { addr: this.addr }, { at }); } catch { return; }
       if (!this.detail.ok) return;
       this.mergeInbox(this.detail.inbox || []);
       if (this.detail.tool_schemas && this.renderer) this.renderer.schemas = this.detail.tool_schemas;   // a live grant adds tools
@@ -1064,8 +1140,7 @@
     }
     /** Messages from other agents (and supervision events) aren't in
      *  the event log; interleave them by timestamp. */
-    mergeInbox(envs) {
-      const stick = this.nearBottom();
+    mergeInbox(envs, { stick = this.nearBottom() } = {}) {
       for (const e of envs) {
         if (this.seenSeq.has(e.seq) || e.from === "@user") continue;
         this.seenSeq.add(e.seq);
@@ -1085,8 +1160,13 @@
               : typeof e.body === "string" ? h("div", { class: "resp" }, renderMarkdown(e.body)) : h("pre", { text: bodyText(e.body) }));
         }
         el.dataset.ts = e.ts;
-        const after = [...this.body.children].find((c) => c.dataset.ts && parseFloat(c.dataset.ts) > e.ts);
-        this.body.insertBefore(el, after || null);
+        // Usually the newest: look from the end.
+        let after = null;
+        for (let c = this.body.lastElementChild; c; c = c.previousElementSibling) {
+          if (!c.dataset.ts) continue;
+          if (parseFloat(c.dataset.ts) > e.ts) after = c; else break;
+        }
+        this.body.insertBefore(el, after);
       }
       if (stick) this.scrollEnd();
     }
@@ -1323,8 +1403,11 @@
     },
     domain() {
       const d = this.data;
-      const lo = d.t_min ?? now() - 60;
-      const hi = Math.max(d.now ?? d.t_max ?? lo + 60, lo + 5);
+      // A replay spans the whole record, so playing it fills the lanes
+      // in from the left instead of rescaling them.
+      const [rlo, rhi] = S.live ? [] : Player.bounds();
+      const lo = S.live ? d.t_min ?? now() - 60 : Math.min(rlo, d.t_min ?? rlo);
+      const hi = S.live ? Math.max(d.now ?? d.t_max ?? lo + 60, lo + 5) : Math.max(rhi, d.t_max ?? rhi);
       if (this.t0 == null) return [lo, hi + (hi - lo) * 0.02];
       if ($("#tl-follow").checked && S.live) {
         const span = this.t1 - this.t0;
@@ -1432,9 +1515,21 @@
       plot.append(arrows);
       g.append(plot);
       if (S.live) { const xn = x(now()); if (xn > LABEL) g.append(s("line", { class: "tl-now", x1: xn, x2: xn, y1: TOP - 6, y2: height })); }
-      else if (S.at != null) { const xa = x(S.at); if (xa > LABEL) g.append(s("line", { class: "tl-cursor", x1: xa, x2: xa, y1: TOP - 6, y2: height })); }
+      else {
+        const xa = S.at != null ? x(S.at) : -1;
+        g.append(s("line", { class: "tl-cursor", x1: xa, x2: xa, y1: TOP - 6, y2: height, visibility: xa > LABEL ? "visible" : "hidden" }));
+      }
       if (!lanes.length) g.append(s("text", { x: width / 2, y: 90, "text-anchor": "middle", class: "tl-empty", text: "no agents yet" }));
       svg.replaceChildren(g);
+    },
+    /** Replay: move the playhead line without redrawing the lanes. */
+    cursor(t) {
+      const v = this.view, line = $("#timeline .tl-cursor");
+      if (!v || !line) return;
+      const xa = v.LABEL + ((t - v.t0) / (v.t1 - v.t0)) * (v.width - v.LABEL - 16);
+      line.setAttribute("x1", xa);
+      line.setAttribute("x2", xa);
+      line.setAttribute("visibility", xa > v.LABEL && xa < v.width ? "visible" : "hidden");
     },
     /** Zoom about the middle of the plot (the zoom buttons). */
     zoomBy(factor) {
@@ -1517,77 +1612,306 @@
     if (view === "chat" && !S.columns.length && S.selected) openChat(S.selected);
   }
 
-  // ---------- replay scrubber ----------
-  const Scrub = {
-    playing: null,
+  // ---------- replay player ----------
+  /** Plays a replay back at any speed. The chats reveal what happened
+   *  up to the playhead from logs they read ahead, so playback runs at
+   *  frame rate without a request per frame; the tree, activity feed,
+   *  graph and timeline re-read the session at the playhead a few
+   *  times a second. "Skip idle" hurries through the quiet stretches
+   *  (model calls, long tools). Reaching the end shows the read-only
+   *  view, exactly as when nothing was played. */
+  const SPEED_MIN = 0.25, SPEED_MAX = 2000;
+  const SPEED_PRESETS = [1, 5, 20, 100, 500];
+  const IDLE_WALL_S = 0.4;       // what a skipped quiet stretch still takes to play
+  const VIEWS_EVERY_MS = 250;    // tree / feed / graph / timeline, while playing
+  const clampSpeed = (v) => Math.min(SPEED_MAX, Math.max(SPEED_MIN, v));
+  /** 0.25× · 2.5× · 20× */
+  const speedText = (v) => `${v < 10 ? String(Math.round(v * 100) / 100) : Math.round(v)}×`;
+  /** h:mm:ss, or m:ss under an hour. */
+  function hms(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = sec % 60;
+    return h ? `${h}:${pad(m)}:${pad(s2)}` : `${m}:${pad(s2)}`;
+  }
+  const Player = {
+    t: null,               // the playhead; null = the end (the read-only view)
+    playing: false,
+    speed: 10,
+    skipIdle: true,
+    gaps: [],              // [[from, to]] with nothing happening, sorted
+    marks: [],             // when things started (turns, messages, errors), sorted
+    epoch: 0,
     init() {
       $("#scrubber").hidden = false;
-      const range = $("#scrub-range");
-      let timer = null;
-      range.addEventListener("input", () => {
-        this.stop();
-        this.setLabel(this.timeFor(range.value));
-        clearTimeout(timer);
-        timer = setTimeout(() => this.goto(this.timeFor(range.value)), 120);
-      });
-      $("#scrub-play").addEventListener("click", () => (this.playing ? this.stop() : this.play()));
-      $("#scrub-end").addEventListener("click", () => { this.stop(); range.value = 1000; this.goto(null); });
+      this.speed = clampSpeed(Number(store.get("conjure-replay-speed")) || 10);
+      this.skipIdle = store.get("conjure-replay-skip") !== "0";
+      const [lo, hi] = this.bounds();
+      $("#pb-total").textContent = hms(hi - lo);
+      for (const [id, name] of [["pb-start", "start"], ["pb-prev", "prev"], ["pb-next", "next"], ["pb-end", "end"]]) $(`#${id}`).replaceChildren(icon(name, 14));
+      $("#pb-skip").prepend(icon("skip", 13));
+      $("#pb-play").addEventListener("click", () => this.toggle());
+      $("#pb-start").addEventListener("click", () => this.seek(lo));
+      $("#pb-prev").addEventListener("click", () => this.step(-1));
+      $("#pb-next").addEventListener("click", () => this.step(1));
+      $("#pb-end").addEventListener("click", () => this.end());
+      $("#pb-skip").addEventListener("click", () => this.setSkip(!this.skipIdle));
+      this.wireTrack();
+      this.wireSpeed();
       $("#timeline").addEventListener("click", (e) => {
         if (Timeline.dragged) return;
         const t = Timeline.timeAt(e.clientX);
-        const [lo, hi] = this.bounds();
-        if (t >= lo && t <= hi) { range.value = Math.round(((t - lo) / (hi - lo)) * 1000); this.goto(t); }
+        if (t >= lo && t <= hi) this.seek(t);
       });
-      this.setLabel(null);
-      api("timeline").then((d) => this.ticks(d)).catch(() => {});
+      api("replay", {}, { at: null }).then((d) => { this.gaps = d.gaps || []; this.drawMarks(); }).catch(() => {});
+      api("timeline", {}, { at: null }).then((d) => { this.index(d); this.drawMarks(); }).catch(() => {});
+      this.paint();
     },
-    /** Marks along the scrubber where messages, errors and failed tool
-     *  calls happened, so the interesting moments are easy to find. */
-    ticks(d) {
-      const svg = $("#scrub-ticks");
-      const [lo, hi] = this.bounds();
-      if (!svg || !(hi > lo)) return;
-      const at = (t) => ((t - lo) / (hi - lo)) * 1000;
-      const marks = [];
+    bounds() { return [S.meta.started ?? 0, Math.max(S.meta.last_event ?? 1, (S.meta.started ?? 0) + 1)]; },
+    /** The moments worth stepping to, and the scrubber's marks. */
+    index(d) {
+      const marks = [], ticks = [];
       for (const l of d.lanes || []) {
-        for (const m of l.messages || []) marks.push(s("rect", { class: "tick msg", x: at(m.ts) - 1.5, y: 9, width: 3, height: 7 }));
-        for (const tc of l.tools || []) if (tc.failed) marks.push(s("rect", { class: "tick fail", x: at(tc.ts) - 1.5, y: 5, width: 3, height: 11 }));
-        for (const e of l.errors || []) marks.push(s("rect", { class: "tick err", x: at(e.ts) - 2, y: 2, width: 4, height: 14 }));
+        if (l.start) marks.push(l.start);
+        for (const tr of l.turns || []) marks.push(tr.start);
+        for (const m of l.messages || []) { marks.push(m.ts); ticks.push(["msg", m.ts]); }
+        for (const tc of l.tools || []) if (tc.failed) ticks.push(["fail", tc.ts]);
+        for (const e of l.errors || []) { marks.push(e.ts); ticks.push(["err", e.ts]); }
       }
-      svg.setAttribute("viewBox", "0 0 1000 16");
-      svg.replaceChildren(...marks);
+      this.marks = [...new Set(marks.filter((t) => typeof t === "number"))].sort((a, b) => a - b);
+      this.ticks = ticks;
     },
-    bounds() { return [S.meta.started ?? 0, S.meta.last_event ?? 1]; },
-    timeFor(v) { const [lo, hi] = this.bounds(); return lo + (v / 1000) * (hi - lo); },
-    setLabel(t) {
+    /** When something was happening (lit), and the moments that matter
+     *  (messages, failed tool calls, errors) along the track. */
+    drawMarks() {
+      const svg = $("#pb-marks");
       const [lo, hi] = this.bounds();
-      const at = t ?? hi;
-      $("#scrub-time").textContent = `${clock(at)}  +${dur(at - lo)} / ${dur(hi - lo)}`;
+      const x = (t) => ((t - lo) / (hi - lo)) * 1000;
+      const parts = [];
+      // Busy stretches light up the rail: the space between quiet gaps.
+      let from = lo;
+      for (const [a, b] of [...this.gaps, [hi, hi]]) {
+        if (a > from) parts.push(s("rect", { class: "pb-busy", x: x(from), y: 0, width: Math.max(1, x(a) - x(from)), height: 10 }));
+        from = Math.max(from, b);
+      }
+      for (const [kind, t] of this.ticks || []) parts.push(s("rect", { class: `pb-tick ${kind}`, x: x(t) - 0.6, y: 0, width: 1.2, height: 10 }));
+      svg.setAttribute("viewBox", "0 0 1000 10");
+      svg.replaceChildren(...parts);
     },
-    async goto(t) {
+    gapAt(t) {
+      let lo = 0, hi = this.gaps.length - 1, hit = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (this.gaps[mid][0] <= t) { hit = this.gaps[mid]; lo = mid + 1; } else hi = mid - 1;
+      }
+      return hit && t < hit[1] ? hit : null;
+    },
+    /** Whether anything happened in (a, b]: not if both sit in one gap. */
+    changed(a, b) {
+      if (a == null || b == null || b < a) return true;
+      const g = this.gapAt(a);
+      return !(g && b < g[1]);
+    },
+
+    // ----- transport -----
+    toggle() { this.playing ? this.pause() : this.play(); },
+    async play() {
+      const [lo] = this.bounds();
+      if (this.t == null) { this.t = lo; S.at = lo; this.reload(); }
+      this.playing = true;
+      this.last = performance.now();
+      this.paint();
+      cancelAnimationFrame(this.raf);
+      this.raf = requestAnimationFrame((n) => this.frame(n));
+    },
+    pause() {
+      if (!this.playing) return;
+      this.playing = false;
+      cancelAnimationFrame(this.raf);
+      this.paint();
+      this.refreshViews(true);
+    },
+    frame(nowMs) {
+      if (!this.playing) return;
+      const dt = Math.min(0.1, Math.max(0, (nowMs - this.last) / 1000));
+      this.last = nowMs;
+      let t = this.t + dt * this.speed;
+      if (this.skipIdle) {
+        const g = this.gapAt(t);
+        if (g && g[1] - t > this.speed * IDLE_WALL_S) t = g[1] - this.speed * IDLE_WALL_S;
+      }
       const [, hi] = this.bounds();
-      S.at = t == null || t >= hi ? null : t;
-      this.setLabel(t);
-      await refreshAll();
+      if (t >= hi) { this.end(); return; }
+      this.t = t;
+      S.at = t;
+      for (const c of S.columns) c.advance(t);
+      if (S.view === "timeline") Timeline.cursor(t);
+      this.paint();
+      if (nowMs - (this.viewsAt || 0) > VIEWS_EVERY_MS) { this.viewsAt = nowMs; this.refreshViews(); }
+      this.raf = requestAnimationFrame((n) => this.frame(n));
     },
-    play() {
-      const range = $("#scrub-range");
-      if (Number(range.value) >= 1000) range.value = 0;
-      $("#scrub-play").textContent = "❚❚";
+    /** Move the playhead. The views re-read there once it settles. */
+    seek(t) {
       const [lo, hi] = this.bounds();
-      let t = this.timeFor(range.value);
-      let busy = false;
-      this.playing = setInterval(async () => {
-        if (busy) return;
-        busy = true;
-        t += 0.25 * Number($("#scrub-speed").value);
-        if (t >= hi) { range.value = 1000; this.stop(); await this.goto(null); busy = false; return; }
-        range.value = Math.round(((t - lo) / (hi - lo)) * 1000);
-        await this.goto(t);
-        busy = false;
-      }, 250);
+      t = Math.max(lo, Math.min(hi, t));
+      if (t >= hi) { this.end(); return; }
+      this.t = t;
+      S.at = t;
+      if (this.playing) this.last = performance.now();
+      this.paint();
+      clearTimeout(this.seekTimer);
+      this.seekTimer = setTimeout(() => this.reload(), 90);
     },
-    stop() { clearInterval(this.playing); this.playing = null; $("#scrub-play").textContent = "▶"; },
+    /** Back to the read-only view of the whole record. */
+    end() {
+      this.playing = false;
+      cancelAnimationFrame(this.raf);
+      clearTimeout(this.seekTimer);
+      this.t = null;
+      S.at = null;
+      this.paint();
+      this.reload();
+    },
+    /** To the previous / next moment something started. */
+    step(dir) {
+      const [lo, hi] = this.bounds();
+      const at = this.t ?? hi;
+      const eps = 1e-3;
+      let t = null;
+      if (dir > 0) t = this.marks.find((m) => m > at + eps) ?? null;
+      else for (let i = this.marks.length - 1; i >= 0; i--) if (this.marks[i] < at - eps) { t = this.marks[i]; break; }
+      if (t == null) { if (dir > 0) this.end(); else this.seek(lo); return; }
+      this.seek(t);
+    },
+    nudge(frac) {
+      const [lo, hi] = this.bounds();
+      this.seek((this.t ?? hi) + frac * (hi - lo));
+    },
+    async reload() {
+      const epoch = ++this.epoch;
+      this.viewsAt = performance.now();
+      this.shownAt = S.at;
+      await refreshAll();
+      if (epoch === this.epoch && S.view === "timeline" && this.t != null) Timeline.cursor(this.t);
+    },
+    /** Tree, feed and the visible graph / timeline at the playhead
+     *  (skipped while nothing has happened since the last read). */
+    async refreshViews(force = false) {
+      if (this.viewsBusy) return;
+      const at = S.at;
+      if (!force && !this.changed(this.shownAt, at)) return;
+      this.viewsBusy = true;
+      try {
+        await refreshSnapshot();
+        if (S.view === "graph") await Graph.refresh();
+        else if (S.view === "timeline") await Timeline.refresh();
+        this.shownAt = at;
+      } finally { this.viewsBusy = false; }
+    },
+
+    // ----- speed -----
+    setSpeed(v) {
+      this.speed = clampSpeed(v >= 10 ? Math.round(v) : Math.round(v * 20) / 20);
+      store.set("conjure-replay-speed", String(this.speed));
+      this.paint();
+    },
+    setSkip(on) {
+      this.skipIdle = on;
+      store.set("conjure-replay-skip", on ? "1" : "0");
+      this.paint();
+    },
+    wireSpeed() {
+      const btn = $("#pb-speed"), pop = $("#pb-speed-pop"), range = $("#pb-speed-range");
+      const toSlider = (v) => Math.round((1000 * Math.log(v / SPEED_MIN)) / Math.log(SPEED_MAX / SPEED_MIN));
+      const fromSlider = (x) => SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, x / 1000);
+      this.speedSlider = (v) => { range.value = toSlider(v); };
+      const open = (on) => {
+        pop.hidden = !on;
+        btn.setAttribute("aria-expanded", String(on));
+        if (on) { this.speedSlider(this.speed); range.focus({ preventScroll: true }); }
+      };
+      this.closeSpeed = () => open(false);
+      btn.addEventListener("click", () => open(pop.hidden));
+      document.addEventListener("pointerdown", (e) => { if (!pop.hidden && !e.target.closest("#pb-speed-pop, #pb-speed")) open(false); });
+      range.addEventListener("input", () => this.setSpeed(fromSlider(Number(range.value))));
+      range.addEventListener("keydown", (e) => { if (e.key === "Escape" || e.key === "Enter") { open(false); btn.focus(); } });
+      fill($("#pb-presets"), SPEED_PRESETS.map((v) => h("button", { type: "button", dataset: { v }, text: speedText(v),
+        onclick: () => { this.setSpeed(v); this.speedSlider(v); } })));
+      btn.addEventListener("wheel", (e) => { e.preventDefault(); this.setSpeed(this.speed * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }, { passive: false });
+    },
+    faster(f) { this.setSpeed(this.speed * f); this.speedSlider?.(this.speed); },
+
+    // ----- the track -----
+    wireTrack() {
+      const track = $("#pb-track"), tip = $("#pb-tip");
+      const timeAt = (clientX) => {
+        const r = track.getBoundingClientRect();
+        const [lo, hi] = this.bounds();
+        return lo + Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * (hi - lo);
+      };
+      const showTip = (clientX) => {
+        const r = track.getBoundingClientRect();
+        const t = timeAt(clientX);
+        const [lo] = this.bounds();
+        tip.textContent = `${hms(t - lo)}  ·  ${clock(t)}`;
+        tip.hidden = false;
+        const half = tip.offsetWidth / 2;
+        tip.style.left = `${Math.min(r.width - half, Math.max(half, clientX - r.left))}px`;
+      };
+      track.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        track.focus({ preventScroll: true });
+        track.setPointerCapture(e.pointerId);
+        this.drag = { resume: this.playing };
+        track.classList.add("dragging");
+        if (this.playing) { this.playing = false; cancelAnimationFrame(this.raf); }
+        this.seek(timeAt(e.clientX));
+        showTip(e.clientX);
+      });
+      track.addEventListener("pointermove", (e) => {
+        showTip(e.clientX);
+        if (this.drag) this.seek(timeAt(e.clientX));
+      });
+      const release = (e) => {
+        if (!this.drag) return;
+        const { resume } = this.drag;
+        this.drag = null;
+        track.classList.remove("dragging");
+        if (e.type === "pointerup") this.seek(timeAt(e.clientX));
+        if (!track.matches(":hover")) tip.hidden = true;
+        if (resume && this.t != null) this.play(); else this.paint();
+      };
+      track.addEventListener("pointerup", release);
+      track.addEventListener("pointercancel", release);
+      track.addEventListener("pointerleave", () => { if (!this.drag) tip.hidden = true; });
+    },
+    paint() {
+      const [lo, hi] = this.bounds();
+      const at = this.t ?? hi;
+      const f = Math.min(1, Math.max(0, (at - lo) / (hi - lo)));
+      const track = $("#pb-track");
+      track.style.setProperty("--pb-f", f.toFixed(5));
+      track.setAttribute("aria-valuenow", String(Math.round(at - lo)));
+      track.setAttribute("aria-valuemax", String(Math.round(hi - lo)));
+      track.setAttribute("aria-valuetext", `${hms(at - lo)} of ${hms(hi - lo)}`);
+      $("#pb-elapsed").textContent = hms(at - lo);
+      $("#pb-clock").textContent = clock(at);
+      const play = $("#pb-play");
+      if (play.dataset.state !== (this.playing ? "pause" : "play")) {
+        play.dataset.state = this.playing ? "pause" : "play";
+        play.replaceChildren(icon(this.playing ? "pause" : "play", 16));
+        play.title = this.playing ? "Pause (space)" : "Play (space)";
+        play.setAttribute("aria-label", this.playing ? "Pause" : "Play");
+      }
+      $("#scrubber").classList.toggle("at-end", this.t == null);
+      $("#scrubber").classList.toggle("playing", this.playing);
+      $("#pb-speed-val").textContent = speedText(this.speed);
+      $("#pb-speed-now").textContent = speedText(this.speed);
+      for (const b of document.querySelectorAll("#pb-presets button")) b.classList.toggle("active", Number(b.dataset.v) === this.speed);
+      const skip = $("#pb-skip");
+      skip.classList.toggle("on", this.skipIdle);
+      skip.setAttribute("aria-pressed", String(this.skipIdle));
+    },
   };
 
   async function refreshAll() {
@@ -1702,9 +2026,22 @@
         case "Enter": e.preventDefault(); openChat(S.selected, { focus: true }); break;
         case "s": splitColumn(); break;
         case "?": $("#help").hidden = !$("#help").hidden; break;
-        case "Escape": $("#help").hidden = true; $("#run").hidden = true; break;
+        case "Escape": $("#help").hidden = true; $("#run").hidden = true; Player.closeSpeed?.(); break;
         case "r": $("#run").hidden ? RunRecord.open() : ($("#run").hidden = true); break;
-        case " ": if (!S.live) { e.preventDefault(); Scrub.playing ? Scrub.stop() : Scrub.play(); } break;
+      }
+      if (!S.live) {
+        let done = true;
+        switch (e.key) {
+          case " ": Player.toggle(); break;
+          case "ArrowRight": e.shiftKey ? Player.nudge(1 / 50) : Player.step(1); break;
+          case "ArrowLeft": e.shiftKey ? Player.nudge(-1 / 50) : Player.step(-1); break;
+          case ">": Player.faster(1.25); break;
+          case "<": Player.faster(0.8); break;
+          case "Home": Player.seek(Player.bounds()[0]); break;
+          case "End": Player.end(); break;
+          default: done = false;
+        }
+        if (done) e.preventDefault();
       }
     });
   }
@@ -1835,7 +2172,7 @@
     const badge = $("#mode-badge");
     badge.textContent = S.live ? "live" : "replay";
     badge.className = `badge ${S.live ? "live" : "replay"}`;
-    if (!S.live) { $("#auto-toggle").hidden = true; Scrub.init(); }
+    if (!S.live) { $("#auto-toggle").hidden = true; Player.init(); }
     const [hashView, hashAgent, ...hashPath] = location.hash.slice(1).split("/");
     if (hashView === "files" && hashPath.length) S.filePath = hashPath.map(decodeURIComponent).join("/");
     if (hashAgent) S.selected = hashAgent;

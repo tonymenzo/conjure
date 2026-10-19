@@ -195,6 +195,68 @@ def test_replay_cache_reuses_views(session):
     assert cache.at(1.0) is not first  # evicted
 
 
+def test_replay_cache_shares_parsed_logs(session):
+    session["rt"]._journal.flush()
+    cache = ReplayCache(session["dir"])
+    early, late = cache.at(1.0), cache.at(None)
+    assert early._parse_cache is late._parse_cache
+
+
+def test_events_page_forward_on_line_boundaries(session):
+    view, a = session["view"], session["a"].id
+    full = view.events(a)
+    got, offset = [], 0
+    while offset < full["size"]:
+        page = view.events(a, since=offset, limit=40)  # shorter than any line
+        assert page["events"] and page["offset"] > offset
+        got += page["events"]
+        offset = page["offset"]
+    assert got == full["events"]
+
+
+def test_events_at_an_instant_end_after_it(session):
+    session["rt"]._journal.flush()
+    a = session["a"].id
+    full = SessionView.replay_session(session["dir"]).events(a)
+    chunk = next(e for e in full["events"] if e["kind"] == "chunk")
+    at = SessionView.replay_session(session["dir"], until=chunk["ts"])
+    head = at.events(a)
+    assert head["events"][-1]["ts"] <= chunk["ts"] and head["offset"] < head["size"]
+    # Reading on from there (as the player does) picks up the rest.
+    rest = SessionView.replay_session(session["dir"]).events(a, since=head["offset"])
+    assert head["events"] + rest["events"] == full["events"]
+
+
+def test_inbox_by_time(session):
+    view, a = session["view"], session["a"].id
+    ping = view.inbox(a)["inbox"]
+    assert [e["body"] for e in ping] == ["ping"]
+    assert view.inbox(a, after=ping[0]["ts"])["inbox"] == []
+    assert view.inbox(a, until=ping[0]["ts"] - 1e-6)["inbox"] == []
+    assert view.inbox("nope")["ok"] is False
+
+
+def test_replay_index_lists_the_quiet_stretches(session):
+    session["rt"]._journal.flush()
+    view = SessionView.replay_session(session["dir"])
+    every = view.replay_index(min_gap=0)
+    assert every["start"] <= every["end"]
+    assert all(every["start"] <= a <= b <= every["end"] for a, b in every["gaps"])
+    assert view.replay_index(min_gap=3600)["gaps"] == []
+
+
+def test_replay_shows_an_agent_mid_turn_as_running(session):
+    session["rt"]._journal.flush()
+    a = session["a"].id
+    chunk = next(e for e in SessionView.replay_session(session["dir"]).events(a)["events"] if e["kind"] == "chunk")
+    mid = SessionView.replay_session(session["dir"], until=chunk["ts"])
+    status = {n["addr"]: n["status"] for n in mid.snapshot()["tree"]["children"]}
+    assert status[a] == "running" and status[session["b"].id] == "idle"
+    assert mid.agent(a)["status"] == "running"
+    end = SessionView.replay_session(session["dir"])
+    assert {n["status"] for n in end.snapshot()["tree"]["children"]} == {"idle"}
+
+
 # ---------- HTTP server ----------
 
 
@@ -234,6 +296,16 @@ def test_page_is_public_api_is_not(server):
     assert _req(server, "GET", "/api/snapshot", token="wrong")[0] == 401
     status, snap = _req(server, "GET", "/api/snapshot")
     assert status == 200 and snap["tree"]["label"] == "root"
+
+
+def test_player_routes(server, session):
+    a = session["a"].id
+    status, page = _req(server, "GET", f"/api/events?addr={a}&since=0&limit=40")
+    assert status == 200 and page["events"] and page["offset"] < page["size"]
+    status, inbox = _req(server, "GET", f"/api/inbox?addr={a}&after=0")
+    assert status == 200 and [e["body"] for e in inbox["inbox"]] == ["ping"]
+    status, index = _req(server, "GET", "/api/replay")
+    assert status == 200 and "gaps" in index
 
 
 def test_collapsed_calls_carry_a_preview(server):

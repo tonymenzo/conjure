@@ -146,17 +146,36 @@
     </section>
   </main>
 
-  <footer id="scrubber" hidden>
-    <button id="scrub-play" class="icon" title="Play (space)">▶</button>
-    <select id="scrub-speed" title="Playback speed">
-      <option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="600">600×</option>
-    </select>
-    <div id="scrub-track">
-      <svg id="scrub-ticks" aria-hidden="true" preserveAspectRatio="none"></svg>
-      <input type="range" id="scrub-range" min="0" max="1000" value="1000" step="1" aria-label="Replay position">
+  <footer id="scrubber" class="player" hidden aria-label="Replay">
+    <div class="pb-transport">
+      <button id="pb-start" class="pb-btn" type="button" title="Back to the start (Home)" aria-label="Back to the start"></button>
+      <button id="pb-prev" class="pb-btn" type="button" title="Previous event (←)" aria-label="Previous event"></button>
+      <button id="pb-play" class="pb-btn pb-play" type="button" title="Play (space)" aria-label="Play"></button>
+      <button id="pb-next" class="pb-btn" type="button" title="Next event (→)" aria-label="Next event"></button>
     </div>
-    <span id="scrub-time" class="mono"></span>
-    <button id="scrub-end" class="small-btn" title="Jump to end">end</button>
+    <div class="pb-time mono" aria-live="off"><span id="pb-elapsed">0:00</span><span class="pb-of">/</span><span id="pb-total">0:00</span></div>
+    <div id="pb-track" class="pb-track" role="slider" tabindex="0" aria-label="Replay position" aria-valuemin="0">
+      <div class="pb-rail">
+        <svg id="pb-marks" aria-hidden="true" preserveAspectRatio="none"></svg>
+        <div class="pb-fill"></div>
+      </div>
+      <div class="pb-thumb"></div>
+      <div id="pb-tip" class="pb-tip mono" hidden></div>
+    </div>
+    <span id="pb-clock" class="pb-clock mono" title="Time of day at the playhead"></span>
+    <div class="pb-opts">
+      <button id="pb-skip" class="pb-chip" type="button" title="Hurry through quiet stretches — model calls, long tools — with nothing to show" aria-pressed="true"><span>skip idle</span></button>
+      <div class="pb-speed-wrap">
+        <button id="pb-speed" class="pb-chip pb-speed" type="button" title="Playback speed (&lt; &gt;)" aria-haspopup="dialog" aria-expanded="false"><span id="pb-speed-val">10×</span></button>
+        <div id="pb-speed-pop" class="pb-pop" role="dialog" aria-label="Playback speed" hidden>
+          <div class="pb-pop-head"><span>Speed</span><b id="pb-speed-now" class="mono">10×</b></div>
+          <input id="pb-speed-range" type="range" min="0" max="1000" step="1" aria-label="Playback speed">
+          <div class="pb-scale mono"><span>0.25×</span><span>2000×</span></div>
+          <div id="pb-presets" class="pb-presets"></div>
+        </div>
+      </div>
+      <button id="pb-end" class="pb-btn" type="button" title="Jump to the end (End)" aria-label="Jump to the end"></button>
+    </div>
   </footer>
 </div>
 
@@ -218,8 +237,17 @@
           <dt><kbd>F6</kbd></dt><dd>Toggle auto-approve</dd>
           <dt><kbd>Ctrl</kbd><kbd>G</kbd></dt><dd>Same</dd>
           <dt><kbd>r</kbd></dt><dd>Run record &amp; export</dd>
-          <dt><kbd>Space</kbd></dt><dd>Replay: play / pause</dd>
           <dt><kbd>?</kbd></dt><dd>Show / hide this panel</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Replay</h3>
+        <dl>
+          <dt><kbd>Space</kbd></dt><dd>Play / pause</dd>
+          <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>Previous / next event</dd>
+          <dt><kbd>Shift</kbd><kbd>←</kbd><kbd>→</kbd></dt><dd>Back / forward a little</dd>
+          <dt><kbd>&lt;</kbd><kbd>&gt;</kbd></dt><dd>Slower / faster</dd>
+          <dt><kbd>Home</kbd><kbd>End</kbd></dt><dd>Start / end</dd>
         </dl>
       </section>
       <section class="wide">

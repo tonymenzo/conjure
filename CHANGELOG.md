@@ -8,6 +8,32 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.13] — 2026-10-19
+
+A replay plays back smoothly, at any speed, from a proper player.
+
+### Added
+
+- **Replay plays back smoothly.** The bar under a replay is now a player.
+  It plays at any speed from ¼× to 2000× (a slider, presets, or `<` `>`).
+  **Skip idle** hurries through stretches where nothing happens, such as
+  model calls and long tools, and the track lights up the stretches
+  where something does. `←` `→` step from event to event, and `Home`
+  `End` jump to either end. While it plays, each chat reads its log
+  ahead of the playhead and shows replies streaming in, scrolling to
+  follow unless you scroll up. The tree, activity feed, graph and
+  timeline keep pace, and an agent mid-turn shows as running. Reaching
+  the end leaves the read-only view exactly as it was before playing.
+
+### Fixed
+
+- **Replays answer quickly.** Every moment of a replay shares one parse
+  of the logs, and paths recorded on another machine are looked up
+  once. Each lookup used to take about a quarter of a second, so
+  scrubbing a run copied from a cluster stuttered.
+- The agent tree updates when only an agent's token count changes, as
+  on a model with no known price.
+
 ## [0.2.12] — 2026-10-18
 
 Messages between agents, toolkit calls and the timeline read clearly, and
@@ -655,7 +681,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.12...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.13...HEAD
+[0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/tonymenzo/conjure/compare/v0.2.9...v0.2.10
