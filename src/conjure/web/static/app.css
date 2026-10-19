@@ -183,6 +183,10 @@ code, .mono { font-family: var(--mono); }
 .act .t { flex: none; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 .act .g { flex: none; width: 1.2em; text-align: center; font-size: 11px; }
 .act .g.msg { color: var(--green-mid); }
+/* line icons (app.js icon()); not .icon, which is the icon buttons' class */
+.ico { display: inline-block; vertical-align: -2px; flex: none; }
+.act .g .ico { vertical-align: -2.5px; }
+.msgblk .from .ico { vertical-align: -2px; margin-right: 2px; }
 .act .g.tool { color: var(--cyan); }
 .act .g.life.ok { color: var(--green); }
 .act .g.life.ended { color: var(--faint); }

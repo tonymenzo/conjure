@@ -55,6 +55,21 @@
   /** replaceChildren that, like h(), skips null / false. */
   const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
   const SVG = "http://www.w3.org/2000/svg";
+  /** A small line icon that takes the text colour (glyphs like ✉ blur
+   *  into a box at this size). */
+  function icon(name) {
+    const paths = {
+      mail: [["rect", { x: 1.75, y: 3.25, width: 12.5, height: 9.5, rx: 1.6 }], ["path", { d: "M2.5 4.5 8 8.75 13.5 4.5" }]],
+    }[name];
+    const el = document.createElementNS(SVG, "svg");
+    for (const [k, v] of Object.entries({ class: `ico ico-${name}`, viewBox: "0 0 16 16", width: 13, height: 13, fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) el.setAttribute(k, v);
+    for (const [tag, attrs] of paths) {
+      const part = document.createElementNS(SVG, tag);
+      for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+      el.append(part);
+    }
+    return el;
+  }
   function s(tag, attrs, ...kids) {
     const el = document.createElementNS(SVG, tag);
     for (const [k, v] of Object.entries(attrs || {})) {
@@ -652,11 +667,11 @@
     const CC = window.ConjureCode;
     fill(box, rows.length ? rows.map((r) => {
       const open = actOpen.has(r.key);
-      const glyph = { msg: "✉", tool: "⏺", life: "●" }[r.cat];
+      const glyph = { msg: icon("mail"), tool: "⏺", life: "●" }[r.cat];
       // A message: who → whom, and the summary under it; anything else on one line.
       const line = h("div", { class: `act-line${r.msg ? " two" : ""}` },
         h("span", { class: "t", text: clock(r.ts) }),
-        h("span", { class: `g ${r.cat} ${r.tone || ""}`, text: r.tone === "req" ? "⚒" : glyph, "aria-hidden": "true" }),
+        h("span", { class: `g ${r.cat} ${r.tone || ""}`, "aria-hidden": "true" }, r.tone === "req" ? "⚒" : glyph),
         h("span", { class: "who" }, r.who, r.to ? h("span", { class: "arrow", text: " → " }) : null, r.to || null),
         h("span", { class: "sum", text: r.body }));
       const el = h("div", { class: `act ${r.cat}${r.tone ? " " + r.tone : ""}${open ? " open" : ""}${r.msg ? " expandable" : ""}`, dataset: { key: r.key } }, line);
@@ -1047,14 +1062,15 @@
         this.seenSeq.add(e.seq);
         let el;
         if (e.from === "@system" && e.body && e.body.kind === "child_event") {
-          el = h("div", { class: "metablk blk", text: `⚙ ${e.body.child_label || e.body.child_addr}: ${e.body.event}${e.body.reason ? " — " + e.body.reason : ""}` });
+          const reason = e.body.reason ? String(e.body.reason).replace(/\bag-[a-z0-9]{8,}\b/g, (id) => labelOf(id)) : "";
+          el = h("div", { class: "metablk blk", text: `⚙ ${labelOf(e.body.child_addr, e.body.child_label || e.body.child_addr)}: ${e.body.event}${reason ? " — " + reason : ""}` });
         } else if (e.kind === "toolkit_request") {
           el = h("div", { class: "msgblk blk" },
             h("div", { class: "from", text: `⚒ ${labelOf(e.from, e.from_label)} requests toolkits` }),
             h("pre", { text: `${JSON.stringify(e.body.toolkits)}${e.body.reason ? "\nreason: " + e.body.reason : ""}` }));
         } else {
           el = h("div", { class: "msgblk blk" },
-            h("div", { class: "from", text: `✉ ${labelOf(e.from, e.from_label)} · ${clock(e.ts)}` }),
+            h("div", { class: "from" }, icon("mail"), ` ${labelOf(e.from, e.from_label)} · ${clock(e.ts)}`),
             window.ConjureCode
               ? window.ConjureCode.messageView(e.body, { roots: S.topRoots, renderMarkdown, openPath })
               : typeof e.body === "string" ? h("div", { class: "resp" }, renderMarkdown(e.body)) : h("pre", { text: bodyText(e.body) }));
