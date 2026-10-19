@@ -290,6 +290,28 @@ def test_static_view_modules_are_served_and_loaded(server):
         assert f'src="/static/{name}"'.encode() in page
 
 
+def test_run_record_counts_tokens_as_the_tree_does(session):
+    view = session["view"]
+    tree = view.snapshot()["tree"]
+    rec = view.run_record()
+    assert rec["ok"]
+    by_id = {a["id"]: a for a in rec["summary"]["agents"]}
+    nodes = [tree] + tree["children"]
+    for node in nodes:
+        a = by_id[node["addr"]]
+        assert a["tokens"] == node["tokens"] and a["unpriced_tokens"] == node["unpriced_tokens"]
+    totals = rec["summary"]["totals"]
+    assert totals["tokens"] == sum(a.get("tokens", 0) for a in by_id.values())
+
+
+def test_snapshot_tree_names_each_sandbox(session):
+    tree = session["view"].snapshot()["tree"]
+    root_box = str(session["rt"].sandbox_of(session["root"]))
+    assert root_box in tree["sandbox_paths"]
+    # Workers share the root's sandbox.
+    assert all(root_box in c["sandbox_paths"] for c in tree["children"])
+
+
 def test_host_header_must_name_the_server(server):
     assert _req(server, "GET", "/api/meta", host="evil.example:80")[0] == 421
     assert _req(server, "POST", "/api/send", host="evil.example", body={})[0] == 421

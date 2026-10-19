@@ -132,6 +132,7 @@
       if (!st.data) return;
       if (st.dragging) { st.pending = true; return; }
       const tree = visibleTree();
+      $("#graph-wrap").classList.toggle("is-empty", tree.visible.size === 0);
       const withUser = st.data.message.some((m) => m.from === "@user");
       let layout;
       if (st.orient === "auto") {
@@ -334,7 +335,7 @@
       const live = ui().agents.get(n.addr);
       const status = n.sentinel ? "user" : live?.awaiting_permission ? "awaiting" : (live?.status || n.status);
       const selected = n.addr === st.selected;
-      const label = n.sentinel ? "you" : n.label;
+      const label = n.sentinel ? "you" : labelOf(n.addr, n.label);
       const facts = n.sentinel ? ["human"] : [
         live?.model ? shortModel(live.model) : "default model",
         live?.toolkits?.length ? `⚒ ${live.toolkits.length}` : null,
@@ -355,7 +356,7 @@
         live?.cost ? s("text", { class: "cost", x: W - 12, y: 23, "text-anchor": "end", text: money(live.cost) }) : null,
         s("text", { class: "facts", x: 16, y: 41, text: clip(facts.join(" · "), 26) }),
         STATUS_WORD[status] ? s("text", { class: `state ${status}`, x: W - 12, y: 41, "text-anchor": "end", text: STATUS_WORD[status] }) : null,
-        s("title", { text: n.sentinel ? "you" : `${n.label} (${n.addr})\nstatus: ${status}${live?.model ? `\nmodel: ${live.model}` : ""}${live?.cost ? `\ncost: ${money(live.cost)}` : ""}${kids ? `\n${kids} child agent(s)` : ""}` }));
+        s("title", { text: n.sentinel ? "you" : `${label} (${n.addr})\nstatus: ${status}${live?.model ? `\nmodel: ${live.model}` : ""}${live?.cost ? `\ncost: ${money(live.cost)}` : ""}${kids ? `\n${kids} child agent(s)` : ""}` }));
       if (kids && !n.sentinel) {
         const shut = n.hidden > 0;
         const [bx, by] = st.layout.orient === "down" ? [W / 2, H] : [W, H / 2];
@@ -383,7 +384,7 @@
       svg.classList.toggle("finding", !!q);
       for (const [addr, el] of st.nodeEls) {
         el.classList.toggle("lit", lit.has(addr));
-        const label = addr === "@user" ? "you" : (st.layout.nodes.get(addr)?.label || "");
+        const label = addr === "@user" ? "you" : labelOf(addr, st.layout.nodes.get(addr)?.label || "");
         el.classList.toggle("match", !!q && label.toLowerCase().includes(q));
       }
       for (const e of st.edgeEls) e.el.classList.toggle("lit", !!focus && (e.a === focus || e.b === focus));
@@ -391,7 +392,7 @@
     function matches() {
       const q = st.query.toLowerCase();
       if (!q || !st.data) return [];
-      return st.data.nodes.filter((n) => (ui().showInternal || !n.internal) && n.label.toLowerCase().includes(q));
+      return st.data.nodes.filter((n) => (ui().showInternal || !n.internal) && labelOf(n.addr, n.label).toLowerCase().includes(q));
     }
     /** Expand the folds hiding ``addr`` and bring it into view. */
     function reveal(addr, { onlyIfHidden = false } = {}) {

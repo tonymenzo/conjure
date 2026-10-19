@@ -187,11 +187,29 @@ class SessionView:
             return {"ok": False, "error": "this session has no on-disk record"}
         from conjure.provenance import read_manifest, summarize
 
-        return {
-            "ok": True,
-            "manifest": read_manifest(self.session_dir),
-            "summary": summarize(self.session_dir),
-        }
+        if self.live:
+            journal = getattr(self.runtime, "_journal", None)
+            if journal is not None:
+                journal.flush()   # a live run's latest spawns and sends
+        summary = summarize(self.session_dir)
+        # Tokens and cost as the agent tree counts them (input and output,
+        # and how many have no known price), so the two never disagree;
+        # the logs' ``tokens_out`` stays as the output share.
+        records = self._records()
+        totals = summary.setdefault("totals", {})
+        totals["tokens"] = totals["unpriced_tokens"] = 0
+        for a in summary.get("agents", []):
+            addr = self._addr(a.get("id"))
+            if addr is None or addr not in records:
+                continue
+            u = self._usage(records[addr])
+            a["tokens"], a["unpriced_tokens"] = u["tokens"], u["unpriced_tokens"]
+            if u["cost"]:
+                a["cost_usd"] = u["cost"]
+            totals["tokens"] += u["tokens"]
+            totals["unpriced_tokens"] += u["unpriced_tokens"]
+        totals["cost_usd"] = round(sum(float(a.get("cost_usd") or 0) for a in summary.get("agents", [])), 6)
+        return {"ok": True, "manifest": read_manifest(self.session_dir), "summary": summary}
 
     def export_archive(self) -> tuple[str, bytes]:
         """``(filename, .tar.gz bytes)`` of this session's export (paths
@@ -312,6 +330,9 @@ class SessionView:
                 "tokens": usages[addr]["tokens"],
                 "unpriced_tokens": usages[addr]["unpriced_tokens"],
                 "toolkits": toolkit_items(getattr(spec, "toolkits", None)),
+                # Where its files are (and were, in a replay): the UI shows
+                # paths in messages relative to these.
+                "sandbox_paths": _sandbox_paths(rec, self.runtime),
                 "inbox_size": len(rec.inbox),
                 "spawned_at": rec.spawned_at,
                 "children": kids,

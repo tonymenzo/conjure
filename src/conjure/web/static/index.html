@@ -39,7 +39,12 @@
     </section>
     <section class="pane" id="activity-pane">
       <h2 class="pane-title">activity</h2>
-      <div id="activity"></div>
+      <div class="pane-tools act-filters" role="group" aria-label="Show in the activity feed">
+        <button data-f="msg" title="Messages between agents">messages</button>
+        <button data-f="tool" title="Tool calls">tools</button>
+        <button data-f="life" title="Spawns, ends and errors">events</button>
+      </div>
+      <div id="activity" aria-live="polite"></div>
     </section>
   </aside>
   <div id="resizer" title="Drag to resize"></div>
@@ -89,18 +94,32 @@
       </aside>
     </section>
     <section id="view-timeline" class="view">
-      <div class="view-toolbar">
-        <span class="legend-item"><span class="legend turn"></span> turn</span>
-        <span class="legend-item"><span class="legend tool"></span> tool call</span>
-        <span class="legend-item"><span class="legend fail"></span> failed</span>
-        <span class="legend-item"><span class="legend msg"></span> message in</span>
-        <span class="spacer"></span>
-        <button id="tl-fit" class="small-btn">fit</button>
-        <label class="toggle small" title="Keep the newest activity in view"><input type="checkbox" id="tl-follow" checked> follow</label>
-        <span class="dim small">wheel: zoom · drag: pan</span>
+      <div id="timeline-pane" class="pane">
+        <h2 class="pane-title">timeline</h2>
+        <div class="graph-bar">
+          <div class="gb-left">
+            <span class="legend-item"><span class="legend turn"></span> turn</span>
+            <span class="legend-item"><span class="legend tool"></span> tool calls</span>
+            <span class="legend-item"><span class="legend fail"></span> failed</span>
+            <span class="legend-item"><span class="legend arrow"></span> message</span>
+            <span class="legend-item"><span class="legend err"></span> error</span>
+          </div>
+          <div class="gb-right">
+            <label class="toggle small" title="Draw messages between lanes"><input type="checkbox" id="tl-arrows" checked> messages</label>
+            <label class="toggle small" title="Keep the newest activity in view"><input type="checkbox" id="tl-follow" checked> follow</label>
+          </div>
+        </div>
+        <div id="timeline-wrap" title="Scroll to zoom · drag to pan · click a lane's name to select the agent">
+          <svg id="timeline" role="img" aria-label="Agent timeline"></svg>
+        </div>
+        <div id="tl-zoom" class="graph-ctl" role="group" aria-label="Zoom">
+          <button id="tl-zoom-out" title="Zoom out">−</button>
+          <button id="tl-span" title="Visible span · click to fit">—</button>
+          <button id="tl-zoom-in" title="Zoom in">+</button>
+          <button id="tl-fit" title="Fit the whole run">fit</button>
+        </div>
+        <div id="tl-tip" class="tip"></div>
       </div>
-      <div id="timeline-wrap"><svg id="timeline" role="img" aria-label="Agent timeline"></svg></div>
-      <div id="tl-tip" class="tip"></div>
     </section>
     <section id="view-files" class="view">
       <div id="files-side" class="pane">
@@ -132,7 +151,10 @@
     <select id="scrub-speed" title="Playback speed">
       <option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="600">600×</option>
     </select>
-    <input type="range" id="scrub-range" min="0" max="1000" value="1000" step="1">
+    <div id="scrub-track">
+      <svg id="scrub-ticks" aria-hidden="true" preserveAspectRatio="none"></svg>
+      <input type="range" id="scrub-range" min="0" max="1000" value="1000" step="1" aria-label="Replay position">
+    </div>
     <span id="scrub-time" class="mono"></span>
     <button id="scrub-end" class="small-btn" title="Jump to end">end</button>
   </footer>

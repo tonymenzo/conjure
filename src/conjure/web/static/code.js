@@ -602,8 +602,7 @@
       if (typeof diff === "string" && diff.trim()) rows = changeRows(unifiedRows(diff), lang);
       else if (typeof first?.content === "string") rows = leadLines(first.content).map((l) => codeRow(l, lang));
     } else if (kind === "send") {
-      const body = typeof args.body === "string" ? args.body : JSON.stringify(args.body ?? "");
-      rows = [proseRow(firstParagraph(body))];
+      rows = [proseRow(bodySummary(args.body))];
     } else if (kind === "spawn") {
       rows = [proseRow(firstParagraph(args.initial_message || args.role_prompt))];
     } else if (kind === "other") {
@@ -664,10 +663,11 @@
       }));
     }
     if (kind === "send" && renderMarkdown) {
-      const body = typeof args.body === "string" ? args.body : JSON.stringify(args.body, null, 2);
       const rest = { ...args };
       delete rest.body;
-      return h("div", { class: "callbody" }, fields(rest), h("div", { class: "prose" }, renderMarkdown(body || "")));
+      const body = parseBody(args.body);
+      return h("div", { class: "callbody" }, fields(rest),
+        typeof body === "string" ? h("div", { class: "prose" }, renderMarkdown(body || "")) : messageView(body, { renderMarkdown }));
     }
     return h("div", { class: "callbody" }, fields(args, { renderMarkdown }));
   }
@@ -882,9 +882,93 @@
     return [status, lines ? plural(lines, "line") : "no output", cut ? `✂ ${Number(cut[1]).toLocaleString()} chars cut` : "", clip(last.trim(), 100)].filter(Boolean).join(" · ");
   }
 
+  // ---------- messages between agents ----------
+
+  const HASH = /^(?:sha\d*[:-])?[0-9a-f]{32,}$/i;
+  /** A workspace-relative file path worth linking ("results/fit.json"). */
+  const isRelPath = (v) => typeof v === "string" && v.length < 300 && !/\s/.test(v) && !/^(\/|~|\.\.|[a-z][\w+.-]*:)/i.test(v)
+    && (v.includes("/") || /\.[a-z0-9]{1,8}$/i.test(v)) && !/^\d+(\.\d+)*$/.test(v);
+  /** A message body as sent: agents often send JSON as a string. */
+  function parseBody(body) {
+    if (typeof body !== "string") return body;
+    const t = body.trim();
+    if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
+      try { return JSON.parse(t); } catch { /* prose that happens to start with a brace */ }
+    }
+    return body;
+  }
+  const shortScalar = (v) => {
+    const s = String(v);
+    return HASH.test(s) ? `${s.slice(0, 10)}…` : clip(s.replace(/\s+/g, " "), 48);
+  };
+  function compactFields(o) {
+    const parts = [];
+    let more = 0;
+    for (const [k, v] of Object.entries(o)) {
+      if (v == null || v === "") continue;
+      if (parts.length >= 3) { more++; continue; }
+      if (Array.isArray(v)) parts.push(`${k}=[${v.length}]`);
+      else if (typeof v === "object") parts.push(`${k}={…}`);
+      else parts.push(`${k}=${shortScalar(v)}`);
+    }
+    return parts.join(" · ") + (more ? ` · +${more}` : "");
+  }
+  /** One line for a message: its first paragraph, or for a structured
+   *  one its kind and first few fields, paths relative to ``roots``. */
+  function bodySummary(body, roots) {
+    const b = parseBody(body);
+    if (typeof b === "string") return firstParagraph(relText(b, roots));
+    if (Array.isArray(b)) return `${b.length} item${b.length === 1 ? "" : "s"}`;
+    if (!b || typeof b !== "object") return String(b ?? "");
+    const r = relArgs(b, roots);
+    const keys = Object.keys(r);
+    const inner = keys.length === 1 ? r[keys[0]] : null;
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) return `${keys[0]} · ${compactFields(inner)}`;
+    const kind = typeof r.kind === "string" ? r.kind : typeof r.type === "string" ? r.type : "";
+    if (kind) {
+      const rest = { ...r };
+      delete rest.kind; delete rest.type;
+      return `${kind} · ${compactFields(rest)}`;
+    }
+    return compactFields(r);
+  }
+  /** A message, readable: prose as markdown; a structured one as
+   *  labelled fields under its kind, file paths relative to ``roots``
+   *  and opening in the files view (``openPath``), long hashes shortened. */
+  function messageView(body, { roots, renderMarkdown, openPath } = {}) {
+    const b = parseBody(body);
+    if (typeof b === "string") {
+      const text = relText(b, roots);
+      return renderMarkdown ? h("div", { class: "resp" }, renderMarkdown(text)) : h("pre", { text });
+    }
+    if (!b || typeof b !== "object" || Array.isArray(b)) return codeBlock(JSON.stringify(b, null, 2), { lang: "json" });
+    let r = relArgs(b, roots);
+    let kind = "";
+    const keys = Object.keys(r);
+    if (keys.length === 1 && r[keys[0]] && typeof r[keys[0]] === "object" && !Array.isArray(r[keys[0]])) {
+      kind = keys[0];
+      r = r[keys[0]];
+    } else if (typeof r.kind === "string") {
+      kind = r.kind;
+      r = { ...r };
+      delete r.kind;
+    }
+    const box = fields(r, { renderMarkdown });
+    for (const el of box.querySelectorAll("code.fval")) {
+      const t = el.textContent;
+      if (HASH.test(t)) { el.textContent = `${t.slice(0, 12)}…`; el.title = t; el.classList.add("hash"); }
+      else if (openPath && isRelPath(t)) {
+        el.classList.add("path");
+        el.title = "open in files";
+        el.addEventListener("click", (e) => { e.stopPropagation(); openPath(t); });
+      }
+    }
+    return h("div", { class: "msgview" }, kind ? h("span", { class: "msg-kind", text: kind }) : null, box);
+  }
+
   window.ConjureCode = {
     codeBlock, diffBlock, unifiedDiffBlock, highlightInto, langForPath, langForTag,
     parseLiteral, toolKind, callSummary, callPreview, renderCall, renderResult, fields, terminal,
-    resultForCall, relArgs, relText,
+    resultForCall, relArgs, relText, bodySummary, messageView, parseBody,
   };
 })();
