@@ -8,6 +8,15 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+- **A skill pack in a grant no longer aborts serving.** A toolkit that
+  ships guides and no tools (toolbase's skill pack) has nothing to serve
+  over MCP, and toolbase refuses to start a server for one. The hub now
+  starts servers only for the granted toolkits that have tools; a skill
+  pack's guides still reach the agent through the catalog (`ToolCatalog`,
+  `LoadSkill`). A loadout may therefore pin a skill pack beside the
+  toolkits it documents.
+
 ## [0.2.13] — 2026-10-19
 
 A replay plays back smoothly, at any speed, from a proper player.
