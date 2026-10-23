@@ -61,6 +61,7 @@ def test_extract_tool_calls_strips_mcp_prefix():
     assert [c["name"] for c in calls] == ["spawn", "Read"]
     assert calls[0]["args"]["role_prompt"] == "x"
     assert calls[1]["args"]["path"] == "foo.py"
+    assert [c["id"] for c in calls] == ["t1", "t2"]
 
 
 def test_extract_tool_results_handles_str_and_list_bodies():
@@ -89,6 +90,7 @@ def test_extract_tool_results_handles_str_and_list_bodies():
     assert "ag-x" in results[0]["text"]
     assert results[1]["failed"] is True
     assert results[1]["text"] == "rate limit"
+    assert [r["tool_call_id"] for r in results] == ["t1", "t2"]
 
 
 def test_default_system_frame_loads_and_templates():

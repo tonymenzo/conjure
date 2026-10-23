@@ -240,6 +240,18 @@ class Driver:
             usage = _engine_usage(engine) or {}
             prompt = getattr(engine, "system_prompt_text", None)
             schemas = getattr(engine, "tool_schemas", None)
+            breakdown = api_equivalent = None
+            try:
+                breakdown = engine.usage().get("token_usage")
+            except Exception:
+                pass
+            try:
+                api_equivalent = float(engine.api_equivalent_cost())
+            except Exception:
+                pass
+            subscription = getattr(engine, "uses_subscription", None)
+            access = None if engine is None else (
+                "subscription" if callable(subscription) and subscription() else "api")
             self.runtime.note_agent_meta(
                 record.addr,
                 {
@@ -251,6 +263,14 @@ class Driver:
                     # A replay's tree and header show these.
                     "tokens": usage.get("tokens"),
                     "unpriced_tokens": usage.get("unpriced_tokens"),
+                    # {"input", "output", "cache_read", "cache_creation"}
+                    # summed over the agent (conjure.provenance.token_usage).
+                    "token_usage": breakdown,
+                    # How the model was paid for: "api" (cost_usd is spend) or
+                    # "subscription" (cost_usd is 0; the spend is flat).
+                    "access": access,
+                    # The tokens at API prices, where the engine reports it.
+                    "api_equivalent_cost_usd": api_equivalent,
                     # Argument order, required and defaults per tool: the
                     # UI's call previews, in a replay as live.
                     "tool_schemas": (schemas() or None) if callable(schemas) else None,

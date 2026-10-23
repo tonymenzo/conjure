@@ -106,9 +106,9 @@ def test_first_turn_starts_a_thread_and_translates_events(tmp_path, monkeypatch)
         assert kinds == [
             ("thinking_start", None),
             ("chunk", "Checking."),
-            ("stream_end", [{"name": "shell", "args": {"command": "ls"}}]),
+            ("stream_end", [{"id": "i1", "name": "shell", "args": {"command": "ls"}}]),
             ("tool", "a.txt\n"),
-            ("stream_end", [{"name": "ListInbox", "args": {}}]),
+            ("stream_end", [{"id": "i2", "name": "ListInbox", "args": {}}]),
             ("tool", '{"ok": true}'),
             ("chunk", "All done."),
             ("usage", None),
@@ -119,6 +119,9 @@ def test_first_turn_starts_a_thread_and_translates_events(tmp_path, monkeypatch)
         assert engine.model_info() == ("gpt-test-1", "observed")
         assert engine.context_usage() == (1200, 400000)
         assert engine.cost() == 0.0 and engine.uses_subscription()
+        # Results name the call they answer; the turn's tokens are summed.
+        assert [e["tool_call_id"] for e in events if e["kind"] == "tool"] == ["i1", "i2"]
+        assert engine.usage()["token_usage"] == {"input": 1200, "output": 42, "cache_read": 0, "cache_creation": 0}
     finally:
         engine.shutdown()
         rt.shutdown()
