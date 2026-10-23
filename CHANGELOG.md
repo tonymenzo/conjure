@@ -8,6 +8,20 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Tool results name their call.** Every engine's `stream_end` tool
+  calls carry the call's `id`, and each `tool` event the `tool_call_id`
+  it answers, so a result pairs with its call without relying on order.
+- **Token counts with the cache.** Each agent's `agent_meta` journals
+  `token_usage`: `input` (every input token, cached ones included),
+  `output`, `cache_read` and `cache_creation`, the same for every provider
+  (`conjure.provenance.token_usage`). The Claude and Codex engines now
+  count tokens too, from each turn's totals.
+- **How an agent was paid for.** `agent_meta` journals `access`, `api` or
+  `subscription`, and, for the Claude engine, `api_equivalent_cost_usd`:
+  what the tokens cost at API prices even when a subscription paid.
+
 ## [0.2.13] — 2026-10-19
 
 A replay plays back smoothly, at any speed, from a proper player.

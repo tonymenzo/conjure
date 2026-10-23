@@ -395,6 +395,7 @@ def test_shutdown_mid_turn_records_cost(tmp_path):
         rt.shutdown(driver_join_timeout=0.1)
         meta = rt.record_for(root).meta
         assert meta["cost_usd"] == 12.5 and meta["tokens"] == 1050
+        assert meta["access"] == "api"  # an engine without a subscription probe
         rows = [r for r in _journal(rt) if r["kind"] == "agent_meta"]
         assert rows and rows[-1]["payload"]["meta"]["cost_usd"] == 12.5
     finally:

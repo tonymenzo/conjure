@@ -55,6 +55,7 @@ def serialize_message(msg: Any) -> dict[str, Any]:
             "text": text,
             "tool_calls": [
                 {
+                    "id": getattr(tc, "id", None),
                     "name": getattr(tc, "tool_name", None) or getattr(tc, "name", "?"),
                     "args": getattr(tc, "arguments", None) or {},
                 }
@@ -66,6 +67,7 @@ def serialize_message(msg: Any) -> dict[str, Any]:
     if role == "tool":
         return {
             "kind": "tool",
+            "tool_call_id": getattr(msg, "tool_call_id", None),
             "text": text,
             "failed": bool(getattr(msg, "failed", False)),
         }

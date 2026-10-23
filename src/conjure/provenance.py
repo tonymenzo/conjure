@@ -98,6 +98,50 @@ def read_manifest(session_dir: Path) -> dict[str, Any]:
         return {}
 
 
+def token_usage(tokens: dict[str, Any] | None) -> dict[str, int]:
+    """One response's token counts as ``{"input", "output", "cache_read",
+    "cache_creation"}``, the same for every provider.
+
+    ``input`` is every input token the model processed, cached ones
+    included; ``cache_read`` and ``cache_creation`` are the parts of it
+    read from and written to the prompt cache. Anthropic-style counts
+    (``input_tokens`` beside ``cache_read_input_tokens`` and
+    ``cache_creation_input_tokens``) exclude the cache from the input, so
+    it is added back; OpenAI-style counts (``prompt_tokens`` with
+    ``cached_prompt_tokens`` or ``cached_input_tokens``) already include
+    it.
+    """
+    t = tokens or {}
+
+    def n(*keys: str) -> int:
+        for key in keys:
+            v = t.get(key)
+            if v:
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    read_separate = n("cache_read_input_tokens")
+    creation = n("cache_creation_input_tokens")
+    read_included = n("cached_prompt_tokens", "cached_input_tokens")
+    base = n("prompt_tokens", "input_tokens")
+    return {
+        "input": base + read_separate + creation,
+        "output": n("completion_tokens", "output_tokens"),
+        "cache_read": read_separate or read_included,
+        "cache_creation": creation,
+    }
+
+
+def add_usage(total: dict[str, int], part: dict[str, int]) -> dict[str, int]:
+    """``total`` with ``part`` (both :func:`token_usage` dicts) added in place."""
+    for key in ("input", "output", "cache_read", "cache_creation"):
+        total[key] = int(total.get(key, 0)) + int(part.get(key, 0))
+    return total
+
+
 def _dump(config: Any) -> Any:
     if config is None:
         return None
