@@ -722,3 +722,22 @@ def test_config_default_authority_is_loadout():
     from conjure.config import ToolbaseConfig
 
     assert ToolbaseConfig().authority == "loadout"
+
+
+def test_serve_skips_skill_packs_but_still_surfaces_their_skills():
+    """A granted toolkit with guides and no tools starts no server (toolbase
+    has nothing to serve for it); its skills still come from the catalog."""
+    def catalog() -> Catalog:
+        base = _catalog()
+        pack = ToolkitInfo(name="guide", version="0.1.0", description="A skill pack.",
+                           skills={"feyntable": SkillInfo("feyntable", "How to make entries")})
+        return Catalog(toolkits={**base.toolkits, "guide": pack})
+
+    servers = FakeServers()
+    hub = ToolbaseHub(project_root="/nonexistent", authority="all", catalog_loader=catalog, server_factory=servers)
+    toolset = {"hep": ToolkitGrant(bundles=["llp"]), "guide": ToolkitGrant()}
+    serving = hub.serve(toolset, sandbox=None)
+    assert set(servers.started[0]["toolset"]) == {"hep"}
+    assert {t.get_name() for t in serving.tools} == {"hep__Pythia", "hep__Decay"}
+    assert ("guide", "feyntable") in [(k, s.slug) for k, s in hub.skills_for(toolset)]
+    assert hub.find_skill(toolset, "guide__feyntable") is not None

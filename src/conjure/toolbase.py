@@ -529,8 +529,18 @@ class ToolbaseHub:
     # ----- serving -----
 
     def serve(self, toolset: Toolset, *, sandbox: Path | None) -> ToolbaseServing:
+        # A skill pack (a toolkit that ships guides and no tools) has
+        # nothing to serve over MCP, and toolbase refuses to start a
+        # server for one; its skills reach the agent from the catalog
+        # (``skills_for``, ``LoadSkill``). Serve the toolkits with tools.
+        catalog = self.catalog()
+        served = {
+            kit: grant
+            for kit, grant in toolset.items()
+            if (info := catalog.get(kit)) is None or info.tools
+        }
         return self._server_factory(
-            toolset=toolset,
+            toolset=served,
             sandbox=sandbox,
             project_root=self.project_root,
             loadout=self.loadout,
