@@ -242,6 +242,22 @@ def test_spawn_beyond_max_depth_raises():
         rt._spawn(parent=b, spec=AgentSpec(role_prompt="c"))      # would be 3
 
 
+def test_spawn_past_max_depth_is_refused_for_depth_before_other_checks():
+    """A spawn no other change could allow reports the depth limit, not an
+    engine's objection to its spec (max_depth=0: a single agent)."""
+    class Refusing:
+        def __call__(self, record, runtime):
+            return None
+
+        def validate_spec(self, spec, parent):
+            raise ValueError("engine refuses this spec")
+
+    rt = Runtime(max_depth=0, engine_factory=Refusing())
+    root = rt.root(AgentSpec(role_prompt="root", lazy=True))
+    with pytest.raises(MaxDepthExceeded, match="max_depth is 0"):
+        rt._spawn(parent=root, spec=AgentSpec(role_prompt="c"))
+
+
 def test_spawn_at_exact_max_depth_succeeds():
     rt = Runtime(max_depth=2)
     root = rt.root(AgentSpec(role_prompt="root"))
