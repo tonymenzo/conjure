@@ -79,6 +79,8 @@ class CodexEngine:
         self._home = Path(codex_home).expanduser().resolve()
         self._emit_fn = stream_emit
         self._model = model
+        # Summed from each turn.completed (conjure.provenance.token_usage).
+        self._token_usage: dict[str, int] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         self._sandbox_mode = sandbox_mode or DEFAULT_SANDBOX
         self._effort = reasoning_effort
         self._toolbase = toolbase_mount
@@ -164,13 +166,15 @@ class CodexEngine:
                         continue
                     # The call closes the reply segment before it (or
                     # stands alone), then its result follows.
-                    call.pop("id", None)
                     self._emit({"kind": "stream_end", "tool_calls": [call]})
                     streamed = False
                     text, failed = _tool_result(item)
-                    self._emit({"kind": "tool", "text": text, "failed": failed})
+                    self._emit({"kind": "tool", "tool_call_id": call.get("id"), "text": text, "failed": failed})
                 elif kind == "turn.completed":
                     usage = ev.get("usage") or {}
+                    from conjure.provenance import add_usage, token_usage
+
+                    add_usage(self._token_usage, token_usage(usage))
                     out = int(usage.get("output_tokens") or 0)
                     if out:
                         self._emit({"kind": "usage", "tokens_in": 0, "tokens_out": out})
@@ -199,6 +203,13 @@ class CodexEngine:
 
     def cost(self) -> float:
         return 0.0  # ChatGPT subscription: flat rate
+
+    def usage(self) -> dict[str, Any]:
+        """Token counts over this agent's turns; ``token_usage`` as
+        :func:`conjure.provenance.token_usage`."""
+        t = dict(self._token_usage)
+        return {"tokens_in": t["input"], "tokens_out": t["output"], "unpriced_tokens": 0,
+                "token_usage": t}
 
     def uses_subscription(self) -> bool:
         return True

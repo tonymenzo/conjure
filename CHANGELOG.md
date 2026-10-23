@@ -17,6 +17,26 @@ this file as its notes.
   `LoadSkill`). A loadout may therefore pin a skill pack beside the
   toolkits it documents.
 
+## [0.2.14] — 2026-10-22
+
+A session's record accounts for every agent: which call each tool result
+answers, how many tokens it used with the cache counted, and how it was
+paid for.
+
+### Added
+
+- **Tool results name their call.** Every engine's `stream_end` tool
+  calls carry the call's `id`, and each `tool` event the `tool_call_id`
+  it answers, so a result pairs with its call without relying on order.
+- **Token counts with the cache.** Each agent's `agent_meta` journals
+  `token_usage`: `input` (every input token, cached ones included),
+  `output`, `cache_read` and `cache_creation`, the same for every provider
+  (`conjure.provenance.token_usage`). The Claude and Codex engines now
+  count tokens too, from each turn's totals.
+- **How an agent was paid for.** `agent_meta` journals `access`, `api` or
+  `subscription`, and, for the Claude engine, `api_equivalent_cost_usd`:
+  what the tokens cost at API prices even when a subscription paid.
+
 ## [0.2.13] — 2026-10-19
 
 A replay plays back smoothly, at any speed, from a proper player.
@@ -690,7 +710,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.13...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.14...HEAD
+[0.2.14]: https://github.com/tonymenzo/conjure/compare/v0.2.13...v0.2.14
 [0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11

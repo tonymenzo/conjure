@@ -273,6 +273,7 @@ class OrchestralEngine:
             tool_calls = self._extract_tool_calls(last)
             serialized = [
                 {
+                    "id": getattr(tc, "id", None),
                     "name": getattr(tc, "tool_name", None) or getattr(tc, "name", "?"),
                     "args": getattr(tc, "arguments", None) or {},
                 }
@@ -322,8 +323,12 @@ class OrchestralEngine:
 
         ``cost`` covers the priced responses only; ``unpriced_tokens``
         counts the rest (a gateway model with no known price), so a UI
-        can say "unpriced" instead of a misleading $0."""
+        can say "unpriced" instead of a misleading $0. ``token_usage`` is
+        the provider-neutral breakdown of :func:`conjure.provenance.token_usage`."""
+        from conjure.provenance import add_usage, token_usage
+
         book = getattr(self._llm, "conjure_pricebook", None)
+        totals = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         tokens_in = tokens_out = unpriced = 0
         cost = 0.0
         sources: set[str] = set()
@@ -336,6 +341,7 @@ class OrchestralEngine:
             if usage is None:
                 continue
             toks = getattr(usage, "tokens", None) or {}
+            add_usage(totals, token_usage(toks))
             n_in = int(toks.get("prompt_tokens") or toks.get("input_tokens") or 0)
             n_out = int(toks.get("completion_tokens") or toks.get("output_tokens") or 0)
             tokens_in += n_in
@@ -358,6 +364,7 @@ class OrchestralEngine:
             "cost": round(cost, 6),
             "unpriced_tokens": unpriced,
             "price_sources": sorted(sources),
+            "token_usage": totals,
         }
 
     def tool_schemas(self) -> dict[str, dict[str, Any]]:

@@ -20,7 +20,7 @@ def test_response_with_text_and_tool_calls():
     event = serialize_message(resp)
     assert event["kind"] == "response"
     assert event["text"] == "hello"
-    assert event["tool_calls"] == [{"name": "spawn", "args": {"role_prompt": "hi"}}]
+    assert event["tool_calls"] == [{"id": "t1", "name": "spawn", "args": {"role_prompt": "hi"}}]
 
 
 def test_response_with_text_only():
@@ -35,6 +35,7 @@ def test_tool_message_serialized():
     assert event["kind"] == "tool"
     assert event["failed"] is False
     assert event["text"] == "{'ok': True}"
+    assert event["tool_call_id"] == "t1"
 
 
 def test_failed_tool_message_flagged():
@@ -83,3 +84,20 @@ def test_make_system_prompt_event():
 def test_make_system_prompt_event_defaults():
     event = make_system_prompt_event(text="")
     assert event == {"kind": "system_prompt", "text": "", "label": ""}
+
+
+def test_token_usage_is_provider_neutral():
+    from conjure.provenance import add_usage, token_usage
+
+    # Anthropic: the cache is reported beside the input, so it is added back.
+    anthropic = token_usage({"input_tokens": 10, "output_tokens": 5,
+                             "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20})
+    assert anthropic == {"input": 130, "output": 5, "cache_read": 100, "cache_creation": 20}
+    # OpenAI style: cached tokens are already part of the prompt count.
+    openai = token_usage({"prompt_tokens": 130, "completion_tokens": 5, "cached_prompt_tokens": 100})
+    assert openai == {"input": 130, "output": 5, "cache_read": 100, "cache_creation": 0}
+    codex = token_usage({"input_tokens": 1200, "cached_input_tokens": 1000, "output_tokens": 42})
+    assert codex == {"input": 1200, "output": 42, "cache_read": 1000, "cache_creation": 0}
+    assert token_usage(None) == {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+    total = add_usage(dict(anthropic), openai)
+    assert total == {"input": 260, "output": 10, "cache_read": 200, "cache_creation": 20}

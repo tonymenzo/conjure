@@ -154,6 +154,8 @@ class ClaudeAgentEngine:
         # survives the new tool list.
         self._session_id: str | None = None
         self._cost_used: float = 0.0
+        # Summed from each turn's ResultMessage (conjure.provenance.token_usage).
+        self._token_usage: dict[str, int] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         self._uses_subscription: bool = _detect_subscription()
         # Actual model the SDK reports on the last AssistantMessage —
         # populated lazily from the response stream so we surface the
@@ -414,6 +416,18 @@ class ClaudeAgentEngine:
         if self._uses_subscription:
             return 0.0
         return self._cost_used
+
+    def api_equivalent_cost(self) -> float:
+        """What the session's tokens cost at API prices (the SDK's figure),
+        whether or not a subscription paid for them."""
+        return self._cost_used
+
+    def usage(self) -> dict[str, Any]:
+        """Token counts over this agent's turns, from the SDK's per-turn
+        totals; ``token_usage`` as :func:`conjure.provenance.token_usage`."""
+        t = dict(self._token_usage)
+        return {"tokens_in": t["input"], "tokens_out": t["output"], "unpriced_tokens": 0,
+                "token_usage": t}
 
     def model_name(self) -> str | None:
         """The exact model this agent runs on. Prefers the id the SDK
@@ -698,6 +712,11 @@ class ClaudeAgentEngine:
                     for result in _extract_tool_results(msg):
                         self._emit_tool_result(result)
                 elif isinstance(msg, ResultMessage):
+                    from conjure.provenance import add_usage, token_usage
+
+                    result_usage = getattr(msg, "usage", None)
+                    if isinstance(result_usage, dict):
+                        add_usage(self._token_usage, token_usage(result_usage))
                     sid = getattr(msg, "session_id", None)
                     if isinstance(sid, str) and sid:
                         self._session_id = sid
@@ -748,6 +767,7 @@ class ClaudeAgentEngine:
             self._stream_emit(
                 {
                     "kind": "tool",
+                    "tool_call_id": result.get("tool_call_id"),
                     "text": result.get("text", ""),
                     "failed": bool(result.get("failed")),
                 }
@@ -867,7 +887,7 @@ def _extract_tool_calls(msg: Any) -> list[dict[str, Any]]:
         if name.startswith(_MCP_PREFIX):
             name = name[len(_MCP_PREFIX):]
         args = getattr(block, "input", None) or {}
-        out.append({"name": name, "args": args})
+        out.append({"id": getattr(block, "id", None), "name": name, "args": args})
     return out
 
 
@@ -888,6 +908,7 @@ def _extract_tool_results(msg: Any) -> list[dict[str, Any]]:
         text = _stringify_tool_result(body)
         out.append(
             {
+                "tool_call_id": getattr(block, "tool_use_id", None),
                 "text": text,
                 "failed": bool(getattr(block, "is_error", False)),
             }
