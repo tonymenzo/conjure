@@ -8,6 +8,12 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.14] — 2026-10-22
+
+A session's record accounts for every agent: which call each tool result
+answers, how many tokens it used with the cache counted, and how it was
+paid for.
+
 ### Added
 
 - **Tool results name their call.** Every engine's `stream_end` tool
@@ -695,7 +701,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.13...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.14...HEAD
+[0.2.14]: https://github.com/tonymenzo/conjure/compare/v0.2.13...v0.2.14
 [0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/tonymenzo/conjure/compare/v0.2.10...v0.2.11
