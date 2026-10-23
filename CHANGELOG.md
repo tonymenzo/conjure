@@ -8,6 +8,17 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.16] — 2026-10-23
+
+A single agent told it may not spawn hears that first.
+
+### Fixed
+- **The depth limit is checked before other spawn refusals.** A spawn past
+  `max_depth` is refused for its depth before its toolkit grants or the
+  engine's spec checks are examined, since neither could make it possible.
+  A single agent (`max_depth: 0`) asking for a worker with tools beyond its
+  own grant was told about the grant first.
+
 ## [0.2.15] — 2026-10-22
 
 A loadout can pin a skill pack beside the toolkits it documents.
