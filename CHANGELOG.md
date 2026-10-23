@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.15] — 2026-10-22
+
+A loadout can pin a skill pack beside the toolkits it documents.
+
 ### Fixed
 - **A skill pack in a grant no longer aborts serving.** A toolkit that
   ships guides and no tools (toolbase's skill pack) has nothing to serve
@@ -710,7 +714,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.14...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.15...HEAD
+[0.2.15]: https://github.com/tonymenzo/conjure/compare/v0.2.14...v0.2.15
 [0.2.14]: https://github.com/tonymenzo/conjure/compare/v0.2.13...v0.2.14
 [0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/tonymenzo/conjure/compare/v0.2.11...v0.2.12
