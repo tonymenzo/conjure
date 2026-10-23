@@ -768,6 +768,15 @@ class Runtime:
         """
         if not specs:
             return []
+        # Depth first: no other check can make a spawn past max_depth
+        # possible, so its refusal is the one to report (it is checked
+        # again under the lock below).
+        child_depth = self.record_for(parent).depth + 1
+        if child_depth > self._max_depth:
+            raise MaxDepthExceeded(
+                f"spawn would create depth {child_depth} but "
+                f"max_depth is {self._max_depth}"
+            )
         # A relative sandbox_dir means "inside my sandbox", and a child
         # may not escape its parent's sandbox. Before any registry
         # mutation, so a refused spawn leaves nothing behind.
