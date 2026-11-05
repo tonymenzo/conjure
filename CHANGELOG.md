@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.17] — 2026-11-05
+
+An agent's toolkits are mainly for the agents it spawns.
+
 ### Changed
 - The toolkit guidance in the system prompt says what an agent's toolkits are
   mainly for: spawning agents with the tools their work needs, telling them what
@@ -733,7 +737,9 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.15...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.17...HEAD
+[0.2.17]: https://github.com/tonymenzo/conjure/compare/v0.2.16...v0.2.17
+[0.2.16]: https://github.com/tonymenzo/conjure/compare/v0.2.15...v0.2.16
 [0.2.15]: https://github.com/tonymenzo/conjure/compare/v0.2.14...v0.2.15
 [0.2.14]: https://github.com/tonymenzo/conjure/compare/v0.2.13...v0.2.14
 [0.2.13]: https://github.com/tonymenzo/conjure/compare/v0.2.12...v0.2.13
