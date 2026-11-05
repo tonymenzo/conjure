@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.18] — 2026-11-05
+
+A run says what it is: the run record.
+
 ### Added
 - The runtime keeps `.conjure/run.json` in the root agent's sandbox: the
   harness and its version, the session, and every agent with its engine and
@@ -745,7 +749,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.17...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.18...HEAD
+[0.2.18]: https://github.com/tonymenzo/conjure/compare/v0.2.17...v0.2.18
 [0.2.17]: https://github.com/tonymenzo/conjure/compare/v0.2.16...v0.2.17
 [0.2.16]: https://github.com/tonymenzo/conjure/compare/v0.2.15...v0.2.16
 [0.2.15]: https://github.com/tonymenzo/conjure/compare/v0.2.14...v0.2.15
