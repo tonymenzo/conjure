@@ -81,9 +81,11 @@ def catalog_impl(
         )
         if record.parent is None and not served and authority:
             out["note"] += (
-                " You hold these to grant but can't call any yet: to use one "
-                "yourself, GrantToolkits(child=\"self\", toolkits=[...]); it's "
-                "served to you from your next turn."
+                " You hold these mainly to grant: spawn an agent for each piece "
+                "of work with the tools it needs (Spawn(..., toolkits=[...])), "
+                "give it the context it lacks, and check what it returns. To "
+                "call one yourself, GrantToolkits(child=\"self\", toolkits=[...]); "
+                "it's served to you from your next turn."
             )
     return out
 
@@ -276,7 +278,8 @@ class GrantToolkitsTool(StatelessRuntimeTool):
     sees the new tools from its next turn, with its conversation
     intact. Use this to answer a child's ``toolkit_request``. The root
     may also grant itself (``child="self"``) from what it may grant, to
-    call those tools directly.
+    call those tools directly; its toolkits are mainly for the agents it
+    spawns.
 
     Error codes: ``toolkit_denied`` (you don't hold it / not installed),
     ``not_permitted`` (target isn't your descendant)."""

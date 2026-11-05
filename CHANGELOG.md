@@ -8,6 +8,14 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+- The toolkit guidance in the system prompt says what an agent's toolkits are
+  mainly for: spawning agents with the tools their work needs, telling them what
+  they cannot know, and checking what they return. An agent may still take
+  tools itself with `GrantToolkits(child="self", ...)`.
+- `ToolCatalog`'s note to a root that holds toolkits but calls none points to
+  spawning agents with curated grants first, and to granting itself second.
+
 ## [0.2.16] — 2026-10-23
 
 A single agent told it may not spawn hears that first.
