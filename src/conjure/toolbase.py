@@ -777,6 +777,15 @@ Domain tools come from toolbase toolkits, served to you as
 You can hand toolkits to the agents you spawn — but only ones you hold
 yourself. Grants attenuate down the tree, like addresses and budgets.
 
+Your toolkits are mainly for the agents you spawn. You see the whole task,
+so you choose each agent's tools and write its brief better than it could
+itself: spawn an agent for each piece of work with the tools that work
+needs, tell it what it cannot know (its inputs, the conventions already
+fixed, the check its result must pass), and review what it returns before
+you rely on it. You can also take tools yourself
+(`GrantToolkits(child="self", ...)`) for your own work, such as a quick
+check of a child's result.
+
 - `ToolCatalog()` — the toolkits you hold: descriptions, bundles,
   tool and skill counts. `ToolCatalog(toolkit="x")` lists each tool.
   `refresh=true` re-reads what's installed.
