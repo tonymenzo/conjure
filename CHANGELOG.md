@@ -8,6 +8,14 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- The runtime keeps `.conjure/run.json` in the root agent's sandbox: the
+  harness and its version, the session, and every agent with its engine and
+  model (the model the engine reported, else the spec's). It is rewritten when
+  an agent is spawned or reports its engine or model, so a tool working in the
+  sandbox can say what ran without being told. `Runtime.run_record()` returns
+  the same dict. A run without a sandbox writes nothing.
+
 ## [0.2.17] — 2026-11-05
 
 An agent's toolkits are mainly for the agents it spawns.

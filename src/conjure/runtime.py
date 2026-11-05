@@ -19,6 +19,7 @@ caller's capabilities.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import time
@@ -1451,6 +1452,52 @@ class Runtime:
                 "spec": record.spec.model_dump(),
             },
         )
+        self._write_run_record()
+
+    def run_record(self) -> dict[str, Any]:
+        """What this run is: the harness and its version, the session, and
+        every agent with its engine and model (the model the engine
+        reported, else the one its spec asked for)."""
+        from conjure import __version__
+
+        agents = []
+        for addr, record in list(self._records.items()):
+            if addr in (USER, SYSTEM):
+                continue
+            model = record.meta.get("model") or record.spec.model
+            agents.append({
+                "id": addr.id,
+                "label": record.spec.label,
+                "parent": record.parent.id if record.parent else None,
+                "engine": record.meta.get("engine") or record.spec.engine,
+                "model": model,
+            })
+        return {
+            "harness": "Conjure",
+            "version": __version__,
+            "session": self._session_id,
+            "agents": agents,
+            "models": sorted({a["model"] for a in agents if a["model"]}),
+        }
+
+    def _write_run_record(self) -> None:
+        """Keep ``.conjure/run.json`` in the root's sandbox current, so tools
+        working there can say what ran (a report's "prepared with", say)
+        without being told. Rewritten when an agent is spawned or reports
+        its engine or model; a run without a sandbox writes nothing."""
+        if self._root_addr is None:
+            return
+        try:
+            base = self.sandbox_of(self._root_addr)
+            if base is None:
+                return
+            path = base / ".conjure" / "run.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self.run_record(), indent=1) + "\n")
+            tmp.replace(path)
+        except Exception:
+            pass
 
     def note_agent_meta(self, addr: Address, meta: dict[str, Any]) -> None:
         """Record what ``addr`` runs as (engine, model, system prompt,
@@ -1468,6 +1515,8 @@ class Runtime:
             self._journal.write("agent_meta", {"addr": addr.id, "meta": changed})
         except Exception:
             pass
+        if {"engine", "model"} & set(changed):
+            self._write_run_record()
 
     def _journal_send(self, env: Envelope) -> None:
         self._journal.write("send", {"envelope": env.model_dump(by_alias=True)})
