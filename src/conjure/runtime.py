@@ -36,6 +36,7 @@ from conjure.errors import (
     BudgetExceeded,
     ConjureError,
     MaxDepthExceeded,
+    WorkersBusy,
     NoSuchAddress,
     NotPermitted,
     SandboxViolation,
@@ -819,6 +820,16 @@ class Runtime:
                 raise BudgetExceeded(
                     f"budget exhausted at {exhausted_at}; spawn refused"
                 )
+            working = self._working_agents()
+            starting = sum(1 for s in specs if not s.lazy)
+            if starting and len(working) + starting > self._max_workers:
+                raise WorkersBusy(
+                    f"{len(working)} agents are working and max_workers is "
+                    f"{self._max_workers}, so {starting} more cannot start now. "
+                    "Wait for one to finish (WaitFor or Recv), or give the work "
+                    "to an idle agent with Send. Working: "
+                    + ", ".join(sorted(a.label or a.id for a in working))
+                )
             for spec in specs:
                 if spec.budget is not None:
                     self._budgets_in_use = True
@@ -850,6 +861,16 @@ class Runtime:
             self._cleanup_failed_spawn(records)
             raise
         return addrs
+
+    def _working_agents(self) -> list[Address]:
+        """Agents below the root that are working: not idle, finished,
+        errored, or passive (lazy, such as a collector). These count
+        against ``max_workers``."""
+        return [
+            addr for addr, r in self._records.items()
+            if r.parent is not None and not r.spec.lazy
+            and r.status not in ("idle", "error", "terminated")
+        ]
 
     def sandbox_of(self, addr: Address) -> Path | None:
         """Where ``addr``'s sandbox is (absolute, not created), the same
