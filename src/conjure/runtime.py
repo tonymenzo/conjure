@@ -463,6 +463,20 @@ class Runtime:
             self._require_not_shutdown()
             self._require_alive(to)
             sender_addr = USER if sender == "user" else SYSTEM
+            if sender == "user":
+                # The chat pane replays a clean ``user_input`` event (the
+                # agent's own context gets a driver-wrapped prompt). Write it
+                # here, for every way a user message arrives: the UI's send,
+                # a one-shot initial task, an embedding harness.
+                event_log = getattr(self._records[to], "event_log", None)
+                if event_log is not None:
+                    try:
+                        event_log.emit({
+                            "kind": "user_input",
+                            "text": body if isinstance(body, str) else repr(body),
+                        })
+                    except Exception:
+                        pass
             msg_id = new_message_id()
             env = Envelope(
                 seq=0,

@@ -570,3 +570,13 @@ def test_parsed_log_reads_only_appended_complete_lines(session, tmp_path, monkey
     assert view._parsed_log(path) == [{"n": 5}, {"n": 6}]
     path.unlink()
     assert view._parsed_log(path) == []
+
+
+def test_a_task_sent_from_outside_the_ui_is_in_the_chat_once(session):
+    view, rt, b = session["view"], session["rt"], session["b"]
+    rt.send_external(to=b, body="the initial task")
+    rt.send_external(to=b, body="a notice", sender="system")
+    view.send(b.id, "typed in the UI")
+    texts = [e["text"] for e in view.events(b.id)["events"] if e["kind"] == "user_input"]
+    assert texts.count("the initial task") == 1 and texts.count("typed in the UI") == 1
+    assert "a notice" not in texts
