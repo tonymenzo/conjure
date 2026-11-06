@@ -181,7 +181,12 @@ class ModelHub:
     ) -> "AgentSpec":
         """Return ``spec`` with ``engine`` / ``llm`` / ``model`` set from
         its model choice (or the policy default), after checking the
-        choice against ``models.allow``. Raises ``ModelDenied``."""
+        choice against ``models.allow``. Raises ``ModelDenied``.
+
+        ``models.allow`` governs the models agents spawn on. The root
+        (``parent_engine`` None) is the operator's choice in the config, so
+        its model is resolved but not checked against it."""
+        root = parent_engine is None
         name = spec.model
         explicit_engine = spec.engine not in (None, "", "auto")
         if explicit_engine and spec.engine not in _CATALOG_ENGINES:
@@ -195,7 +200,7 @@ class ModelHub:
                 name = self.policy.default
             else:
                 entry = self._implied(spec, parent_engine)
-                if entry is None or self.allowed(entry):
+                if entry is None or root or self.allowed(entry):
                     return spec
                 raise ModelDenied(
                     f"no model named, and the implied one ({entry.id}) isn't "
@@ -207,7 +212,7 @@ class ModelHub:
                 f"unknown model {name!r}. Available: {self._allowed_ids()} "
                 "(ModelCatalog describes them)"
             )
-        if not self.allowed(entry):
+        if not root and not self.allowed(entry):
             raise ModelDenied(
                 f"model {entry.id} isn't allowed in this session. "
                 f"Allowed: {self._allowed_ids()}"

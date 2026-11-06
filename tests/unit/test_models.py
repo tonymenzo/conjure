@@ -132,7 +132,7 @@ def test_policy_restricts_and_defaults(gateway):
     hub = _hub(gateway, allow=["mag/*"], default="mag/llama-4-405b", notes={"mag/llama-4-405b": "strongest"})
     assert [e.id for e in hub.allowed_entries()] == ["mag/llama-4-405b", "mag/mistral-large"]
     with pytest.raises(ModelDenied, match="isn't allowed.*mag/llama-4-405b"):
-        hub.resolve_spec(AgentSpec(role_prompt="x", model="claude/opus"), parent_engine=None)
+        hub.resolve_spec(AgentSpec(role_prompt="x", model="claude/opus"), parent_engine="orchestral")
     # No model named: the policy default.
     s = hub.resolve_spec(AgentSpec(role_prompt="x"), parent_engine="orchestral")
     assert (s.engine, s.llm, s.model) == ("orchestral", "mag", "llama-4-405b")
@@ -234,3 +234,13 @@ def test_the_root_runs_on_its_entrys_model_end_to_end(gateway):
         assert rec.agent.engine.model_name() == "llama-4-405b"
     finally:
         rt.shutdown()
+
+
+def test_allow_governs_children_not_the_root(gateway):
+    """An Opus root with children held to another model: the root's own
+    model is the operator's, so ``allow`` doesn't refuse it."""
+    hub = _hub(gateway, allow=["mag/*"])
+    root = hub.resolve_spec(AgentSpec(role_prompt="r", model="claude/opus"), parent_engine=None)
+    assert root.engine == "claude_agent"
+    with pytest.raises(ModelDenied, match="isn't allowed"):
+        hub.resolve_spec(AgentSpec(role_prompt="c", model="claude/opus"), parent_engine="claude_agent")

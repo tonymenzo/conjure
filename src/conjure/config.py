@@ -144,7 +144,9 @@ class ModelsConfig(BaseModel):
     ``ModelCatalog`` shows agents the allowed ones."""
 
     model_config = ConfigDict(extra="forbid")
-    # Glob patterns over ids, e.g. ``["mag/*", "codex/gpt-6-astra"]``.
+    # Glob patterns over ids, e.g. ``["mag/*", "codex/gpt-6-astra"]``: the
+    # models agents may spawn on. The root runs on its own config and is
+    # not held to it, so a session can run an Opus root with Sonnet children.
     allow: list[str] = Field(default_factory=lambda: ["*"])
     # Model for a child spawned without one (an id); never the root,
     # which runs on its own config. ``None``: the engine's own default
