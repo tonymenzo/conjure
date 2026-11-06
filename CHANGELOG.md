@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.22] — 2026-11-06
+
+A Claude agent's turn has no fixed ceiling.
+
 ### Fixed
 - A Claude agent's turn has no fixed ceiling. The engine waited at most 600 s
   for a turn and then reported a timeout, but a delegating root's turn waits on
@@ -803,7 +807,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.21...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.22...HEAD
+[0.2.22]: https://github.com/tonymenzo/conjure/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/tonymenzo/conjure/compare/v0.2.20...v0.2.21
 [0.2.20]: https://github.com/tonymenzo/conjure/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/tonymenzo/conjure/compare/v0.2.18...v0.2.19
