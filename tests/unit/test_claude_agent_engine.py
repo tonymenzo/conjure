@@ -388,3 +388,56 @@ def test_model_table_names_the_exact_model_before_any_reply(tmp_path, monkeypatc
     child._observed_model = "claude-haiku-5-5-20260901"
     assert child.model_info() == ("claude-haiku-5-5-20260901", "observed")
     rt.shutdown()
+
+
+def _bare_engine(tmp_path, rt):
+    """An engine with its event loop running and no CLI behind it."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from conjure.record import AgentSpec
+    root = rt.root(AgentSpec(role_prompt="r", engine="claude_agent"))
+    with patch("claude_agent_sdk.ClaudeSDKClient"):
+        return ClaudeAgentEngine(record=rt.record_for(root), runtime=rt, sandbox_dir=tmp_path)
+
+
+def test_a_long_turn_is_not_cut_off(tmp_path, monkeypatch):
+    """A delegating root's turn waits on its children; with no run deadline
+    it runs to its end, however long (no fixed ceiling)."""
+    import asyncio
+    import conjure.engines.claude_agent as ca
+
+    from conjure.runtime import Runtime
+    rt = Runtime()
+    engine = _bare_engine(tmp_path, rt)
+
+    async def slow(prompt):
+        await asyncio.sleep(0.3)
+        return "done"
+    monkeypatch.setattr(engine, "_step_async", slow)
+    seen = []
+    real = ca.concurrent.futures.Future.result
+    monkeypatch.setattr(ca.concurrent.futures.Future, "result",
+                        lambda self, timeout=None: (seen.append(timeout), real(self, timeout))[1])
+    assert engine.step("go") == "done"
+    assert seen == [None]
+
+
+def test_a_turn_past_the_deadline_is_interrupted(tmp_path, monkeypatch):
+    import asyncio
+    import time as _time
+
+    from conjure.runtime import Runtime
+    rt = Runtime()
+    rt.deadline = _time.time() + 0.2
+    engine = _bare_engine(tmp_path, rt)
+    interrupted = []
+
+    async def hang(prompt):
+        await asyncio.sleep(30)
+    monkeypatch.setattr(engine, "_step_async", hang)
+    monkeypatch.setattr(engine, "interrupt", lambda: interrupted.append(True))
+    with pytest.raises(Exception):
+        engine.step("go")
+    assert interrupted == [True]
