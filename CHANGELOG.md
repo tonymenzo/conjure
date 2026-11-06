@@ -8,6 +8,13 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+- `models.allow` governs the models agents spawn on, not the root's. The root
+  runs on the operator's configuration, so a session can run an Opus root
+  while its children are held to Sonnet (`allow: ["claude/sonnet"]`); before,
+  the allow list refused the root's own model too, and allowing it let every
+  child choose it.
+
 ## [0.2.20] — 2026-11-06
 
 `max_workers` is enforced, and the first user message shows in the chat.
