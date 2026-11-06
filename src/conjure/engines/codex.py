@@ -13,7 +13,10 @@ it to per-token billing. Each turn is one ``codex exec`` process:
 - ``CODEX_HOME`` is per agent (under the store): ``auth.json`` is
   symlinked in, and nothing else of the user's ``~/.codex`` comes
   along: no ``AGENTS.md``, personal MCP servers, profiles, or ChatGPT
-  connectors (``features.apps=false``). Granted toolkit skills are
+  connectors (``features.apps=false``), and no native subagents
+  (``features.multi_agent=false``, ``features.multi_agent_v2=false``):
+  an agent delegates through conjure's ``Spawn``, where grants, the
+  model policy and the run record apply. Granted toolkit skills are
   surfaced into ``$CODEX_HOME/skills``, where Codex looks for them;
 - Codex's own shell and file edits run in its sandbox
   (``workspace-write`` by default: writes confined to the agent's
@@ -52,6 +55,10 @@ _MCP_SERVER = "conjure"
 def codex_available() -> bool:
     return shutil.which("codex") is not None
 
+
+# Codex features that give an agent its own subagents (``spawn_agent`` and
+# friends). Off for every conjure agent; see ``_command``.
+_NATIVE_SUBAGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 
 class CodexEngine:
     """See the module docstring."""
@@ -292,6 +299,11 @@ class CodexEngine:
             # ``resume`` takes no -s; carry the sandbox policy as config.
             cmd += ["-c", f"sandbox_mode={json.dumps(self._sandbox_mode)}"]
         cmd += ["-c", "features.apps=false"]
+        # Codex's own spawn_agent / wait_agent would run subagents inside this
+        # process, out of conjure's sight: no grants, no models.allow, no run
+        # record. Delegation goes through conjure's Spawn instead.
+        for feature in _NATIVE_SUBAGENT_FEATURES:
+            cmd += ["-c", f"features.{feature}=false"]
         if self._model:
             cmd += ["-m", self._model]
         if self._effort:
