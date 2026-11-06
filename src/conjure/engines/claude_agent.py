@@ -681,8 +681,16 @@ class ClaudeAgentEngine:
             async for msg in self._client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     observed = getattr(msg, "model", None)
-                    if isinstance(observed, str) and observed:
+                    if isinstance(observed, str) and observed and observed != self._observed_model:
                         self._observed_model = observed
+                        # Record it now: a long turn (a root's whole task)
+                        # would otherwise leave the configured alias in the
+                        # run record until the turn ends.
+                        try:
+                            self._runtime.note_agent_meta(
+                                self._record.addr, {"model": observed, "model_source": "observed"})
+                        except Exception:
+                            pass
                     usage = getattr(msg, "usage", None) or {}
                     _, delta_out = _extract_usage(usage)
                     if delta_out:

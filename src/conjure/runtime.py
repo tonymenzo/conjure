@@ -1493,7 +1493,7 @@ class Runtime:
                 return
             path = base / ".conjure" / "run.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".json.tmp")
+            tmp = path.with_suffix(f".json.{os.getpid()}.{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps(self.run_record(), indent=1) + "\n")
             tmp.replace(path)
         except Exception:

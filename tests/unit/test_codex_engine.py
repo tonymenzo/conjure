@@ -291,3 +291,14 @@ def test_unpinned_agents_show_codexs_default_before_their_first_reply(tmp_path, 
     finally:
         engine.shutdown()
         rt.shutdown()
+
+
+def test_the_observed_model_reaches_the_run_record_during_the_turn(tmp_path):
+    rt, rec, engine, events, calls = _engine(tmp_path)
+    try:
+        engine.step("hello")
+        assert rec.meta["model"] == "gpt-test-1" and rec.meta["model_source"] == "observed"
+        record = json.loads((rt.sandbox_of(rec.addr) / ".conjure" / "run.json").read_text())
+        assert record["models"] == ["gpt-test-1"]
+    finally:
+        engine.shutdown()

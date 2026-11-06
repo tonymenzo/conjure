@@ -280,6 +280,7 @@ def test_catalog_shows_only_what_the_caller_holds():
     assert [r["toolkit"] for r in summary["toolkits"]] == ["calc", "hep"]
     hep_row = summary["toolkits"][1]
     assert hep_row["description"] == "High-energy physics."
+    assert hep_row["version"] == "3.0.0"
     assert hep_row["tools_held"] == 4 and hep_row["whole"]
 
     child = spawn_impl(token=tok, role_prompt="c", toolkits=["hep/llp"])
