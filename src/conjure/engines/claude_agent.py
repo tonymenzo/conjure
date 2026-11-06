@@ -57,6 +57,10 @@ if TYPE_CHECKING:
 # per-agent ``spec.permissions[tool_name]`` always wins. Read-only
 # tools (Read, Glob, Grep, NotebookRead, WebFetch, WebSearch, etc.)
 # stay default-allow so navigation isn't interrupted.
+# Claude Code's tools that start its own subagents. Disallowed for every
+# conjure agent: delegation goes through conjure's Spawn.
+NATIVE_SUBAGENT_TOOLS: tuple[str, ...] = ("Task", "Agent")
+
 _ASK_BY_DEFAULT: frozenset[str] = frozenset({
     "Bash",
     "Edit",
@@ -371,6 +375,10 @@ class ClaudeAgentEngine:
             system_prompt=system_prompt or self._build_system_prompt(record, runtime),
             cwd=str(sandbox_dir) if sandbox_dir is not None else None,
             allowed_tools=preapproved + bridged_tools,
+            # Claude Code's own subagents would run out of conjure's sight
+            # (no grants, no models.allow, no run record); an agent
+            # delegates through conjure's Spawn instead.
+            disallowed_tools=list(NATIVE_SUBAGENT_TOOLS),
             can_use_tool=can_use_tool,
             # ``default`` consults can_use_tool for every tool call
             # that isn't pre-approved via ``allowed_tools``.

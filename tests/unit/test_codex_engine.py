@@ -92,6 +92,8 @@ def test_first_turn_starts_a_thread_and_translates_events(tmp_path, monkeypatch)
         for flag in ("--json", "--skip-git-repo-check", "--ignore-user-config"):
             assert flag in argv
         assert "features.apps=false" in argv and ["-m", "gpt-x"] == argv[argv.index("-m"):argv.index("-m") + 2]
+        # No native subagents: delegation goes through conjure's Spawn.
+        assert "features.multi_agent=false" in argv and "features.multi_agent_v2=false" in argv
         assert any(a.startswith("mcp_servers.conjure.url=\"http://127.0.0.1:") for a in argv)
         assert 'mcp_servers.conjure.bearer_token_env_var="CONJURE_MCP_TOKEN"' in argv
         assert 'mcp_servers.conjure.default_tools_approval_mode="approve"' in argv
