@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.19] — 2026-11-05
+
+The run record names each model as soon as it is known.
+
 ### Changed
 - An agent's model reaches its record, the journal and `.conjure/run.json` as
   soon as the engine names it (the first reply of a Claude Agent SDK session,
@@ -762,7 +766,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.18...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.19...HEAD
+[0.2.19]: https://github.com/tonymenzo/conjure/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/tonymenzo/conjure/compare/v0.2.17...v0.2.18
 [0.2.17]: https://github.com/tonymenzo/conjure/compare/v0.2.16...v0.2.17
 [0.2.16]: https://github.com/tonymenzo/conjure/compare/v0.2.15...v0.2.16
