@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.21] — 2026-11-06
+
+`models.allow` governs spawned agents, not the root.
+
 ### Changed
 - `models.allow` governs the models agents spawn on, not the root's. The root
   runs on the operator's configuration, so a session can run an Opus root
@@ -791,7 +795,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.20...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.21...HEAD
+[0.2.21]: https://github.com/tonymenzo/conjure/compare/v0.2.20...v0.2.21
 [0.2.20]: https://github.com/tonymenzo/conjure/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/tonymenzo/conjure/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/tonymenzo/conjure/compare/v0.2.17...v0.2.18
