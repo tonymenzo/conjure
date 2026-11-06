@@ -16,6 +16,9 @@ this file as its notes.
   and outside the session's toolkit grants and `models.allow`. Every Codex
   agent now runs with `features.multi_agent=false` and
   `features.multi_agent_v2=false`, so delegation goes through `Spawn`.
+- Claude agents cannot use Claude Code's own subagent tools (`Task`, `Agent`),
+  which are disallowed for every agent whatever its tool list, for the same
+  reason.
 
 ## [0.2.22] — 2026-11-06
 

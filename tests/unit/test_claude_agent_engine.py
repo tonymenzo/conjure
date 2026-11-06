@@ -441,3 +441,12 @@ def test_a_turn_past_the_deadline_is_interrupted(tmp_path, monkeypatch):
     with pytest.raises(Exception):
         engine.step("go")
     assert interrupted == [True]
+
+
+def test_claude_code_subagents_are_disallowed(tmp_path):
+    """Delegation goes through conjure's Spawn: Claude Code's own subagent
+    tools are disallowed, whatever tools the spec lists."""
+    from conjure.runtime import Runtime
+    rt = Runtime()
+    engine = _bare_engine(tmp_path, rt)
+    assert {"Task", "Agent"} <= set(engine._options.disallowed_tools or [])
