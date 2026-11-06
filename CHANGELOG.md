@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.23] — 2026-11-06
+
+Agents delegate only through conjure's Spawn.
+
 ### Fixed
 - Codex agents have no native subagents. Codex enables `multi_agent` by
   default, which gives each agent its own `spawn_agent`, `wait_agent` and
@@ -819,7 +823,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.22...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.23...HEAD
+[0.2.23]: https://github.com/tonymenzo/conjure/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/tonymenzo/conjure/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/tonymenzo/conjure/compare/v0.2.20...v0.2.21
 [0.2.20]: https://github.com/tonymenzo/conjure/compare/v0.2.19...v0.2.20
