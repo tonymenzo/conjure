@@ -8,6 +8,14 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+- A Claude agent's turn has no fixed ceiling. The engine waited at most 600 s
+  for a turn and then reported a timeout, but a delegating root's turn waits on
+  its children and routinely runs longer: the root was marked errored ten
+  minutes in, while the abandoned turn went on running in the background. A
+  turn now runs to its end, bounded only by the run's deadline when one is set,
+  and is interrupted, not abandoned, when that passes.
+
 ## [0.2.21] — 2026-11-06
 
 `models.allow` governs spawned agents, not the root.

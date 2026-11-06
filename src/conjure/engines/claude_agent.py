@@ -29,6 +29,7 @@ is underneath.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import functools
 import json
 import os
@@ -397,10 +398,21 @@ class ClaudeAgentEngine:
     # ----- interface mirroring OrchestralEngine -----
 
     def step(self, prompt: str) -> str:
+        """Run one turn to its end. A delegating agent's turn can wait on
+        its children for a long time, so there is no fixed ceiling: the
+        turn is bounded only by the run's deadline, if it has one, and is
+        interrupted, not abandoned, when that passes."""
         future = asyncio.run_coroutine_threadsafe(
             self._step_async(prompt), self._loop
         )
-        return future.result(timeout=600)
+        remaining = self._runtime.remaining_s() if self._runtime is not None else None
+        try:
+            return future.result(timeout=remaining)
+        except concurrent.futures.TimeoutError:
+            # Stop the CLI's turn rather than leave it running unobserved.
+            self.interrupt()
+            future.cancel()
+            raise
 
     def tool_schemas(self) -> dict[str, dict[str, Any]]:
         """Argument schemas of the toolkit tools this agent is served, by
