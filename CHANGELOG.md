@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.20] — 2026-11-06
+
+`max_workers` is enforced, and the first user message shows in the chat.
+
 ### Fixed
 - The first user message of a run shows in the web UI's chat. Only a message
   typed in the UI wrote the `user_input` event the chat replays; a one-shot
@@ -780,7 +784,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.19...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.20...HEAD
+[0.2.20]: https://github.com/tonymenzo/conjure/compare/v0.2.19...v0.2.20
 [0.2.19]: https://github.com/tonymenzo/conjure/compare/v0.2.18...v0.2.19
 [0.2.18]: https://github.com/tonymenzo/conjure/compare/v0.2.17...v0.2.18
 [0.2.17]: https://github.com/tonymenzo/conjure/compare/v0.2.16...v0.2.17
