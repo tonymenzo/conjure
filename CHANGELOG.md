@@ -9,6 +9,11 @@ this file as its notes.
 ## [Unreleased]
 
 ### Fixed
+- The first user message of a run shows in the web UI's chat. Only a message
+  typed in the UI wrote the `user_input` event the chat replays; a one-shot
+  `initial_task` and a message from an embedding harness (`send_external`)
+  showed in the summary but not in the chat. `send_external` now writes it for
+  every user message, once.
 - `runtime.max_workers` is enforced. It was read from the config and never
   used, so any number of agents could be spawned at once. It now caps the
   agents below the root that are working: idle, finished, errored and passive
