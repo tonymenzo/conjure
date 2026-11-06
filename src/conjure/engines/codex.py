@@ -350,8 +350,14 @@ class CodexEngine:
                         window = payload["model_context_window"]
         except OSError:
             return
-        if model:
+        if model and model != self._observed_model:
             self._observed_model = model
+            # Record it now, not at the turn's end (a root's whole task can
+            # be one turn).
+            try:
+                self._runtime.note_agent_meta(self._record.addr, {"model": model, "model_source": "observed"})
+            except Exception:
+                pass
         if window:
             used = self._context[0] if self._context else 0
             self._context = (used, window)

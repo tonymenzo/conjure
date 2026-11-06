@@ -246,7 +246,7 @@ def request_toolkits_impl(
 class ToolCatalogTool(StatelessRuntimeTool):
     """List the toolbase toolkits you hold — and may therefore grant to
     the agents you spawn. Without ``toolkit``: one row per toolkit
-    (description, bundles, how many tools/skills you hold). With
+    (version, description, bundles, how many tools/skills you hold). With
     ``toolkit``: every tool and skill of it you hold, with descriptions.
     Give each child only what its task needs — a short tool list is
     easier to use well."""

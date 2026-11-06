@@ -956,6 +956,7 @@ def describe_catalog(
         rows.append(
             {
                 "toolkit": name,
+                "version": info.version,
                 "description": _first_line(info.description),
                 "bundles": sorted(info.bundles),
                 "tools_held": len(held.tools),

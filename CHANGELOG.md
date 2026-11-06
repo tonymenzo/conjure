@@ -8,6 +8,19 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+- An agent's model reaches its record, the journal and `.conjure/run.json` as
+  soon as the engine names it (the first reply of a Claude Agent SDK session,
+  the session file of a Codex thread), not at the end of the turn. A root that
+  does its whole task in one turn was recorded under its configured alias
+  (`opus`) until it finished, so a tool reading the run record mid-turn named
+  it by alias beside its helpers' full ids.
+- `ToolCatalog`'s summary gives each toolkit's version.
+
+### Fixed
+- The run record is written through a temporary file unique to the process
+  and thread, so two engines noting a model at once cannot collide.
+
 ## [0.2.18] — 2026-11-05
 
 A run says what it is: the run record.
