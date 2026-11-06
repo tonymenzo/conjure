@@ -32,6 +32,7 @@ from conjure.errors import (
     BudgetExceeded,
     MaxDepthExceeded,
     NoSuchAddress,
+    WorkersBusy,
     SandboxViolation,
     Terminated,
     ModelDenied,
@@ -201,6 +202,8 @@ def spawn_impl(
         return _err("no_such_address", str(e))
     except MaxDepthExceeded as e:
         return _err("depth_exceeded", str(e))
+    except WorkersBusy as e:
+        return _err("workers_busy", str(e))
     except BudgetExceeded as e:
         return _err("budget_exceeded", str(e))
     except ModelDenied as e:
@@ -685,6 +688,8 @@ def call_impl(
             worker = runtime._spawn(parent=caller_addr, spec=worker_spec)
         except MaxDepthExceeded as e:
             return _err("depth_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:

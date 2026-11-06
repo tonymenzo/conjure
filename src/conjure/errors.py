@@ -60,6 +60,12 @@ class MaxDepthExceeded(ConjureError):
     """Spawn would exceed the configured ``max_depth`` on the runtime."""
 
 
+class WorkersBusy(ConjureError):
+    """Spawn would put more agents to work at once than the runtime's
+    ``max_workers``. Idle agents don't count: a parent can wait for one
+    to finish, or give the work to an idle one."""
+
+
 class BudgetExceeded(ConjureError):
     """An agent's (or ancestor's) cost ceiling is exhausted.
 

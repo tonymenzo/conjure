@@ -41,6 +41,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     store_dir: str | None = None
+    # Most agents below the root working at once. Idle, finished and
+    # passive agents don't count; a spawn past it is refused with
+    # ``workers_busy`` so the parent waits for one or reuses an idle one.
     max_workers: int = 32
     # Hard cap on the spawn-tree depth. The root agent is depth 0;
     # children are depth 1, etc. ``max_depth = 3`` allows root + two

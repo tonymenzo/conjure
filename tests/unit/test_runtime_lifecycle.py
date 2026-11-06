@@ -442,3 +442,21 @@ def test_failed_driver_thread_start_cleans_up_batch(monkeypatch):
         assert len(closed) == 1
     finally:
         rt.shutdown()
+
+
+def test_max_workers_caps_the_agents_working_at_once():
+    from conjure.errors import WorkersBusy
+    from conjure.tools.primitives import spawn_impl
+
+    rt = Runtime(max_workers=2)
+    root = rt.root(AgentSpec(role_prompt="root"))
+    a = rt._spawn(parent=root, spec=AgentSpec(role_prompt="a", label="a"))
+    rt._spawn(parent=root, spec=AgentSpec(role_prompt="b", label="b"))
+    with pytest.raises(WorkersBusy, match="max_workers is 2"):
+        rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", label="c"))
+    out = spawn_impl(token=rt.record_for(root).token, role_prompt="c", label="c")
+    assert out["ok"] is False and out["code"] == "workers_busy"
+    # A passive agent never counts, and an idle one stops counting.
+    rt._spawn(parent=root, spec=AgentSpec(role_prompt="p", label="p", lazy=True))
+    rt.record_for(a).status = "idle"
+    rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", label="c"))

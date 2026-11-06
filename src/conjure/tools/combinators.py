@@ -23,7 +23,7 @@ from conjure.combinators import (
     agent_race,
     agent_supervisor,
 )
-from conjure.errors import BudgetExceeded, Timeout, ModelDenied, ToolkitDenied
+from conjure.errors import BudgetExceeded, Timeout, ModelDenied, ToolkitDenied, WorkersBusy
 from conjure.record import AgentSpec
 from conjure.toolbase import parse_toolkits
 from conjure.tools._base import (
@@ -180,6 +180,8 @@ class AgentMapTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -225,6 +227,8 @@ class AgentFoldTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -258,6 +262,8 @@ class AgentFilterTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="gather")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -290,6 +296,8 @@ class AgentFixedPointTool(StatelessRuntimeTool):
             return _err("timeout", str(e))
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -340,6 +348,8 @@ class AgentRaceTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="race")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -399,6 +409,8 @@ class AgentEnsembleTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="ensemble")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -463,6 +475,8 @@ class AgentCriticTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="critic")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:
@@ -514,6 +528,8 @@ class AgentSupervisorTool(StatelessRuntimeTool):
             return _timeout_payload(e, stage="supervise")
         except BudgetExceeded as e:
             return _err("budget_exceeded", str(e))
+        except WorkersBusy as e:
+            return _err("workers_busy", str(e))
         except ModelDenied as e:
             return _err("model_denied", str(e))
         except ToolkitDenied as e:

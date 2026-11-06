@@ -8,6 +8,15 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+- `runtime.max_workers` is enforced. It was read from the config and never
+  used, so any number of agents could be spawned at once. It now caps the
+  agents below the root that are working: idle, finished, errored and passive
+  ones (a collector) don't count. A spawn past it, from `Spawn` or a
+  combinator, is refused with `workers_busy`, naming the working agents, so
+  the parent waits for one or gives the work to an idle one. The default stays
+  32.
+
 ## [0.2.19] — 2026-11-05
 
 The run record names each model as soon as it is known.
