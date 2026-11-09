@@ -651,13 +651,7 @@ class ClaudeAgentEngine:
             setting_sources=["project"] if skills else self._base_setting_sources,
         )
         self._client = ClaudeSDKClient(self._options)
-        self._emit_event(
-            {
-                "kind": "toolkits",
-                "tools": [t.get_name() for t in served],
-                "skills": skills,
-            }
-        )
+        # The mount announces the change in the agent's log.
 
     async def _step_async(self, prompt: str) -> str:
         from claude_agent_sdk.types import (

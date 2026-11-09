@@ -289,14 +289,8 @@ class CodexEngine:
 
             self._grant_note = grant_note(served, "mcp__conjure__", self._toolbase.skill_names())
         # Nothing to rewire: each turn's codex process opens a fresh MCP
-        # session, which lists the mount's current tools.
-        self._emit(
-            {
-                "kind": "toolkits",
-                "tools": [t.get_name() for t in served],
-                "skills": self._toolbase.skill_names(),
-            }
-        )
+        # session, which lists the mount's current tools. The mount
+        # announces the change in the agent's log.
 
     def _command(self, prompt: str) -> list[str]:
         if self.thread_id:

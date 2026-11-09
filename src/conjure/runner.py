@@ -235,7 +235,7 @@ def _build_codex_engine(
     if runtime.toolbase is not None:
         from conjure.toolbase import ToolbaseMount
 
-        mount = ToolbaseMount(runtime.toolbase, record, sandbox, skills_dir=home / "skills")
+        mount = ToolbaseMount(runtime.toolbase, record, sandbox, skills_dir=home / "skills", announce=stream_emit)
         mount.prestart()
     return CodexEngine(
         record=record,
@@ -285,6 +285,7 @@ def _build_claude_agent_engine(
             record,
             sandbox,
             skills_dir=(sandbox / ".claude" / "skills") if sandbox is not None else None,
+            announce=stream_emit,
         )
         mount.prestart()
     return ClaudeAgentEngine(
