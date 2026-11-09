@@ -600,10 +600,17 @@ class ToolbaseMount:
         sandbox: Path | Callable[[], Path | None] | None,
         *,
         skills_dir: Path | Callable[[], Path | None] | None = None,
+        announce: Callable[[dict[str, Any]], None] | None = None,
     ):
         # ``sandbox`` may be a thunk so agents that never get toolkits
         # never have a sandbox directory created on their behalf.
+        # ``announce`` receives a ``toolkits`` event (the tools and skills
+        # served) whenever the served set changes, from the prestart at
+        # spawn or a later grant, so the agent's log shows its toolkits
+        # before its first turn.
         self._hub = hub
+        self._announce = announce
+        self._announced: str = ""
         self._record = record
         self._sandbox = sandbox
         self._skills_dir = skills_dir
@@ -627,6 +634,7 @@ class ToolbaseMount:
             if self._closed:
                 return None
             key = self._apply()
+            self._announce_change(key)
             # Report a change relative to what the engine last saw, not
             # to what's running: a prestart may already have applied it.
             if key == self._reported:
@@ -672,13 +680,25 @@ class ToolbaseMount:
             try:
                 with self._lock:
                     if not self._closed:
-                        self._apply()
+                        self._announce_change(self._apply())
             except Exception:
                 pass
 
         t = threading.Thread(target=run, daemon=True, name=f"toolbase-warm-{self._record.addr.id}")
         t.start()
         return t
+
+    def _announce_change(self, key: str) -> None:
+        """Send a ``toolkits`` event when the served set differs from the
+        one last announced. Caller holds the lock."""
+        if self._announce is None or not key or key == self._announced:
+            return
+        self._announced = key
+        try:
+            self._announce({"kind": "toolkits", "tools": [t.get_name() for t in self.tools],
+                            "skills": self.skill_names()})
+        except Exception:
+            pass
 
     @property
     def tools(self) -> list[Any]:

@@ -436,6 +436,26 @@ def test_mount_starts_lazily_restarts_on_grant_and_closes():
     rt.shutdown()
 
 
+def test_mount_announces_its_toolkits_at_prestart_and_on_each_grant():
+    servers = FakeServers()
+    rt = Runtime(toolbase=_hub(servers))
+    root, rec = _record(rt, ["calc__add"])
+    events: list[dict] = []
+    mount = ToolbaseMount(rt.toolbase, rec, sandbox=None, announce=events.append)
+    t = mount.prestart()
+    if t is not None:
+        t.join(timeout=5)
+    # Before any turn: the agent's log already shows what it was granted.
+    assert [(e["kind"], e["tools"]) for e in events] == [("toolkits", ["calc__add"])]
+    assert [x.get_name() for x in mount.sync()] == ["calc__add"]  # the engine still gets its tools
+    assert len(events) == 1  # unchanged → no second announcement
+    rt.grant_toolkits(granter=root, target=rec.addr, toolkits=parse_toolkits(["calc__mul"]))
+    mount.sync()
+    assert events[-1]["tools"] == ["calc__add", "calc__mul"] and len(events) == 2
+    mount.close()
+    rt.shutdown()
+
+
 def test_empty_mount_starts_nothing():
     servers = FakeServers()
     rt = Runtime(toolbase=_hub(servers))

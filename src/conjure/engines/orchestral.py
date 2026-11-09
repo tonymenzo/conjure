@@ -565,6 +565,9 @@ def make_orchestral_engine_factory(
             tool_names.append("models")
         tools = build_tools(record.token, tool_names, registry)
         check_tool_names(tools)
+        # One event log per agent: the mount announces its toolkits there,
+        # and the engine streams into it.
+        event_log = event_log_router(record) if event_log_router is not None else None
         mount = None
         if hub is not None:
             # Every agent gets a mount, even with no toolkits yet: a
@@ -576,7 +579,8 @@ def make_orchestral_engine_factory(
             # Orchestral has no native skills: no skills_dir, and the
             # agent reads granted skills through ``LoadSkill``.
             mount = ToolbaseMount(
-                hub, record, lambda: _sandbox_for(record, runtime)
+                hub, record, lambda: _sandbox_for(record, runtime),
+                announce=event_log.emit if event_log is not None else None,
             )
             mount.prestart()
 
@@ -584,10 +588,8 @@ def make_orchestral_engine_factory(
         # agent's event log and the display hook MUST filter out
         # ``response`` events (the engine already streamed them).
         stream_emit: Callable[[dict[str, Any]], None] | None = None
-        if stream and event_log_router is not None:
-            event_log = event_log_router(record)
-            if event_log is not None:
-                stream_emit = event_log.emit
+        if stream and event_log is not None:
+            stream_emit = event_log.emit
 
         hook = _build_hook(
             record=record,
