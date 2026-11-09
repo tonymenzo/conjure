@@ -8,6 +8,16 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.25] — 2026-11-09
+
+An agent's toolkits show from spawn.
+
+### Fixed
+- An agent's `toolkits` event (the web UI's "toolkits now") is sent when its
+  toolkit servers start at spawn and on each later grant, for every engine. It
+  came from the Codex and Claude engines at the start of a turn, so it appeared
+  only after an agent's first message; the orchestral engine never sent it.
+
 ## [0.2.24] — 2026-11-09
 
 A Codex agent's context is its context.
@@ -835,7 +845,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.24...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.25...HEAD
+[0.2.25]: https://github.com/tonymenzo/conjure/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/tonymenzo/conjure/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/tonymenzo/conjure/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/tonymenzo/conjure/compare/v0.2.21...v0.2.22
