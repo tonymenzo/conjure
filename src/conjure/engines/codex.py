@@ -38,6 +38,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -98,6 +99,12 @@ class CodexEngine:
         self._grant_note: str | None = None
         self._observed_model: str | None = None
         self._context: tuple[int, int] | None = None
+        # The session file is read incrementally: its path, the offset read
+        # to, and when (context_usage polls it during a long turn).
+        self._meta_lock = threading.Lock()
+        self._meta_file: Path | None = None
+        self._meta_pos = 0
+        self._meta_read_at = 0.0
         self._proc: subprocess.Popen[str] | None = None
         self._proc_lock = threading.Lock()
         self._interrupted = False
@@ -159,7 +166,7 @@ class CodexEngine:
                     # The session file names the model from the turn's
                     # start; don't make the UI wait for the turn to end.
                     self._read_session_meta()
-                elif kind == "item.completed" and item.get("type") == "agent_message":
+                if kind == "item.completed" and item.get("type") == "agent_message":
                     text = item.get("text") or ""
                     if not text:
                         continue
@@ -185,10 +192,10 @@ class CodexEngine:
                     out = int(usage.get("output_tokens") or 0)
                     if out:
                         self._emit({"kind": "usage", "tokens_in": 0, "tokens_out": out})
-                    inp = int(usage.get("input_tokens") or 0)
-                    if inp:
-                        window = self._context[1] if self._context else 0
-                        self._context = (inp, window)
+                    # A turn's usage sums every model request in it, so it
+                    # is not the context's size; the session file's last
+                    # request is (_read_session_meta).
+                    self._read_session_meta()
                 elif kind in ("turn.failed", "error"):
                     err = ev.get("error")
                     msg = err.get("message") if isinstance(err, dict) else ev.get("message")
@@ -238,6 +245,8 @@ class CodexEngine:
         return None, "default"
 
     def context_usage(self) -> tuple[int, int] | None:
+        if time.monotonic() - self._meta_read_at > 2.0:
+            self._read_session_meta()
         if self._context and self._context[1]:
             return self._context
         return None
@@ -333,35 +342,57 @@ class CodexEngine:
         return home
 
     def _read_session_meta(self) -> None:
-        """The model and its context window aren't in the JSON stream;
-        Codex records them in the thread's session file."""
+        """The model, its context window and the context's size aren't in the
+        JSON stream; Codex records them in the thread's session file: the
+        model in ``turn_context``, and per model request a ``token_count``
+        whose ``last_token_usage.input_tokens`` is the context that request
+        used. Read incrementally from where the last read stopped."""
         if not self.thread_id:
             return
-        try:
-            files = sorted((self._home / "sessions").rglob(f"*{self.thread_id}*.jsonl"))
-        except OSError:
-            return
-        if not files:
-            return
-        model = window = None
-        try:
-            with open(files[-1], encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                    except ValueError:
-                        continue
-                    payload = entry.get("payload")
-                    if not isinstance(payload, dict):
-                        continue
-                    # Only Codex's own records: a tool call's arguments can
-                    # carry a "model" too (a child's, say).
-                    if entry.get("type") == "turn_context" and isinstance(payload.get("model"), str):
-                        model = payload["model"]
-                    elif entry.get("type") == "event_msg" and isinstance(payload.get("model_context_window"), int):
-                        window = payload["model_context_window"]
-        except OSError:
-            return
+        with self._meta_lock:
+            self._meta_read_at = time.monotonic()
+            if self._meta_file is None:
+                try:
+                    files = sorted((self._home / "sessions").rglob(f"*{self.thread_id}*.jsonl"))
+                except OSError:
+                    return
+                if not files:
+                    return
+                self._meta_file, self._meta_pos = files[-1], 0
+            model = window = used = None
+            try:
+                with open(self._meta_file, "rb") as f:
+                    f.seek(self._meta_pos)
+                    for raw in f:
+                        if not raw.endswith(b"\n"):
+                            break  # a line still being written: read it next time
+                        self._meta_pos += len(raw)
+                        try:
+                            entry = json.loads(raw)
+                        except ValueError:
+                            continue
+                        payload = entry.get("payload")
+                        if not isinstance(payload, dict):
+                            continue
+                        # Only Codex's own records: a tool call's arguments can
+                        # carry a "model" too (a child's, say).
+                        if entry.get("type") == "turn_context" and isinstance(payload.get("model"), str):
+                            model = payload["model"]
+                        elif entry.get("type") == "event_msg":
+                            if isinstance(payload.get("model_context_window"), int):
+                                window = payload["model_context_window"]
+                            info = payload.get("info") if payload.get("type") == "token_count" else None
+                            if isinstance(info, dict):
+                                if isinstance(info.get("model_context_window"), int):
+                                    window = info["model_context_window"]
+                                last = info.get("last_token_usage")
+                                if isinstance(last, dict) and isinstance(last.get("input_tokens"), int):
+                                    used = last["input_tokens"]
+            except OSError:
+                return
+            if used is not None or window:
+                old_used, old_window = self._context or (0, 0)
+                self._context = (used if used is not None else old_used, window or old_window)
         if model and model != self._observed_model:
             self._observed_model = model
             # Record it now, not at the turn's end (a root's whole task can
@@ -370,9 +401,6 @@ class CodexEngine:
                 self._runtime.note_agent_meta(self._record.addr, {"model": model, "model_source": "observed"})
             except Exception:
                 pass
-        if window:
-            used = self._context[0] if self._context else 0
-            self._context = (used, window)
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self._emit_fn is None:

@@ -49,6 +49,10 @@ os.makedirs(os.path.join(home, "sessions", "2026"), exist_ok=True)
 with open(os.path.join(home, "sessions", "2026", "rollout-x-thread-123.jsonl"), "w") as f:
     f.write('{{"type":"turn_context","payload":{{"model":"gpt-test-1"}}}}\\n')
     f.write('{{"type":"event_msg","payload":{{"type":"task_started","model_context_window":400000}}}}\\n')
+    # Two model requests in the turn: the context is the last one's input,
+    # not the turn's sum (1200).
+    f.write('{{"type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":400}},"model_context_window":400000}}}}}}\\n')
+    f.write('{{"type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":800}},"model_context_window":400000}}}}}}\\n')
     # A tool call naming another model (a child's) must not be read as ours.
     f.write('{{"type":"response_item","payload":{{"type":"function_call","arguments":"{{\\\\"model\\\\":\\\\"codex/decoy\\\\"}}","model":"decoy"}}}}\\n')
 for ev in {json.dumps(EVENTS)!r} and json.loads({json.dumps(json.dumps(EVENTS))}):
@@ -119,7 +123,13 @@ def test_first_turn_starts_a_thread_and_translates_events(tmp_path, monkeypatch)
         ]
         assert engine.thread_id == "thread-123"
         assert engine.model_info() == ("gpt-test-1", "observed")
-        assert engine.context_usage() == (1200, 400000)
+        assert engine.context_usage() == (800, 400000)
+        # A request written later is read from where the last read stopped.
+        session = next((tmp_path / "home" / "sessions").rglob("*thread-123*.jsonl"))
+        with open(session, "a") as f:
+            f.write('{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":950},"model_context_window":400000}}}\n')
+        engine._meta_read_at = 0.0
+        assert engine.context_usage() == (950, 400000)
         assert engine.cost() == 0.0 and engine.uses_subscription()
         # Results name the call they answer; the turn's tokens are summed.
         assert [e["tool_call_id"] for e in events if e["kind"] == "tool"] == ["i1", "i2"]
