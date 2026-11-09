@@ -8,6 +8,18 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.24] — 2026-11-09
+
+A Codex agent's context is its context.
+
+### Fixed
+- A Codex agent's context size is the last model request's input, read from
+  Codex's session file during the turn. It came from `turn.completed`'s
+  `input_tokens`, which sums every request in the turn, so a root working
+  through one long turn showed many times its window.
+- The event that triggered the first read of a Codex session file is no longer
+  skipped.
+
 ## [0.2.23] — 2026-11-06
 
 Agents delegate only through conjure's Spawn.
@@ -823,7 +835,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.23...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.24...HEAD
+[0.2.24]: https://github.com/tonymenzo/conjure/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/tonymenzo/conjure/compare/v0.2.22...v0.2.23
 [0.2.22]: https://github.com/tonymenzo/conjure/compare/v0.2.21...v0.2.22
 [0.2.21]: https://github.com/tonymenzo/conjure/compare/v0.2.20...v0.2.21
