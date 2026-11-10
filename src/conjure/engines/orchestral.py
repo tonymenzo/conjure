@@ -556,6 +556,10 @@ def make_orchestral_engine_factory(
         # Like a coding harness, an agent gets the core tools (orchestration,
         # combinators, files and shell) unless its spec names its own set.
         tool_names = list(record.spec.tools) if record.spec.tools else list(DEFAULT_TOOL_GROUPS_FOR_AGENTS)
+        if "mailbox" in registry and "mailbox" not in tool_names:
+            # An agent can always reply to the one that messaged it, even
+            # when its spawn named only, say, ``filesystem``.
+            tool_names.append("mailbox")
         hub = getattr(runtime, "toolbase", None)
         if hub is not None and "toolkit" in registry and "toolkit" not in tool_names:
             # Toolkit curation (catalog, grant, request) rides along
