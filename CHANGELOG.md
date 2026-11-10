@@ -8,6 +8,17 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.26] — 2026-11-10
+
+Every agent can reply.
+
+### Fixed
+- An orchestral agent always holds `Send`, `Recv`, `ListInbox` and `Peek`
+  (the new `mailbox` tool group), whatever groups its spawn named. A child
+  spawned with `tools=["filesystem"]` had no `Send`, so it could not answer
+  its parent and used `RequestToolkits` as a message channel instead. The
+  Claude and Codex engines already bridged every primitive.
+
 ## [0.2.25] — 2026-11-09
 
 An agent's toolkits show from spawn.
@@ -845,7 +856,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.25...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.26...HEAD
+[0.2.26]: https://github.com/tonymenzo/conjure/compare/v0.2.25...v0.2.26
 [0.2.25]: https://github.com/tonymenzo/conjure/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/tonymenzo/conjure/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/tonymenzo/conjure/compare/v0.2.22...v0.2.23

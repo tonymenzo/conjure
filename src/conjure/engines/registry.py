@@ -10,6 +10,8 @@ Default groups:
 
 - ``"primitive"`` — the seven capability tools (spawn, send, recv,
   wait_for, terminate, introduce, list_inbox).
+- ``"mailbox"`` — send, recv, list_inbox and peek. The orchestral engine
+  adds it to every agent, so an agent can always reply.
 - ``"combinator"`` — the four FP-style combinator tools (agent_map,
   agent_fold, agent_filter, agent_fixed_point).
 - ``"toolkit"`` — toolbase curation (tool_catalog, grant_toolkits,
@@ -25,7 +27,7 @@ from typing import Mapping
 from conjure.tools._base import StatelessRuntimeTool
 from conjure.tools.combinators import COMBINATOR_TOOL_CLASSES
 from conjure.tools.filesystem import FILESYSTEM_TOOL_CLASSES
-from conjure.tools.primitives import PRIMITIVE_TOOL_CLASSES
+from conjure.tools.primitives import MAILBOX_TOOL_CLASSES, PRIMITIVE_TOOL_CLASSES
 from conjure.tools.models import MODEL_TOOL_CLASSES
 from conjure.tools.toolkits import TOOLKIT_TOOL_CLASSES
 
@@ -35,6 +37,7 @@ ToolGroupRegistry = Mapping[str, tuple[type[StatelessRuntimeTool], ...]]
 
 DEFAULT_TOOL_GROUPS: ToolGroupRegistry = {
     "primitive": PRIMITIVE_TOOL_CLASSES,
+    "mailbox": MAILBOX_TOOL_CLASSES,
     "combinator": COMBINATOR_TOOL_CLASSES,
     "filesystem": tuple(FILESYSTEM_TOOL_CLASSES),
     "toolkit": TOOLKIT_TOOL_CLASSES,

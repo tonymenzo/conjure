@@ -798,7 +798,9 @@ class SpawnTool(StatelessRuntimeTool):
             "Tools for the child. On the orchestral engine (API models) these "
             "are tool GROUPS, not tool names: 'primitive', 'combinator', "
             "'filesystem', 'toolkit', 'models' or 'all'; omit for "
-            "primitive + combinator + filesystem. An unknown group is refused "
+            "primitive + combinator + filesystem. Send, Recv, ListInbox and "
+            "Peek are always included, so the child can reply. An unknown "
+            "group is refused "
             "and no child is created. On claude_agent they are Claude Code tool "
             "names (Read, Bash, ...). Toolbase toolkits go in `toolkits`."
         ),
@@ -1163,6 +1165,16 @@ PRIMITIVE_TOOL_CLASSES = (
     ListInboxTool,
     PeekTool,
     CallTool,
+)
+
+
+# The tools an agent needs to answer whoever messaged it. Every agent holds
+# them, whatever tool groups its spawn named.
+MAILBOX_TOOL_CLASSES = (
+    SendTool,
+    RecvTool,
+    ListInboxTool,
+    PeekTool,
 )
 
 

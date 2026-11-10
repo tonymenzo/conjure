@@ -100,3 +100,16 @@ def test_runner_dispatch_validates_orchestral_children_only(tmp_path, monkeypatc
         assert runtime.record_for(root).children == set()
     finally:
         runtime.shutdown()
+
+
+def test_a_child_spawned_without_primitives_can_still_reply(rt):
+    """A child whose spawn names only ``filesystem`` still holds Send, so it
+    can answer its parent instead of misusing RequestToolkits as a message
+    channel."""
+    root = rt.root(AgentSpec(role_prompt="r", label="root"))
+    child = rt._spawn(parent=root, spec=AgentSpec(
+        role_prompt="w", label="worker", tools=["filesystem"]))
+    engine = rt._engine_for(rt.record_for(child))
+    names = {type(t).__name__ for t in engine._base_tools}
+    assert {"SendTool", "RecvTool", "ListInboxTool", "PeekTool"} <= names
+    assert "SpawnTool" not in names
