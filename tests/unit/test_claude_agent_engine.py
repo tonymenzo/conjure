@@ -450,3 +450,28 @@ def test_claude_code_subagents_are_disallowed(tmp_path):
     rt = Runtime()
     engine = _bare_engine(tmp_path, rt)
     assert {"Task", "Agent"} <= set(engine._options.disallowed_tools or [])
+
+
+def test_messages_larger_than_the_sdk_default_are_accepted(tmp_path):
+    """The SDK's default limit of 1 MiB per CLI message ended any agent that
+    Read a figure or a PDF (CLIJSONDecodeError); the engine raises it."""
+    pytest.importorskip("claude_agent_sdk")
+    from unittest.mock import patch
+
+    from conjure.address import Address
+    from conjure.capability import CapabilitySet
+    from conjure.engines.claude_agent import MAX_MESSAGE_BYTES, ClaudeAgentEngine
+    from conjure.mailbox import Mailbox
+    from conjure.record import AgentRecord, AgentSpec
+    from conjure.runtime import Runtime
+
+    rt = Runtime(store_dir=tmp_path)
+    addr = Address(id="ag-test", label="root")
+    record = AgentRecord(
+        addr=addr, spec=AgentSpec(role_prompt="x", tools=["Read"]),
+        inbox=Mailbox(), capabilities=CapabilitySet(self_addr=addr), token="t", depth=0,
+    )
+    with patch("claude_agent_sdk.ClaudeSDKClient"):
+        engine = ClaudeAgentEngine(record=record, runtime=rt, sandbox_dir=tmp_path,
+                                   allowed_tools=record.spec.tools)
+    assert engine._options.max_buffer_size == MAX_MESSAGE_BYTES > 1024 * 1024
