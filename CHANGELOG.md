@@ -8,6 +8,16 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.27] — 2026-11-10
+
+A large tool result no longer ends a Claude agent.
+
+### Fixed
+- The Claude engine accepts messages from the Claude Code CLI up to 64 MiB
+  (`max_buffer_size`). The SDK's default of 1 MiB ended any agent whose turn
+  carried a larger message, such as a Read of a figure or a PDF, with
+  `CLIJSONDecodeError`.
+
 ## [0.2.26] — 2026-11-10
 
 Every agent can reply.
@@ -856,7 +866,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.26...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.27...HEAD
+[0.2.27]: https://github.com/tonymenzo/conjure/compare/v0.2.26...v0.2.27
 [0.2.26]: https://github.com/tonymenzo/conjure/compare/v0.2.25...v0.2.26
 [0.2.25]: https://github.com/tonymenzo/conjure/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/tonymenzo/conjure/compare/v0.2.23...v0.2.24

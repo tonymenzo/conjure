@@ -57,6 +57,11 @@ if TYPE_CHECKING:
 # per-agent ``spec.permissions[tool_name]`` always wins. Read-only
 # tools (Read, Glob, Grep, NotebookRead, WebFetch, WebSearch, etc.)
 # stay default-allow so navigation isn't interrupted.
+# The largest single message the Claude Code CLI may send the SDK. The SDK's
+# default is 1 MiB, and one Read of a figure or a PDF exceeds it, which ends
+# the agent with CLIJSONDecodeError.
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+
 # Claude Code's tools that start its own subagents. Disallowed for every
 # conjure agent: delegation goes through conjure's Spawn.
 NATIVE_SUBAGENT_TOOLS: tuple[str, ...] = ("Task", "Agent")
@@ -386,6 +391,7 @@ class ClaudeAgentEngine:
             mcp_servers=mcp_servers if mcp_servers else {},
             env=sdk_env,
             model=model,
+            max_buffer_size=MAX_MESSAGE_BYTES,
         )
         self._options = opts
         self.system_prompt_text = opts.system_prompt  # provenance
