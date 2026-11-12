@@ -75,6 +75,7 @@ class CodexEngine:
         model: str | None = None,
         sandbox_mode: str = DEFAULT_SANDBOX,
         reasoning_effort: str | None = None,
+        web_search: str | None = None,
         toolbase_mount: "ToolbaseMount | None" = None,
         codex_bin: str | None = None,
         system_prompt: str | None = None,
@@ -91,6 +92,7 @@ class CodexEngine:
         self._token_usage: dict[str, int] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         self._sandbox_mode = sandbox_mode or DEFAULT_SANDBOX
         self._effort = reasoning_effort
+        self._web_search = web_search
         self._toolbase = toolbase_mount
         self._bin = codex_bin or shutil.which("codex") or "codex"
         self._system_prompt = system_prompt
@@ -302,6 +304,8 @@ class CodexEngine:
             # ``resume`` takes no -s; carry the sandbox policy as config.
             cmd += ["-c", f"sandbox_mode={json.dumps(self._sandbox_mode)}"]
         cmd += ["-c", "features.apps=false"]
+        if self._web_search:
+            cmd += ["-c", f"web_search={json.dumps(self._web_search)}"]
         # Codex's own spawn_agent / wait_agent would run subagents inside this
         # process, out of conjure's sight: no grants, no models.allow, no run
         # record. Delegation goes through conjure's Spawn instead.

@@ -246,6 +246,7 @@ def _build_codex_engine(
         model=model,
         sandbox_mode=codex_config.sandbox,
         reasoning_effort=codex_config.reasoning_effort,
+        web_search=codex_config.web_search,
         toolbase_mount=mount,
         codex_bin=codex_config.bin,
     )

@@ -8,6 +8,18 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.29] — 2026-11-12
+
+Codex's own web search can be turned off.
+
+### Added
+- **`codex.web_search`** (`disabled`, `cached` or `live`) is passed to every
+  `codex exec` turn. Left unset, Codex keeps its default and searches the live
+  web, outside the session's tools; a run that withholds sources from its
+  agents should set `disabled`. Checked against Codex 0.162.1: with `disabled`
+  (and the apps connector off, as Conjure always sets) an agent has no web
+  search at all.
+
 ## [0.2.28] — 2026-11-12
 
 A model policy by spawn depth.
@@ -878,7 +890,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.28...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.29...HEAD
+[0.2.29]: https://github.com/tonymenzo/conjure/compare/v0.2.28...v0.2.29
 [0.2.28]: https://github.com/tonymenzo/conjure/compare/v0.2.27...v0.2.28
 [0.2.27]: https://github.com/tonymenzo/conjure/compare/v0.2.26...v0.2.27
 [0.2.26]: https://github.com/tonymenzo/conjure/compare/v0.2.25...v0.2.26
