@@ -229,6 +229,11 @@ class CodexConfig(BaseModel):
     # ``root.model``). ``None``: Codex's default.
     child_model: str | None = None
     reasoning_effort: str | None = None
+    # Codex's own web search: ``disabled`` (none), ``cached`` or ``live``.
+    # ``None`` leaves Codex's default, which searches the live web. A run
+    # that withholds sources from its agents should disable it: the search
+    # reaches any page, outside the session's tools.
+    web_search: Literal["disabled", "cached", "live"] | None = None
     bin: str | None = None  # path to ``codex``; default: from PATH
 
 

@@ -314,3 +314,28 @@ def test_the_observed_model_reaches_the_run_record_during_the_turn(tmp_path):
         assert record["models"] == ["gpt-test-1"]
     finally:
         engine.shutdown()
+
+
+def test_web_search_setting_reaches_codex(tmp_path):
+    """``codex.web_search`` is passed to every turn, so a run can withhold the live web."""
+    rt, rec, engine, events, calls = _engine(tmp_path, web_search="disabled")
+    try:
+        engine.step("hello")
+        assert 'web_search="disabled"' in json.loads(calls.read_text().splitlines()[0])["argv"]
+    finally:
+        rt.shutdown()
+    rt, rec, engine, events, calls = _engine(tmp_path / "default")
+    try:
+        engine.step("hello")
+        assert not any(a.startswith("web_search=") for a in json.loads(calls.read_text().splitlines()[0])["argv"])
+    finally:
+        rt.shutdown()
+
+
+def test_web_search_setting_is_checked_in_the_config():
+    from conjure.config import CodexConfig
+
+    assert CodexConfig(web_search="disabled").web_search == "disabled"
+    assert CodexConfig().web_search is None
+    with pytest.raises(ValueError):
+        CodexConfig(web_search="off")
