@@ -8,6 +8,14 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- **`models.by_depth`: a model policy by spawn depth.** Keys are a depth
+  (`"1"`) or a depth and everything below it (`"2+"`), each with its own
+  `allow` and `default`; a depth no key covers uses `models.allow` and
+  `models.default`. The root's children can run on strong models while
+  their own children are held to cheaper ones. `ModelCatalog` shows each
+  caller the models it may give its children.
+
 ## [0.2.27] — 2026-11-10
 
 A large tool result no longer ends a Claude agent.

@@ -35,7 +35,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RuntimeConfig(BaseModel):
@@ -154,6 +154,39 @@ class ModelsConfig(BaseModel):
     default: str | None = None
     # Guidance per id, shown in ModelCatalog ("cheap; literature search").
     notes: dict[str, str] = Field(default_factory=dict)
+    # Policy by spawn depth (root = 0), over ``allow`` and ``default``.
+    # Keys are a depth (``"1"``) or a depth and everything below it
+    # (``"2+"``); an exact key wins over a ``+`` key, and the deepest
+    # ``+`` key that applies wins among those. A depth no key covers
+    # uses ``allow`` and ``default``. E.g. strong models for the root's
+    # children and cheaper ones below them:
+    # ``{"1": {allow: [claude/opus, claude/sonnet], default: claude/opus},
+    #    "2+": {allow: [claude/sonnet], default: claude/sonnet}}``.
+    by_depth: dict[str, "DepthModelsConfig"] = Field(default_factory=dict)
+
+    @field_validator("by_depth")
+    @classmethod
+    def _depth_keys(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for key in v:
+            n = key[:-1] if key.endswith("+") else key
+            if not n.isdigit() or int(n) < 1:
+                raise ValueError(
+                    f"models.by_depth key {key!r}: use a depth >= 1 ('1') "
+                    "or a depth and below ('2+')"
+                )
+        return v
+
+
+class DepthModelsConfig(BaseModel):
+    """One depth's entry in ``models.by_depth``; an unset field falls
+    back to ``models.allow`` / ``models.default``."""
+
+    model_config = ConfigDict(extra="forbid")
+    allow: list[str] | None = None
+    default: str | None = None
+
+
+ModelsConfig.model_rebuild()
 
 
 class ToolbaseConfig(BaseModel):

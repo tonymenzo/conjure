@@ -244,3 +244,57 @@ def test_allow_governs_children_not_the_root(gateway):
     assert root.engine == "claude_agent"
     with pytest.raises(ModelDenied, match="isn't allowed"):
         hub.resolve_spec(AgentSpec(role_prompt="c", model="claude/opus"), parent_engine="claude_agent")
+
+
+def test_by_depth_gives_the_roots_children_strong_models_and_their_children_cheap_ones(gateway):
+    """Strong models at depth 1, cheaper below: an exact key, a ``+`` key,
+    and the session-wide policy for a depth neither covers."""
+    hub = _hub(gateway, allow=["mag/mistral-large"], default="mag/mistral-large",
+               by_depth={"1": {"allow": ["mag/*"], "default": "mag/llama-4-405b"},
+                         "3+": {"allow": ["claude/haiku"], "default": "claude/haiku"}})
+    one = hub.resolve_spec(AgentSpec(role_prompt="c"), parent_engine="orchestral", depth=1)
+    assert one.model == "llama-4-405b"
+    hub.resolve_spec(AgentSpec(role_prompt="c", model="mag/mistral-large"), parent_engine="orchestral", depth=1)
+    with pytest.raises(ModelDenied, match="isn't allowed.*mag/mistral-large"):
+        hub.resolve_spec(AgentSpec(role_prompt="c", model="mag/llama-4-405b"), parent_engine="orchestral", depth=2)
+    assert hub.resolve_spec(AgentSpec(role_prompt="c"), parent_engine="orchestral", depth=2).model == "mistral-large"
+    for d in (3, 7):
+        assert hub.resolve_spec(AgentSpec(role_prompt="c"), parent_engine="orchestral", depth=d).model == "haiku"
+    # The root is the operator's choice at any policy.
+    assert hub.resolve_spec(AgentSpec(role_prompt="r", model="claude/opus"), parent_engine=None, depth=0).model == "opus"
+
+
+def test_spawn_and_the_catalog_follow_the_depth_policy(gateway):
+    rt = Runtime(models=_hub(gateway, allow=["mag/mistral-large"],
+                             by_depth={"1": {"allow": ["mag/*"], "default": "mag/llama-4-405b"}}))
+    root = rt.record_for(rt.root(AgentSpec(role_prompt="r", engine="orchestral", model="mag/mistral-large")))
+    assert [r["id"] for r in model_catalog_impl(token=root.token)["models"]] == ["mag/llama-4-405b", "mag/mistral-large"]
+    ok = spawn_impl(token=root.token, role_prompt="c")
+    child = rt.record_for(rt.address_by_id(ok["address"]))
+    assert (child.depth, child.spec.model) == (1, "llama-4-405b")
+    assert [r["id"] for r in model_catalog_impl(token=child.token)["models"]] == ["mag/mistral-large"]
+    denied = spawn_impl(token=child.token, role_prompt="g", model="mag/llama-4-405b")
+    assert denied["ok"] is False and denied["code"] == "model_denied"
+    ok = spawn_impl(token=child.token, role_prompt="g", model="mag/mistral-large")
+    assert rt.record_for(rt.address_by_id(ok["address"])).depth == 2
+    rt.shutdown()
+
+
+def test_by_depth_keys_are_checked_in_the_config():
+    from conjure.config import ModelsConfig
+    from conjure.models import build_model_hub
+
+    cfg = ModelsConfig(allow=["claude/sonnet"], by_depth={"1": {"allow": ["claude/opus", "claude/sonnet"]}, "2+": {}})
+    assert cfg.by_depth["1"].default is None
+    for bad in ("0", "x", "+", "1-2"):
+        with pytest.raises(ValueError, match="by_depth key"):
+            ModelsConfig(by_depth={bad: {}})
+
+    class C:
+        models = cfg
+        llms = {}
+        codex = None
+
+    policy = build_model_hub(C()).policy
+    assert policy.at(1) == (["claude/opus", "claude/sonnet"], None)
+    assert policy.at(4) == (["claude/sonnet"], None)
