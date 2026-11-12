@@ -803,7 +803,8 @@ class Runtime:
             from conjure.engines import effective_engine
 
             parent_engine = effective_engine(self.record_for(parent), self)
-            specs = [self.models.resolve_spec(s, parent_engine=parent_engine) for s in specs]
+            specs = [self.models.resolve_spec(s, parent_engine=parent_engine, depth=child_depth)
+                     for s in specs]
         # Toolkit attenuation, before any registry mutation so a refused
         # grant leaves no half-spawned batch. Outside the lock: the
         # first check may read toolbase's cache from disk.

@@ -20,13 +20,18 @@ def model_catalog_impl(*, token: str, refresh: bool = False) -> dict[str, Any]:
     resolved = resolve_token(token)
     if resolved is None:
         return _err("no_runtime", "tool is not bound to a runtime")
-    runtime, _caller = resolved
+    runtime, caller = resolved
     hub = getattr(runtime, "models", None)
     if hub is None:
         return _err("models_unavailable", "this runtime has no model catalog")
     if refresh:
         hub.refresh()
-    return hub.describe()
+    # The models the caller may give its children, at its depth + 1.
+    try:
+        depth = runtime.record_for(caller).depth + 1
+    except Exception:
+        depth = None
+    return hub.describe(depth)
 
 
 class ModelCatalogTool(StatelessRuntimeTool):

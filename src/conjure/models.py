@@ -72,6 +72,28 @@ class ModelsPolicy:
     allow: list[str] = field(default_factory=lambda: ["*"])
     default: str | None = None
     notes: dict[str, str] = field(default_factory=dict)
+    # {"1": {"allow": [...], "default": ...}, "2+": {...}}; see
+    # ``ModelsConfig.by_depth``.
+    by_depth: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def at(self, depth: int | None) -> tuple[list[str], str | None]:
+        """``(allow, default)`` for an agent spawned at ``depth``."""
+        if depth is None or not self.by_depth:
+            return self.allow, self.default
+        rule = self.by_depth.get(str(depth))
+        if rule is None:
+            open_ended = [
+                (int(k[:-1]), r) for k, r in self.by_depth.items()
+                if k.endswith("+") and int(k[:-1]) <= depth
+            ]
+            if open_ended:
+                rule = max(open_ended, key=lambda kr: kr[0])[1]
+        if rule is None:
+            return self.allow, self.default
+        allow = rule.get("allow")
+        default = rule.get("default")
+        return (list(allow) if allow is not None else self.allow,
+                default if default is not None else self.default)
 
 
 class ModelHub:
@@ -117,15 +139,18 @@ class ModelHub:
         self.entries()
         return dict(self._errors)
 
-    def allowed(self, entry: ModelEntry) -> bool:
-        return any(fnmatch.fnmatchcase(entry.id, pat) for pat in self.policy.allow)
+    def allowed(self, entry: ModelEntry, depth: int | None = None) -> bool:
+        allow, _ = self.policy.at(depth)
+        return any(fnmatch.fnmatchcase(entry.id, pat) for pat in allow)
 
-    def allowed_entries(self) -> list[ModelEntry]:
-        return [e for e in self.entries() if self.allowed(e)]
+    def allowed_entries(self, depth: int | None = None) -> list[ModelEntry]:
+        return [e for e in self.entries() if self.allowed(e, depth)]
 
-    def describe(self) -> dict[str, Any]:
+    def describe(self, depth: int | None = None) -> dict[str, Any]:
+        """The catalog for an agent spawned at ``depth`` (for a caller,
+        its own depth + 1); ``None`` uses the session-wide policy."""
         rows = []
-        for e in self.allowed_entries():
+        for e in self.allowed_entries(depth):
             row = e.public()
             note = self.policy.notes.get(e.id) or e.note
             if note:
@@ -134,7 +159,7 @@ class ModelHub:
         out: dict[str, Any] = {
             "ok": True,
             "models": rows,
-            "default": self.policy.default,
+            "default": self.policy.at(depth)[1],
             "how": (
                 "Spawn(model=<id>) — or a bare alias / model name when "
                 "unique. The id picks the engine for you."
@@ -177,7 +202,7 @@ class ModelHub:
         return None
 
     def resolve_spec(
-        self, spec: "AgentSpec", *, parent_engine: str | None
+        self, spec: "AgentSpec", *, parent_engine: str | None, depth: int | None = None
     ) -> "AgentSpec":
         """Return ``spec`` with ``engine`` / ``llm`` / ``model`` set from
         its model choice (or the policy default), after checking the
@@ -185,37 +210,39 @@ class ModelHub:
 
         ``models.allow`` governs the models agents spawn on. The root
         (``parent_engine`` None) is the operator's choice in the config, so
-        its model is resolved but not checked against it."""
+        its model is resolved but not checked against it. ``depth`` is the
+        new agent's spawn depth, for ``models.by_depth``."""
         root = parent_engine is None
+        allow, default = self.policy.at(None if root else depth)
         name = spec.model
         explicit_engine = spec.engine not in (None, "", "auto")
         if explicit_engine and spec.engine not in _CATALOG_ENGINES:
             return spec  # an engine the catalog doesn't cover (scripted, custom)
-        if not name and not self.policy.default and self.policy.allow == ["*"]:
+        if not name and not default and allow == ["*"]:
             return spec  # nothing named, nothing restricted: no catalog needed
         if not name:
             # ``models.default`` is for children. The root (no parent) runs
             # on its own configuration, e.g. the llms entry's ``model``.
-            if self.policy.default and parent_engine is not None:
-                name = self.policy.default
+            if default and parent_engine is not None:
+                name = default
             else:
                 entry = self._implied(spec, parent_engine)
-                if entry is None or root or self.allowed(entry):
+                if entry is None or root or self.allowed(entry, None if root else depth):
                     return spec
                 raise ModelDenied(
                     f"no model named, and the implied one ({entry.id}) isn't "
-                    f"allowed in this session. Pick one: {self._allowed_ids()}"
+                    f"allowed in this session. Pick one: {self._allowed_ids(None if root else depth)}"
                 )
         entry = self._find_for(name, spec.engine if explicit_engine else None)
         if entry is None:
             raise ModelDenied(
-                f"unknown model {name!r}. Available: {self._allowed_ids()} "
+                f"unknown model {name!r}. Available: {self._allowed_ids(None if root else depth)} "
                 "(ModelCatalog describes them)"
             )
-        if not root and not self.allowed(entry):
+        if not root and not self.allowed(entry, None if root else depth):
             raise ModelDenied(
                 f"model {entry.id} isn't allowed in this session. "
-                f"Allowed: {self._allowed_ids()}"
+                f"Allowed: {self._allowed_ids(None if root else depth)}"
             )
         if explicit_engine and spec.engine != entry.engine:
             raise ModelDenied(
@@ -263,8 +290,8 @@ class ModelHub:
                     return e
         return None
 
-    def _allowed_ids(self) -> list[str]:
-        return [e.id for e in self.allowed_entries()]
+    def _allowed_ids(self, depth: int | None = None) -> list[str]:
+        return [e.id for e in self.allowed_entries(depth)]
 
     # ----- sources -----
 
@@ -422,6 +449,7 @@ def build_model_hub(config: Any) -> ModelHub:
             allow=list(models_cfg.allow or ["*"]),
             default=models_cfg.default,
             notes=dict(models_cfg.notes or {}),
+            by_depth={k: v.model_dump() for k, v in (getattr(models_cfg, "by_depth", None) or {}).items()},
         )
     llms = {name: cfg.model_dump() for name, cfg in (config.llms or {}).items()}
     codex_cfg = getattr(config, "codex", None)
