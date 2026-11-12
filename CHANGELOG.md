@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.28] — 2026-11-12
+
+A model policy by spawn depth.
+
 ### Added
 - **`models.by_depth`: a model policy by spawn depth.** Keys are a depth
   (`"1"`) or a depth and everything below it (`"2+"`), each with its own
@@ -874,7 +878,8 @@ passing, with FP-style combinators on top.
 - `Spawn`'s optional fields were marked required by orchestral's schema
   generator.
 
-[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.27...HEAD
+[Unreleased]: https://github.com/tonymenzo/conjure/compare/v0.2.28...HEAD
+[0.2.28]: https://github.com/tonymenzo/conjure/compare/v0.2.27...v0.2.28
 [0.2.27]: https://github.com/tonymenzo/conjure/compare/v0.2.26...v0.2.27
 [0.2.26]: https://github.com/tonymenzo/conjure/compare/v0.2.25...v0.2.26
 [0.2.25]: https://github.com/tonymenzo/conjure/compare/v0.2.24...v0.2.25
