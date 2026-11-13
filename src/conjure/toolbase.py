@@ -567,11 +567,17 @@ class ToolbaseHub:
                 for t in resolved.disabled_tools
                 if t.startswith(f"{kit}__")
             }
-            if disabled and catalog.get(kit) is not None:
-                # Fold blocklists into an explicit allowlist so authority
-                # checks can't hand a child a tool the loadout hides.
-                served = expand(kit, grant, catalog).tools - disabled
-                grant = ToolkitGrant(tools=sorted(served), skills=grant.skills)
+            disabled_skills = set(getattr(sel, "disabled_skills", None) or ())
+            if (disabled or disabled_skills) and catalog.get(kit) is not None:
+                # Fold blocklists into explicit allowlists so authority
+                # checks can't hand a child a tool or skill the loadout
+                # hides. A disabled skill wins over an enabled one.
+                held = expand(kit, grant, catalog)
+                grant = ToolkitGrant(
+                    bundles=None if disabled else grant.bundles,
+                    tools=sorted(held.tools - disabled) if disabled else grant.tools,
+                    skills=sorted(held.skills - disabled_skills),
+                )
             out[kit] = grant
         return out
 
