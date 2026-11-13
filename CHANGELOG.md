@@ -8,6 +8,17 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.30] — 2026-11-13
+
+A loadout's disabled skills are no longer served.
+
+### Fixed
+- **Disabled skills in a named loadout** (`toolkits.<kit>.skills.disabled`)
+  were ignored, so agents were still served them. They are now folded into
+  the grant's skill allow-list, and a disabled skill wins over an enabled one.
+- **Disabling a tool** in a named loadout no longer drops the skills of the
+  remaining tools' bundles.
+
 ## [0.2.29] — 2026-11-12
 
 Codex's own web search can be turned off.
