@@ -762,3 +762,35 @@ def test_serve_skips_skill_packs_but_still_surfaces_their_skills():
     assert {t.get_name() for t in serving.tools} == {"hep__Pythia", "hep__Decay"}
     assert ("guide", "feyntable") in [(k, s.slug) for k, s in hub.skills_for(toolset)]
     assert hub.find_skill(toolset, "guide__feyntable") is not None
+
+
+def test_named_loadout_excludes_its_disabled_skills(monkeypatch):
+    """A loadout's ``skills.disabled`` hides those skills from agents, and
+    wins over ``skills.enabled``; disabling a tool keeps the skills."""
+    import toolbase.serve.loadouts as loadouts
+
+    def sel(**kw):
+        base = dict(bundles=None, enabled_tools=None, disabled_tools=[],
+                    enabled_skills=None, disabled_skills=[])
+        return SimpleNamespace(**{**base, **kw})
+
+    resolved = SimpleNamespace(
+        toolkits={
+            "hep": sel(disabled_skills=["start"], disabled_tools=["Units"]),
+            "calc": sel(),
+        },
+        disabled_toolkits=[],
+        disabled_tools=[],
+    )
+    monkeypatch.setattr(loadouts, "resolve_loadout", lambda root, cli_loadout=None: resolved)
+    hub = ToolbaseHub(project_root="/nonexistent", catalog_loader=_catalog, server_factory=FakeServers())
+
+    toolset = hub._resolve_named_loadout("lo")
+    assert [(k, s.slug) for k, s in hub.skills_for(toolset)] == [("hep", "mg5"), ("hep", "run-cards")]
+    assert hub.find_skill(toolset, "hep__start") is None
+    assert expand("hep", toolset["hep"], _catalog()).tools == {"MadGraph", "Pythia", "Decay"}
+
+    resolved.toolkits["hep"] = sel(enabled_skills=["start", "mg5"], disabled_skills=["start"])
+    toolset = hub._resolve_named_loadout("lo")
+    assert [(k, s.slug) for k, s in hub.skills_for(toolset)] == [("hep", "mg5")]
+    assert expand("hep", toolset["hep"], _catalog()).tools == {"MadGraph", "Pythia", "Decay", "Units"}
