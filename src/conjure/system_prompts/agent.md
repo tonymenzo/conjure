@@ -84,6 +84,12 @@ worker's result can sit there until you finish. Two rules:
   dispatching work, `WaitFor` (or `Recv`) their messages. Don't poll a
   worker's sandbox with `ls` / `cat`: you can read a half-written
   directory, and you'll miss what they tell you.
+- **Only a message starts your next turn.** Once you end a turn you
+  sleep until a message arrives: nothing else wakes you, not a toolkit
+  job finishing, a file appearing or a timer. Don't end a turn to wait
+  for work you started. Stay in it and wait (poll a job's status between
+  other steps, or block on it), or `Send` your parent what is done and
+  what is still running before you stop.
 - **Watch for `inbox` on tool results.** Any conjure tool result can
   carry `"inbox": {"unread": N, "latest": [...]}`, meaning messages are
   waiting. `Recv` them before going on, especially before you give a

@@ -809,7 +809,7 @@ class Runtime:
         # grant leaves no half-spawned batch. Outside the lock: the
         # first check may read toolbase's cache from disk.
         if any(s.toolkits or s.toolbase_loadout for s in specs):
-            self._check_toolkit_specs(parent, specs)
+            specs = self._check_toolkit_specs(parent, specs)
         # Engine-specific checks (e.g. orchestral tool-group names), also
         # before any registry mutation: a spec the engine would refuse must
         # not leave a record or a journaled spawn behind (a benchmark that
@@ -1019,9 +1019,14 @@ class Runtime:
 
     def _check_toolkit_specs(
         self, parent: Address, specs: list[AgentSpec]
-    ) -> None:
+    ) -> list[AgentSpec]:
+        """The specs with their toolkits narrowed to the parent's
+        authority where the request left it implicit (``attenuate``),
+        then checked; raises ``ToolkitDenied`` for anything explicit
+        beyond it."""
         hub = self._require_toolbase()
         authority = hub.authority_of(self, parent)
+        out: list[AgentSpec] = []
         for spec in specs:
             if spec.toolbase_loadout:
                 # A named loadout is the user's curation; only the root
@@ -1031,7 +1036,15 @@ class Runtime:
                         "only the root may grant a named toolbase loadout; "
                         "pass `toolkits` instead"
                     )
+            if spec.toolkits:
+                narrowed, notes = hub.attenuate(dict(spec.toolkits), authority)
+                if notes:
+                    # The spawn result reports the child's toolkits, so the
+                    # caller sees what it was given.
+                    spec = spec.model_copy(update={"toolkits": narrowed})
             hub.check_grant(hub.toolset_of(spec), authority)
+            out.append(spec)
+        return out
 
     def grant_toolkits(
         self, *, granter: Address, target: Address, toolkits: "Toolset"
@@ -1048,7 +1061,9 @@ class Runtime:
         from conjure.toolbase import merge_toolsets
 
         hub = self._require_toolbase()
-        hub.check_grant(toolkits, hub.authority_of(self, granter))
+        authority = hub.authority_of(self, granter)
+        toolkits, _notes = hub.attenuate(toolkits, authority)
+        hub.check_grant(toolkits, authority)
         with self._lock:
             self._require_alive(target)
             record = self._records[target]
