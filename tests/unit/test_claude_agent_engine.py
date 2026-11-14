@@ -452,6 +452,29 @@ def test_claude_code_subagents_are_disallowed(tmp_path):
     assert {"Task", "Agent"} <= set(engine._options.disallowed_tools or [])
 
 
+def test_session_bound_tools_are_disallowed_and_background_bash_refused(tmp_path):
+    """A conjure agent's turn ends when it stops calling tools and only a
+    message starts the next, so a Monitor or background command's later
+    notification never reaches it: those tools are disallowed and a
+    background Bash is refused by a PreToolUse hook."""
+    import asyncio
+
+    from conjure.engines.claude_agent import _refuse_background_bash
+    from conjure.runtime import Runtime
+
+    rt = Runtime()
+    engine = _bare_engine(tmp_path, rt)
+    assert {"Monitor", "ScheduleWakeup", "CronCreate"} <= set(engine._options.disallowed_tools or [])
+    matchers = (engine._options.hooks or {}).get("PreToolUse") or []
+    assert any(m.matcher == "Bash" and _refuse_background_bash in m.hooks for m in matchers)
+    refused = asyncio.run(_refuse_background_bash(
+        {"tool_name": "Bash", "tool_input": {"command": "sleep 600", "run_in_background": True}}, "t1", None))
+    assert refused["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "only a message wakes you" in refused["hookSpecificOutput"]["permissionDecisionReason"]
+    assert asyncio.run(_refuse_background_bash(
+        {"tool_name": "Bash", "tool_input": {"command": "ls"}}, "t2", None)) == {}
+
+
 def test_messages_larger_than_the_sdk_default_are_accepted(tmp_path):
     """The SDK's default limit of 1 MiB per CLI message ended any agent that
     Read a figure or a PDF (CLIJSONDecodeError); the engine raises it."""

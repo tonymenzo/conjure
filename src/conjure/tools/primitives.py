@@ -222,10 +222,12 @@ def spawn_impl(
 
     out: dict[str, Any] = {"ok": True, "address": child_addr.id, "label": child_addr.label}
     if toolset:
-        # Echo the grant (same shape GrantToolkits returns) so the caller
-        # can confirm what the child holds without another round trip.
-        # Tools are served from the child's first turn.
-        out["toolkits"] = {k: v.model_dump(exclude_none=True) for k, v in toolset.items()}
+        # Echo the grant as stored (same shape GrantToolkits returns), so
+        # the caller sees what the child holds, narrowed to the caller's
+        # own grant where the request left it implicit. Tools are served
+        # from the child's first turn.
+        granted = runtime.record_for(child_addr).spec.toolkits or toolset
+        out["toolkits"] = {k: v.model_dump(exclude_none=True) for k, v in granted.items()}
     return out
 
 

@@ -187,10 +187,51 @@ def test_spawn_attenuates_down_the_tree():
     root = rt.root(AgentSpec(role_prompt="r"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", toolkits=parse_toolkits(["hep/llp"])))
     rt._spawn(parent=child, spec=AgentSpec(role_prompt="g", toolkits=parse_toolkits(["hep__Pythia"])))
+    # A whole-toolkit request from a partial holder is the holder's own grant.
+    g = rt._spawn(parent=child, spec=AgentSpec(role_prompt="g", toolkits=parse_toolkits(["hep"])))
+    assert rt.record_for(g).spec.toolkits["hep"] == ToolkitGrant(bundles=["llp"])
+    # Anything named beyond the grant, or a toolkit not held, is still refused.
     with pytest.raises(ToolkitDenied):
-        rt._spawn(parent=child, spec=AgentSpec(role_prompt="g", toolkits=parse_toolkits(["hep"])))
+        rt._spawn(parent=child, spec=AgentSpec(role_prompt="g", toolkits=parse_toolkits(["hep/mg5"])))
     with pytest.raises(ToolkitDenied):
         rt._spawn(parent=child, spec=AgentSpec(role_prompt="g", toolkits=parse_toolkits(["calc"])))
+    rt.shutdown()
+
+
+def test_attenuate_narrows_only_what_was_left_implicit():
+    from conjure.toolbase import attenuate
+
+    cat = _catalog()
+    # The parent holds the llp bundle with one of its skills pinned.
+    parent = {"hep": ToolkitGrant(bundles=["llp"], skills=["run-cards"])}
+    # Whole toolkit -> the parent's grant, skills included.
+    out, notes = attenuate(parse_toolkits(["hep"]), parent, cat)
+    assert out["hep"] == ToolkitGrant(bundles=["llp"], skills=["run-cards"]) and notes
+    check_subset(out, parent, cat)
+    # A bundle grant with implicit skills drops the skill the parent lacks
+    # ("start" has no bundle, so it rides along with any grant).
+    out, notes = attenuate(parse_toolkits(["hep/llp"]), parent, cat)
+    assert out["hep"].skills == ["run-cards"] and any("start" in n for n in notes)
+    check_subset(out, parent, cat)
+    # Explicit requests are left as asked, for check_subset to refuse.
+    asked = {"hep": ToolkitGrant(bundles=["llp"], skills=["mg5"])}
+    assert attenuate(asked, parent, cat)[0] == asked
+    with pytest.raises(ToolkitDenied, match="skills"):
+        check_subset(asked, parent, cat)
+    # Nothing to narrow: unchanged, no notes.
+    whole_llp = parse_toolkits(["hep/llp"])
+    assert attenuate(parse_toolkits(["hep__Decay"]), whole_llp, cat) == (parse_toolkits(["hep__Decay"]), [])
+
+
+def test_spawn_result_reports_the_narrowed_grant():
+    from conjure.tools.primitives import spawn_impl
+
+    rt = _rt()
+    root = rt.root(AgentSpec(role_prompt="r"))
+    a = spawn_impl(token=rt.record_for(root).token, role_prompt="a", toolkits=["hep/llp"])
+    atok = rt.record_for(rt.address_by_id(a["address"])).token
+    out = spawn_impl(token=atok, role_prompt="g", toolkits=["hep"])
+    assert out["ok"] and out["toolkits"] == {"hep": {"bundles": ["llp"]}}
     rt.shutdown()
 
 
@@ -262,7 +303,7 @@ def test_spawn_tool_reports_toolkit_denied():
     ok = spawn_impl(token=tok, role_prompt="c", toolkits=["calc__add"])
     assert ok["ok"], ok
     child_tok = rt.record_for(rt.address_by_id(ok["address"])).token
-    denied = spawn_impl(token=child_tok, role_prompt="g", toolkits=["calc"])
+    denied = spawn_impl(token=child_tok, role_prompt="g", toolkits=["calc__mul"])
     assert denied["code"] == "toolkit_denied"
     bad = spawn_impl(token=tok, role_prompt="c", toolkits=["nope"])
     assert bad["code"] == "toolkit_denied" and "not installed" in bad["error"]

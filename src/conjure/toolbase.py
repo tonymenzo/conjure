@@ -346,6 +346,43 @@ def _beyond_grant(kit: str, grant: ToolkitGrant, extra: set[str], held: set[str]
             f"{', '.join(bundles) or 'none'}; check ToolCatalog for your tools.")
 
 
+def attenuate(child: Toolset, parent: Toolset, catalog: Catalog) -> tuple[Toolset, list[str]]:
+    """Narrow the implicit parts of ``child`` to what ``parent`` holds.
+
+    A whole-toolkit grant from a parent that holds only part of the
+    toolkit becomes the parent's own grant of it, and a grant whose
+    skills are left implicit (``skills=None``, "the skills of what is
+    granted") keeps only the skills the parent holds. Anything named
+    explicitly (a tool, a bundle, a skill) is left as asked, so
+    ``check_subset`` still refuses it when the parent lacks it, as it
+    refuses a toolkit the parent does not hold at all. Returns the
+    narrowed toolset and one note per narrowing, for the caller.
+    """
+    out: Toolset = {}
+    notes: list[str] = []
+    for kit, grant in child.items():
+        held = parent.get(kit)
+        if held is None or catalog.get(kit) is None:
+            out[kit] = grant
+            continue
+        g = grant
+        if g.is_whole and not held.is_whole:
+            g = ToolkitGrant(bundles=held.bundles, tools=held.tools,
+                             skills=g.skills if g.skills is not None else held.skills)
+            parts = [f"bundles {sorted(held.bundles)}" if held.bundles else "",
+                     f"tools {sorted(held.tools)}" if held.tools else ""]
+            notes.append(f"{kit}: you hold part of it, so the whole-toolkit grant is your own: "
+                         + ", ".join(x for x in parts if x))
+        if g.skills is None:
+            want = expand(kit, g, catalog).skills
+            have = expand(kit, held, catalog).skills
+            if want - have:
+                g = g.model_copy(update={"skills": sorted(want & have)})
+                notes.append(f"{kit}: skills you do not hold left out: {sorted(want - have)}")
+        out[kit] = g
+    return out, notes
+
+
 def check_subset(child: Toolset, parent: Toolset, catalog: Catalog) -> None:
     """Raise ``ToolkitDenied`` unless every grant in ``child`` is covered
     by ``parent``."""
@@ -497,6 +534,12 @@ class ToolbaseHub:
     def check_grant(self, toolset: Toolset, authority: Toolset) -> None:
         if toolset:
             check_subset(toolset, authority, self.catalog())
+
+    def attenuate(self, toolset: Toolset, authority: Toolset) -> tuple[Toolset, list[str]]:
+        """``attenuate`` against this session's catalog."""
+        if not toolset:
+            return toolset, []
+        return attenuate(toolset, authority, self.catalog())
 
     def skills_for(self, toolset: Toolset) -> list[tuple[str, SkillInfo]]:
         """The skills ``toolset`` covers, as ``(toolkit, skill)`` pairs,

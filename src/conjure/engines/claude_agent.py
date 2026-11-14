@@ -66,6 +66,46 @@ MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 # conjure agent: delegation goes through conjure's Spawn.
 NATIVE_SUBAGENT_TOOLS: tuple[str, ...] = ("Task", "Agent")
 
+# Claude Code's tools whose result arrives later, as a notification to a
+# CLI session still in its turn. A conjure agent's turn ends when it stops
+# calling tools, and only a message starts the next one, so the
+# notification is lost and an agent that ended its turn to wait for it
+# sleeps until someone messages it. Disallowed for every conjure agent;
+# a background ``Bash`` (``run_in_background``) is refused by a hook.
+SESSION_BOUND_TOOLS: tuple[str, ...] = (
+    "Monitor",
+    "ScheduleWakeup",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "RemoteTrigger",
+)
+
+BACKGROUND_REFUSAL = (
+    "Background commands are not available to conjure agents: when your turn "
+    "ends only a message wakes you, so a background command's completion would "
+    "never reach you. Run the command in the foreground (it blocks until done, "
+    "within the Bash timeout), or poll a long job with short foreground checks."
+)
+
+
+async def _refuse_background_bash(input_data, tool_use_id, context):
+    """PreToolUse hook: refuse ``Bash`` with ``run_in_background``."""
+    tool_input = (input_data or {}).get("tool_input") or {}
+    if tool_input.get("run_in_background"):
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": BACKGROUND_REFUSAL,
+        }}
+    return {}
+
+
+def _session_hooks() -> dict:
+    from claude_agent_sdk import HookMatcher
+
+    return {"PreToolUse": [HookMatcher(matcher="Bash", hooks=[_refuse_background_bash])]}
+
 _ASK_BY_DEFAULT: frozenset[str] = frozenset({
     "Bash",
     "Edit",
@@ -383,7 +423,8 @@ class ClaudeAgentEngine:
             # Claude Code's own subagents would run out of conjure's sight
             # (no grants, no models.allow, no run record); an agent
             # delegates through conjure's Spawn instead.
-            disallowed_tools=list(NATIVE_SUBAGENT_TOOLS),
+            disallowed_tools=list(NATIVE_SUBAGENT_TOOLS) + list(SESSION_BOUND_TOOLS),
+            hooks=_session_hooks(),
             can_use_tool=can_use_tool,
             # ``default`` consults can_use_tool for every tool call
             # that isn't pre-approved via ``allowed_tools``.
