@@ -8,6 +8,30 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.31] — 2026-11-14
+
+Grants narrow what a request leaves implicit, and agents are not left
+waiting on wake-ups that never come.
+
+### Changed
+- **A whole-toolkit grant from a partial holder** (`["heptapod"]` when the
+  parent holds some of its bundles) is now the parent's own grant of the
+  toolkit, instead of a `toolkit_denied`.
+- **Implicit skills** (a grant with no `skills`, meaning the skills of what
+  it grants) keep only the skills the parent holds, so a bundle grant is no
+  longer refused over a skill the caller never named. Anything named
+  explicitly beyond the parent's grant is still refused.
+- **The spawn result reports the grant as stored**, so a narrowing is visible.
+- **Claude Code's session-bound tools are disallowed** for conjure agents:
+  `Monitor`, `ScheduleWakeup`, `CronCreate`, `CronDelete`, `CronList` and
+  `RemoteTrigger`. Their notifications reach only a CLI session still in its
+  turn, and only a message starts a conjure agent's turn.
+- **`Bash` with `run_in_background` is refused** by a `PreToolUse` hook, which
+  says why.
+- **The agent prompt** says only a message wakes an agent, so one with work
+  still running waits inside its turn or reports what is pending before it
+  stops.
+
 ## [0.2.30] — 2026-11-13
 
 A loadout's disabled skills are no longer served.
