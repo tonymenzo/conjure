@@ -215,7 +215,12 @@ class SessionTrace:
                 if start is None:
                     return
                 tid = str(event.get("tool_call_id"))
-                record = {"id": "cmd-" + hashlib.sha256(tid.encode("utf-8")).hexdigest()[:10],
+                # Claude's tool-use ids are unique, and tooltrace derives the
+                # same id from a transcript; Codex's item ids (item_5) repeat
+                # across threads and turns, so they are salted with the agent
+                # and the start time.
+                key = tid if tid.startswith("toolu_") else f"{agent_id}:{tid}:{start['ts_start']}"
+                record = {"id": "cmd-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:10],
                           "agent": agent_id, "tool": start["tool"], "tool_use_id": tid,
                           "ts_start": start["ts_start"], "ts_end": self._api.now_iso(),
                           "command": start["command"], "ok": not event.get("failed")}

@@ -308,3 +308,18 @@ def test_shell_commands_are_logged_with_tooltraces_ids(tmp_path):
         (child.id, "python3 scripts/reach.py", False), (child.id, "ls", True)]
     assert cmds[0]["id"] == "cmd-" + hashlib.sha256(b"toolu_A").hexdigest()[:10]
     assert cmds[0]["ts_start"] <= cmds[0]["ts_end"]
+    assert cmds[1]["id"] != "cmd-" + hashlib.sha256(b"it_1").hexdigest()[:10]   # codex ids are salted
+
+
+def test_codex_item_ids_that_repeat_give_distinct_commands(tmp_path):
+    hub = _hub(tmp_path, Servers(), trace=True)
+    rt, root, child = _tree(tmp_path, hub)
+    try:
+        for agent in (root.id, child.id, child.id):
+            sink = rt._trace.stream(agent, None)
+            sink({"kind": "stream_end", "tool_calls": [{"id": "item_5", "name": "shell", "args": {"command": "ls"}}]})
+            sink({"kind": "tool", "tool_call_id": "item_5", "failed": False})
+    finally:
+        rt.shutdown()
+    cmds = _jsonl(hub.session_trace.dir / "commands.jsonl")
+    assert len({c["id"] for c in cmds}) == 3
