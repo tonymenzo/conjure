@@ -6,7 +6,9 @@ one trace directory, by default ``<toolbase project>/.toolbase/traces/
 record per toolkit call, stamped with the calling agent. Conjure registers
 the agents (``agents.jsonl``: id, label, parent, model, engine, harness
 ``conjure``) and appends its own ``messages.jsonl`` (spawns with their
-briefs, sends, terminations). See ``docs/TRACE.md`` in toolbase.
+briefs, sends, terminations) and ``commands.jsonl`` (each shell command an
+agent ran, with its id, times, text and outcome, so a script's run can be
+cited and found without reading transcripts). See ``docs/TRACE.md`` in toolbase.
 
 Off by default; with it off nothing here is constructed. Needs a toolbase
 with ``toolbase.trace``: an older one leaves tracing unavailable, with a
@@ -23,6 +25,9 @@ from typing import Any, Mapping
 
 HARNESS = "conjure"
 MESSAGES_FILE = "messages.jsonl"
+COMMANDS_FILE = "commands.jsonl"
+# Engine tool names that run a shell command (Claude Code, Codex).
+SHELL_TOOLS = {"Bash", "shell", "exec_command", "local_shell", "shell_command"}
 
 _ON = {"1", "true", "yes", "on"}
 _OFF = {"0", "false", "no", "off", ""}
@@ -179,6 +184,44 @@ class SessionTrace:
             self._api.append_jsonl(self.dir / MESSAGES_FILE, record)
 
         self._safe(write)
+
+    def stream(self, agent_id: str, emit: Any) -> Any:
+        """Wrap an agent's stream-event sink so each shell command it runs
+        is appended to ``commands.jsonl`` when its result arrives:
+        ``{"id": "cmd-<10 hex of the tool-use id>", "agent", "tool",
+        "tool_use_id", "ts_start", "ts_end", "command", "ok"}``. The id is
+        the one tooltrace gives the same command from a transcript."""
+        import hashlib
+
+        pending: dict[str, dict[str, Any]] = {}
+
+        def sink(event: dict[str, Any]) -> None:
+            if emit is not None:
+                emit(event)
+            kind = event.get("kind") if isinstance(event, dict) else None
+            if kind == "stream_end":
+                for call in event.get("tool_calls") or []:
+                    if not isinstance(call, dict) or call.get("name") not in SHELL_TOOLS:
+                        continue
+                    args = call.get("args") or call.get("input") or {}
+                    cmd = args.get("command") if isinstance(args, dict) else None
+                    if isinstance(cmd, list):
+                        cmd = " ".join(str(x) for x in cmd)
+                    if call.get("id") and isinstance(cmd, str):
+                        pending[str(call["id"])] = {"tool": call["name"], "command": cmd,
+                                                    "ts_start": self._api.now_iso()}
+            elif kind == "tool":
+                start = pending.pop(str(event.get("tool_call_id")), None)
+                if start is None:
+                    return
+                tid = str(event.get("tool_call_id"))
+                record = {"id": "cmd-" + hashlib.sha256(tid.encode("utf-8")).hexdigest()[:10],
+                          "agent": agent_id, "tool": start["tool"], "tool_use_id": tid,
+                          "ts_start": start["ts_start"], "ts_end": self._api.now_iso(),
+                          "command": start["command"], "ok": not event.get("failed")}
+                self._safe(lambda: self._api.append_jsonl(self.dir / COMMANDS_FILE, record))
+
+        return sink
 
     def _safe(self, fn: Any) -> None:
         try:
