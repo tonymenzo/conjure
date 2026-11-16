@@ -465,6 +465,9 @@ class ToolbaseHub:
         catalog_loader: CatalogLoader | None = None,
         server_factory: ServerFactory | None = None,
         loadout_resolver: Callable[[str], Toolset] | None = None,
+        trace: bool = False,
+        trace_dir: str | Path | None = None,
+        version_pins: Callable[[], Mapping[str, str]] | None = None,
     ) -> None:
         self.project_root = (
             Path(project_root).expanduser() if project_root else _discover_project_root()
@@ -490,6 +493,77 @@ class ToolbaseHub:
         self._loadout_resolver = loadout_resolver or self._resolve_named_loadout
         self._catalog: Catalog | None = None
         self._lock = threading.Lock()
+        # Provenance trace (``conjure.trace``): ``trace`` is the config's
+        # ``toolbase.trace``; ``TOOLBASE_TRACE`` / ``TOOLBASE_TRACE_DIR``
+        # are read when the runtime starts the session (``start_trace``).
+        self.trace_configured = bool(trace)
+        self.trace_dir_configured = str(trace_dir) if trace_dir else None
+        self.session_trace: Any = None   # conjure.trace.SessionTrace when on
+        self.trace_error: str | None = None
+        # Toolkits served to any agent this session and their versions
+        # (``run.json``'s ``toolkits``); ``on_served`` fires when one is added.
+        self.served_toolkits: dict[str, str] = {}
+        self.on_served: Callable[[], None] | None = None
+        self._version_pins = version_pins or self._loadout_version_pins
+        self._pins: dict[str, str] | None = None
+
+    # ----- provenance trace -----
+
+    def start_trace(self, session_id: str | None) -> Any:
+        """Open this session's trace when it is on (config, then
+        ``TOOLBASE_TRACE``); returns the ``SessionTrace`` or ``None``.
+        Idempotent. A toolbase without ``toolbase.trace`` leaves tracing
+        off with ``trace_error`` set and a warning on stderr."""
+        from conjure.trace import SessionTrace, TraceUnavailable, resolve_trace_dir, trace_wanted
+
+        if self.session_trace is not None or self.trace_error is not None:
+            return self.session_trace
+        if not trace_wanted(self.trace_configured):
+            return None
+        try:
+            directory = resolve_trace_dir(
+                project_root=self.project_root,
+                session_id=session_id,
+                configured_dir=self.trace_dir_configured,
+            )
+            self.session_trace = SessionTrace(directory)
+        except TraceUnavailable as exc:
+            self.trace_error = str(exc)
+        except Exception as exc:
+            self.trace_error = f"could not start the trace: {type(exc).__name__}: {exc}"
+        if self.trace_error is not None:
+            import sys
+
+            print(f"conjure: {self.trace_error}", file=sys.stderr)
+        return self.session_trace
+
+    def _loadout_version_pins(self) -> Mapping[str, str]:
+        from toolbase.serve.loadouts import resolve_loadout
+
+        return dict(resolve_loadout(self.project_root, cli_loadout=self.loadout).versions)
+
+    def _note_served(self, toolset: Toolset) -> None:
+        """Record each toolkit of ``toolset`` with its version: the
+        loadout's pin, else the installed version from the catalog."""
+        if self._pins is None:
+            try:
+                self._pins = {k: str(v) for k, v in (self._version_pins() or {}).items()}
+            except Exception:
+                self._pins = {}
+        catalog = self.catalog()
+        added = False
+        with self._lock:
+            for kit in toolset:
+                if kit in self.served_toolkits:
+                    continue
+                info = catalog.get(kit)
+                self.served_toolkits[kit] = self._pins.get(kit) or (info.version if info else "") or ""
+                added = True
+        if added and self.on_served is not None:
+            try:
+                self.on_served()
+            except Exception:
+                pass
 
     # ----- catalog -----
 
@@ -571,7 +645,9 @@ class ToolbaseHub:
 
     # ----- serving -----
 
-    def serve(self, toolset: Toolset, *, sandbox: Path | None) -> ToolbaseServing:
+    def serve(
+        self, toolset: Toolset, *, sandbox: Path | None, agent: str | None = None
+    ) -> ToolbaseServing:
         # A skill pack (a toolkit that ships guides and no tools) has
         # nothing to serve over MCP, and toolbase refuses to start a
         # server for one; its skills reach the agent from the catalog
@@ -582,6 +658,15 @@ class ToolbaseHub:
             for kit, grant in toolset.items()
             if (info := catalog.get(kit)) is None or info.tools
         }
+        kwargs: dict[str, Any] = {}
+        if self.session_trace is not None:
+            self._note_served(toolset)
+            if agent is not None:
+                # Every orchestrator built for this agent, on every
+                # re-serve, gets the agent's one ``Trace`` handle. Passed
+                # only when tracing is on, so factories that predate it
+                # keep working.
+                kwargs["trace"] = self.session_trace.handle(agent)
         return self._server_factory(
             toolset=served,
             sandbox=sandbox,
@@ -589,6 +674,7 @@ class ToolbaseHub:
             loadout=self.loadout,
             call_timeout_s=self.call_timeout_s,
             toolkit_config=self.toolkit_config,
+            **kwargs,
         )
 
     def _resolve_named_loadout(self, name: str | None) -> Toolset:
@@ -703,7 +789,7 @@ class ToolbaseMount:
             old.close()
         if toolset:
             sandbox = self._sandbox() if callable(self._sandbox) else self._sandbox
-            self._serving = self._hub.serve(toolset, sandbox=sandbox)
+            self._serving = self._hub.serve(toolset, sandbox=sandbox, agent=self._record.addr.id)
         try:
             self._sync_skills(toolset)
         except Exception:
@@ -1190,6 +1276,7 @@ def _default_server_factory(
     loadout: str | None,
     call_timeout_s: float,
     toolkit_config: Mapping[str, Mapping[str, Any]] | None = None,
+    trace: Any = None,
 ) -> ToolbaseServing:
     """Start toolbase's servers for ``toolset``, in-process.
 
@@ -1205,6 +1292,9 @@ def _default_server_factory(
     The anchor project's loadout supplies version pins and the
     ``serve.yaml`` blocklists; the toolkit selection is replaced by the
     grant. Nothing is written to disk.
+
+    ``trace`` (a ``toolbase.trace.Trace``, the agent's handle) goes to
+    every orchestrator, so each call is recorded for that agent.
     """
     import inspect
     from concurrent.futures import ThreadPoolExecutor
@@ -1227,7 +1317,10 @@ def _default_server_factory(
         versions, disabled_toolkits, disabled_tools = {}, [], []
 
     sel_params = inspect.signature(ToolkitSelection).parameters
-    takes_overrides = "config_overrides" in inspect.signature(Orchestrator).parameters
+    orch_params = inspect.signature(Orchestrator).parameters
+    takes_overrides = "config_overrides" in orch_params
+    if trace is not None and "trace" not in orch_params:
+        trace = None  # a toolbase that predates the trace: serve untraced
 
     def start(kit: str, grant: ToolkitGrant) -> Any:
         kwargs: dict[str, Any] = {"bundles": grant.bundles, "enabled_tools": grant.tools}
@@ -1251,6 +1344,8 @@ def _default_server_factory(
             if sandbox is not None:
                 overrides["base_directory"] = str(sandbox)
             orch_kwargs["config_overrides"] = overrides
+        if trace is not None:
+            orch_kwargs["trace"] = trace
         orch = Orchestrator(**orch_kwargs)
         try:
             return orch, list(orch.start())
@@ -1299,6 +1394,8 @@ def build_hub_from_config(cfg: Any) -> ToolbaseHub | None:
         call_timeout_s=cfg.call_timeout_s,
         prestart=getattr(cfg, "prestart", True),
         toolkit_config=cfg.config,
+        trace=bool(getattr(cfg, "trace", False)),
+        trace_dir=getattr(cfg, "trace_dir", None),
     )
 
 

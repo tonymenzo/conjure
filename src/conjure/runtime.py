@@ -242,6 +242,19 @@ class Runtime:
         # worker delivering its result.
         self._collectors: set[Address] = set()
         self._install_sentinels()
+        # Provenance trace (``conjure.trace``), on with ``toolbase.trace``
+        # or ``TOOLBASE_TRACE=1``: every agent is registered at spawn and
+        # ended at termination, and each orchestrator built for it gets
+        # its ``Trace`` handle (``ToolbaseHub.serve``). ``None`` when off.
+        # ``trace_agent_info(record)`` may return the ``engine`` / ``model``
+        # the agent will run on (the runner knows each engine's defaults).
+        self.trace_agent_info: Callable[[AgentRecord], dict[str, Any]] | None = None
+        self._trace = None
+        start = getattr(toolbase, "start_trace", None)
+        if callable(start):
+            self._trace = start(self._session_id)
+            if self._trace is not None:
+                toolbase.on_served = self._write_run_record
 
     @property
     def store_dir(self) -> Path | None:
@@ -442,6 +455,7 @@ class Runtime:
                 self._budgets_in_use = True
             register_token(record.token, self, addr)
             self._journal_spawn(record)
+        self._trace_spawned([record])
         # Notify externally-registered listener (e.g. the tmux
         # orchestrator) so it can set up per-agent state (event log,
         # window) BEFORE the driver starts emitting events.
@@ -557,6 +571,8 @@ class Runtime:
                 if engine is not None:
                     engines_to_shutdown.append(engine)
                 unregister_token(record.token)
+            if self._trace is not None:
+                self._trace.end_all()
             self._journal.close()
             self._shutdown = True
         for d in drivers_to_stop:
@@ -860,6 +876,7 @@ class Runtime:
                 self._journal_spawn(record)
                 records.append(record)
                 addrs.append(addr)
+        self._trace_spawned(records, spawned_by=parent)
         # Engine construction and listener notification happen outside
         # the lock — one slow child's SDK setup must not block the
         # others' registry visibility (or any other lock contender).
@@ -1221,6 +1238,9 @@ class Runtime:
         record.status = "terminated"
         terminated.append(addr)
         unregister_token(record.token)
+        if self._trace is not None:
+            self._trace.message("terminate", from_=requested_by, to=addr.id, cascade=cascade)
+            self._trace.agent_ended(addr.id)
         if record.wakeup is not None:
             record.wakeup.set()
         # Supervision: tell the (live) parent its child just went away.
@@ -1523,13 +1543,31 @@ class Runtime:
                 "engine": record.meta.get("engine") or record.spec.engine,
                 "model": model,
             })
-        return {
+        out: dict[str, Any] = {
             "harness": "Conjure",
             "version": __version__,
             "session": self._session_id,
             "agents": agents,
             "models": sorted({a["model"] for a in agents if a["model"]}),
         }
+        hub = self.toolbase
+        if self._trace is not None:
+            # The trace directory, relative to the sandbox holding
+            # ``.conjure`` when it is inside it, else absolute; and each
+            # toolkit served this session with its version.
+            trace_dir = Path(self._trace.dir)
+            base = self.sandbox_of(self._root_addr) if self._root_addr is not None else None
+            if base is not None:
+                try:
+                    trace_dir = trace_dir.relative_to(base)
+                except ValueError:
+                    pass
+            out["trace"] = str(trace_dir)
+            out["toolkits"] = dict(sorted(getattr(hub, "served_toolkits", {}).items()))
+        elif getattr(hub, "trace_error", None):
+            out["trace"] = None
+            out["trace_error"] = hub.trace_error
+        return out
 
     def _write_run_record(self) -> None:
         """Keep ``.conjure/run.json`` in the root's sandbox current, so tools
@@ -1571,6 +1609,53 @@ class Runtime:
 
     def _journal_send(self, env: Envelope) -> None:
         self._journal.write("send", {"envelope": env.model_dump(by_alias=True)})
+        if self._trace is not None:
+            self._trace.message(
+                "send", from_=env.from_.id, to=env.to.id, body=env.body,
+                msg_id=env.msg_id, thread_id=env.thread_id,
+            )
+
+    def _trace_spawned(
+        self, records: list[AgentRecord], *, spawned_by: Address | None = None
+    ) -> None:
+        """Register each new agent in the trace (``agents.jsonl``) and log
+        its spawn, with its brief, in ``messages.jsonl``. Runs for every
+        spawn path (the root, ``_spawn_batch``), before any engine starts,
+        so an agent is registered before it can make a call, whether or
+        not it ever holds a toolkit."""
+        tr = self._trace
+        if tr is None:
+            return
+        from conjure.engines import effective_engine
+
+        for record in records:
+            info: dict[str, Any] = {}
+            if self.trace_agent_info is not None:
+                try:
+                    info = dict(self.trace_agent_info(record) or {})
+                except Exception:
+                    info = {}
+            engine = info.get("engine")
+            if engine is None:
+                try:
+                    engine = effective_engine(record, self)
+                except Exception:
+                    engine = record.spec.engine
+            model = info.get("model") or record.spec.model
+            parent = record.parent.id if record.parent else None
+            tr.agent_started(record.addr.id, label=record.spec.label, parent=parent,
+                             model=model, engine=engine)
+            tr.message(
+                "spawn",
+                from_=spawned_by.id if spawned_by is not None else None,
+                to=record.addr.id,
+                label=record.spec.label,
+                role_prompt=record.spec.role_prompt,
+                initial_message=record.spec.initial_message,
+                model=model,
+                engine=engine,
+                toolkits=sorted(record.spec.toolkits or {}),
+            )
 
     def _maybe_start_driver(self, record: AgentRecord) -> None:
         """Build an engine and start a driver for ``record`` unless its

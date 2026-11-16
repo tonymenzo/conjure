@@ -8,6 +8,18 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- **Provenance trace** (`toolbase.trace: true`, `toolbase.trace_dir`, or
+  `TOOLBASE_TRACE` / `TOOLBASE_TRACE_DIR`, which override them as for
+  `tb serve`). Each agent is registered in toolbase's trace at spawn (id,
+  label, parent, engine, model, harness `conjure`) and ended when it
+  terminates or the session ends; every orchestrator built for an agent gets
+  that agent's `Trace` handle, so each toolkit call is recorded for it.
+  Spawns (with briefs and initial messages), sends and terminations go to
+  `messages.jsonl` in the same directory. `.conjure/run.json` gains `trace`
+  and `toolkits` (served toolkits and versions). Off by default; a toolbase
+  without `toolbase.trace` runs untraced with a warning.
+
 ## [0.2.31] — 2026-11-14
 
 Grants narrow what a request leaves implicit, and agents are not left
