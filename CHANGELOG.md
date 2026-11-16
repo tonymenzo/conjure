@@ -8,6 +8,12 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.32] — 2026-11-16
+
+Runs can be traced: every agent, toolkit call, message and shell command
+lands in toolbase's trace, so a run can be exported and its notes can cite
+what produced each result.
+
 ### Added
 - **Provenance trace** (`toolbase.trace: true`, `toolbase.trace_dir`, or
   `TOOLBASE_TRACE` / `TOOLBASE_TRACE_DIR`, which override them as for
@@ -19,6 +25,22 @@ this file as its notes.
   `messages.jsonl` in the same directory. `.conjure/run.json` gains `trace`
   and `toolkits` (served toolkits and versions). Off by default; a toolbase
   without `toolbase.trace` runs untraced with a warning.
+- **Shell commands in the trace.** With tracing on, each shell command an
+  agent runs (Claude's `Bash`, Codex's `shell`) is appended to
+  `commands.jsonl` when its result arrives: id, agent, tool, times, text,
+  ok. Claude's ids match tooltrace's transcript ids; Codex's, which repeat
+  across threads and turns, are salted with the agent and start time.
+- **Each Claude turn's full token usage** (input with the cache, cache reads
+  and writes, output) is logged as a `turn_usage` event; the streamed
+  `usage` events carry only output.
+
+### Changed
+- A passive mailbox (a call's collector) is registered with no model or
+  engine, and `run.json` marks it `passive`, so it adds no model to a run's
+  list.
+- The agent prompt's terseness rule is about what an agent writes for
+  others (replies, messages, documents); short progress updates when
+  something has changed are welcome.
 
 ## [0.2.31] — 2026-11-14
 
