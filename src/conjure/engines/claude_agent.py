@@ -785,7 +785,11 @@ class ClaudeAgentEngine:
 
                     result_usage = getattr(msg, "usage", None)
                     if isinstance(result_usage, dict):
-                        add_usage(self._token_usage, token_usage(result_usage))
+                        turn = token_usage(result_usage)
+                        add_usage(self._token_usage, turn)
+                        # The turn's full counts, input and cache included, for
+                        # reports; the streamed ``usage`` events carry only output.
+                        self._emit_event({"kind": "turn_usage", **turn})
                     sid = getattr(msg, "session_id", None)
                     if isinstance(sid, str) and sid:
                         self._session_id = sid
