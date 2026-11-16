@@ -54,3 +54,18 @@ def test_no_sandbox_writes_nothing(tmp_path, monkeypatch):
         assert not list(tmp_path.rglob("run.json"))
     finally:
         rt.shutdown()
+
+
+def test_a_passive_collector_reports_no_model(tmp_path):
+    rt = Runtime(store_dir=tmp_path / "store")
+    try:
+        root = rt.root(AgentSpec(role_prompt="r", label="lead", engine="claude", model="opus"))
+        rt._spawn(parent=root, spec=AgentSpec(role_prompt="(collector)", label="call-collector",
+                                              model="sonnet", lazy=True))
+        rec = _read(rt, root)
+        by = {a["label"]: a for a in rec["agents"]}
+        assert by["call-collector"]["model"] is None
+        assert by["call-collector"]["passive"] is True
+        assert rec["models"] == ["opus"]
+    finally:
+        rt.shutdown()

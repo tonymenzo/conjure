@@ -1535,6 +1535,17 @@ class Runtime:
         for addr, record in list(self._records.items()):
             if addr in (USER, SYSTEM):
                 continue
+            if record.spec.lazy:
+                # A passive mailbox (a call's collector) runs no model.
+                agents.append({
+                    "id": addr.id,
+                    "label": record.spec.label,
+                    "parent": record.parent.id if record.parent else None,
+                    "engine": None,
+                    "model": None,
+                    "passive": True,
+                })
+                continue
             model = record.meta.get("model") or record.spec.model
             agents.append({
                 "id": addr.id,
@@ -1642,6 +1653,9 @@ class Runtime:
                 except Exception:
                     engine = record.spec.engine
             model = info.get("model") or record.spec.model
+            if record.spec.lazy:
+                # A passive mailbox (a call's collector) runs no model.
+                engine = model = None
             parent = record.parent.id if record.parent else None
             tr.agent_started(record.addr.id, label=record.spec.label, parent=parent,
                              model=model, engine=engine)

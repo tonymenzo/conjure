@@ -270,3 +270,16 @@ def test_runner_registers_each_engines_default_model(tmp_path):
         assert _trace_agent_info(rt.record_for(root), rt, cfg)["model"] is None
     finally:
         rt.shutdown()
+
+
+def test_a_passive_collector_is_registered_without_a_model(tmp_path):
+    hub = _hub(tmp_path, Servers(), trace=True)
+    rt, root, child = _tree(tmp_path, hub)
+    try:
+        col = rt._spawn(parent=root, spec=AgentSpec(role_prompt="(collector)",
+                                                    label="call-collector", model="sonnet", lazy=True))
+    finally:
+        rt.shutdown()
+    started = {e["id"]: e for e in _jsonl(hub.session_trace.dir / "agents.jsonl")
+               if e["event"] == "agent_started"}
+    assert started[col.id]["model"] is None and started[col.id]["engine"] is None
