@@ -243,6 +243,17 @@ stop when it terminates. Version pins and `serve.yaml` blocklists come
 from the project's active loadout. See
 [`examples/toolbase_agent.yaml`](examples/toolbase_agent.yaml).
 
+**Provenance trace.** `toolbase.trace: true` (or `TOOLBASE_TRACE=1`)
+records every toolkit call (agent, tool, toolkit version, arguments,
+outcome, files) in `<project>/.toolbase/traces/<session>/`, using
+toolbase's trace (a toolbase with `toolbase.trace`). Conjure registers each
+agent at spawn with its parent, engine and model (`agents.jsonl`), ends it
+when it terminates, and logs spawns with their briefs, sends and
+terminations (`messages.jsonl`). `.conjure/run.json` then also carries
+`trace` (the directory) and `toolkits` (each served toolkit and its
+version). `toolbase.trace_dir` or `TOOLBASE_TRACE_DIR` moves it;
+`TOOLBASE_TRACE=0` turns it off. Off by default.
+
 ## Persistence & replay
 
 Every spawn, send, and terminate is journaled to an append-only JSONL log

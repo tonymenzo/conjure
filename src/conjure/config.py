@@ -214,6 +214,15 @@ class ToolbaseConfig(BaseModel):
     # ``{heptapod: {mg5_path: /opt/MG5_aMC}}``. Unlocks config-gated
     # bundles without touching ~/.toolbase.
     config: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Provenance trace: toolbase records every toolkit call (agent, tool,
+    # version, arguments, files) and Conjure registers the agents, in
+    # ``trace_dir``, by default ``<project_root>/.toolbase/traces/<session>/``.
+    # ``TOOLBASE_TRACE`` (1 or 0) overrides ``trace`` and
+    # ``TOOLBASE_TRACE_DIR`` overrides ``trace_dir``, as for ``tb serve``.
+    # A relative ``trace_dir`` is under the toolbase project. Needs a
+    # toolbase with ``toolbase.trace``.
+    trace: bool = False
+    trace_dir: str | None = None
 
 
 class CodexConfig(BaseModel):

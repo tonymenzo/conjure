@@ -134,6 +134,9 @@ def build_runtime(
         tool_output_max_chars=config.runtime.tool_output_max_chars,
     )
     runtime.auto_mode = bool(config.runtime.auto_approve)
+    # What the trace registers each agent as: the engine it runs on and
+    # the model that engine will ask for (each engine's own default).
+    runtime.trace_agent_info = lambda record: _trace_agent_info(record, runtime, config)
     # Every configured provider's key variable, kept out of agents' shells
     # (``conjure.tools.filesystem._agent_env``) whatever its name.
     runtime.secret_env_names = _secret_env_names(config)
@@ -195,6 +198,21 @@ def _priced(llm: Any, cfg: dict[str, Any]) -> Any:
         except Exception:
             pass
     return llm
+
+
+def _trace_agent_info(record: AgentRecord, runtime: Runtime, config: Config) -> dict[str, Any]:
+    """``{"engine", "model"}`` for the provenance trace, resolved as the
+    engine builders below resolve them."""
+    engine = _engine_for(record, runtime)
+    model = record.spec.model
+    if engine == "claude_agent":
+        model = _resolve_model(record)
+    elif engine == "codex" and not model and record.parent is not None:
+        model = config.codex.child_model
+    elif engine == "orchestral" and not model:
+        llm = config.llms.get(record.spec.llm)
+        model = llm.model if llm is not None else None
+    return {"engine": engine, "model": model}
 
 
 def _engine_for(record: AgentRecord, runtime: Runtime) -> str:
