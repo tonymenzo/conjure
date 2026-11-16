@@ -283,3 +283,28 @@ def test_a_passive_collector_is_registered_without_a_model(tmp_path):
     started = {e["id"]: e for e in _jsonl(hub.session_trace.dir / "agents.jsonl")
                if e["event"] == "agent_started"}
     assert started[col.id]["model"] is None and started[col.id]["engine"] is None
+
+
+def test_shell_commands_are_logged_with_tooltraces_ids(tmp_path):
+    import hashlib
+
+    hub = _hub(tmp_path, Servers(), trace=True)
+    rt, root, child = _tree(tmp_path, hub)
+    seen = []
+    try:
+        sink = rt._trace.stream(child.id, seen.append)
+        sink({"kind": "stream_end", "tool_calls": [
+            {"id": "toolu_A", "name": "Bash", "args": {"command": "python3 scripts/reach.py"}},
+            {"id": "toolu_B", "name": "Read", "args": {"file_path": "x"}}]})
+        sink({"kind": "tool", "tool_call_id": "toolu_B", "text": "", "failed": False})
+        sink({"kind": "tool", "tool_call_id": "toolu_A", "text": "ok", "failed": True})
+        sink({"kind": "stream_end", "tool_calls": [{"id": "it_1", "name": "shell", "args": {"command": "ls"}}]})
+        sink({"kind": "tool", "tool_call_id": "it_1", "text": "", "failed": False})
+    finally:
+        rt.shutdown()
+    assert len(seen) == 5                                  # every event still reaches the log
+    cmds = _jsonl(hub.session_trace.dir / "commands.jsonl")
+    assert [(c["agent"], c["command"], c["ok"]) for c in cmds] == [
+        (child.id, "python3 scripts/reach.py", False), (child.id, "ls", True)]
+    assert cmds[0]["id"] == "cmd-" + hashlib.sha256(b"toolu_A").hexdigest()[:10]
+    assert cmds[0]["ts_start"] <= cmds[0]["ts_end"]

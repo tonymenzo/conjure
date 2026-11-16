@@ -241,6 +241,7 @@ def _build_codex_engine(
         event_log = event_log_router(record)
         if event_log is not None:
             stream_emit = event_log.emit
+    stream_emit = _traced_stream(runtime, record, stream_emit)
     sandbox = _sandbox_for(record, runtime)
     if sandbox is None:
         sandbox = Path(tempfile.mkdtemp(prefix=f"conjure-{record.addr.id}-"))
@@ -291,6 +292,7 @@ def _build_claude_agent_engine(
         event_log = event_log_router(record)
         if event_log is not None:
             stream_emit = event_log.emit
+    stream_emit = _traced_stream(runtime, record, stream_emit)
     sandbox = _sandbox_for(record, runtime)
     model = _resolve_model(record)
     mount = None
@@ -337,3 +339,12 @@ def _resolve_model(record: AgentRecord) -> str | None:
     if record.parent is not None:
         return "haiku"
     return None
+
+
+def _traced_stream(runtime: Runtime, record: AgentRecord, emit: Any) -> Any:
+    """``emit``, wrapped to log the agent's shell commands in the session's
+    trace when tracing is on; ``emit`` itself otherwise."""
+    tr = getattr(runtime, "_trace", None)
+    if tr is None:
+        return emit
+    return tr.stream(record.addr.id, emit)
