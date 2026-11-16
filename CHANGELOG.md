@@ -8,6 +8,10 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.33] — 2026-11-16
+
+File edits join shell commands in the trace.
+
 ### Added
 - **File edits in the trace.** Claude's `Write`, `Edit`, `MultiEdit` and
   `NotebookEdit` and Codex's file changes are logged to `commands.jsonl`
