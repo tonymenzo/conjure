@@ -323,3 +323,19 @@ def test_codex_item_ids_that_repeat_give_distinct_commands(tmp_path):
         rt.shutdown()
     cmds = _jsonl(hub.session_trace.dir / "commands.jsonl")
     assert len({c["id"] for c in cmds}) == 3
+
+
+def test_file_edits_are_logged_with_the_paths_they_write(tmp_path):
+    hub = _hub(tmp_path, Servers(), trace=True)
+    rt, root, child = _tree(tmp_path, hub)
+    try:
+        sink = rt._trace.stream(child.id, None)
+        sink({"kind": "stream_end", "tool_calls": [
+            {"id": "toolu_W", "name": "Write", "args": {"file_path": "/w/scripts/x.py", "content": "print(1)"}},
+            {"id": "item_3", "name": "edit", "args": {"changes": [{"path": "/w/a.tex", "kind": "update"}]}}]})
+        sink({"kind": "tool", "tool_call_id": "toolu_W", "failed": False})
+        sink({"kind": "tool", "tool_call_id": "item_3", "failed": False})
+    finally:
+        rt.shutdown()
+    cmds = _jsonl(hub.session_trace.dir / "commands.jsonl")
+    assert [(c["tool"], c["writes"]) for c in cmds] == [("Write", ["/w/scripts/x.py"]), ("edit", ["/w/a.tex"])]

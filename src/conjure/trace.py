@@ -28,6 +28,19 @@ MESSAGES_FILE = "messages.jsonl"
 COMMANDS_FILE = "commands.jsonl"
 # Engine tool names that run a shell command (Claude Code, Codex).
 SHELL_TOOLS = {"Bash", "shell", "exec_command", "local_shell", "shell_command"}
+# Engine tool names that write files directly: Claude's, and Codex's file
+# changes (``edit``). Logged with the paths they write.
+EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "edit"}
+
+
+def _edit_paths(name: str, args: Any) -> list[str]:
+    """The files an edit tool call writes."""
+    if not isinstance(args, dict):
+        return []
+    if name == "edit":
+        return [str(c.get("path")) for c in args.get("changes") or [] if isinstance(c, dict) and c.get("path")]
+    path = args.get("file_path") or args.get("notebook_path")
+    return [str(path)] if path else []
 
 _ON = {"1", "true", "yes", "on"}
 _OFF = {"0", "false", "no", "off", ""}
@@ -186,14 +199,16 @@ class SessionTrace:
         self._safe(write)
 
     def stream(self, agent_id: str, emit: Any) -> Any:
-        """Wrap an agent's stream-event sink so each shell command it runs
-        is appended to ``commands.jsonl`` when its result arrives:
+        """Wrap an agent's stream-event sink so each shell command it runs,
+        and each file it writes with an edit tool (with ``writes``, the
+        paths), is appended to ``commands.jsonl`` when its result arrives:
         ``{"id": "cmd-<10 hex of the tool-use id>", "agent", "tool",
         "tool_use_id", "ts_start", "ts_end", "command", "ok"}``. The id is
         the one tooltrace gives the same command from a transcript."""
         import hashlib
 
         pending: dict[str, dict[str, Any]] = {}
+        seq = [0]
 
         def sink(event: dict[str, Any]) -> None:
             if emit is not None:
@@ -201,14 +216,23 @@ class SessionTrace:
             kind = event.get("kind") if isinstance(event, dict) else None
             if kind == "stream_end":
                 for call in event.get("tool_calls") or []:
-                    if not isinstance(call, dict) or call.get("name") not in SHELL_TOOLS:
+                    if not isinstance(call, dict) or not call.get("id"):
                         continue
+                    name = call.get("name")
                     args = call.get("args") or call.get("input") or {}
+                    if name in EDIT_TOOLS:
+                        paths = _edit_paths(name, args)
+                        if paths:
+                            pending[str(call["id"])] = {"tool": name, "command": f"{name} " + " ".join(paths),
+                                                        "writes": paths, "ts_start": self._api.now_iso()}
+                        continue
+                    if name not in SHELL_TOOLS:
+                        continue
                     cmd = args.get("command") if isinstance(args, dict) else None
                     if isinstance(cmd, list):
                         cmd = " ".join(str(x) for x in cmd)
-                    if call.get("id") and isinstance(cmd, str):
-                        pending[str(call["id"])] = {"tool": call["name"], "command": cmd,
+                    if isinstance(cmd, str):
+                        pending[str(call["id"])] = {"tool": name, "command": cmd,
                                                     "ts_start": self._api.now_iso()}
             elif kind == "tool":
                 start = pending.pop(str(event.get("tool_call_id")), None)
@@ -217,13 +241,16 @@ class SessionTrace:
                 tid = str(event.get("tool_call_id"))
                 # Claude's tool-use ids are unique, and tooltrace derives the
                 # same id from a transcript; Codex's item ids (item_5) repeat
-                # across threads and turns, so they are salted with the agent
-                # and the start time.
-                key = tid if tid.startswith("toolu_") else f"{agent_id}:{tid}:{start['ts_start']}"
+                # across threads and turns, so they are salted with the agent,
+                # the start time and the agent's count of logged commands.
+                seq[0] += 1
+                key = tid if tid.startswith("toolu_") else f"{agent_id}:{tid}:{start['ts_start']}:{seq[0]}"
                 record = {"id": "cmd-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:10],
                           "agent": agent_id, "tool": start["tool"], "tool_use_id": tid,
                           "ts_start": start["ts_start"], "ts_end": self._api.now_iso(),
                           "command": start["command"], "ok": not event.get("failed")}
+                if start.get("writes"):
+                    record["writes"] = start["writes"]
                 self._safe(lambda: self._api.append_jsonl(self.dir / COMMANDS_FILE, record))
 
         return sink

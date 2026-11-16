@@ -8,6 +8,17 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- **File edits in the trace.** Claude's `Write`, `Edit`, `MultiEdit` and
+  `NotebookEdit` and Codex's file changes are logged to `commands.jsonl`
+  with `writes`, the paths they write, so a record can say which agent
+  wrote each file.
+
+### Fixed
+- Codex command ids are salted with the agent's count of logged commands
+  as well, so two commands with the same item id in the same millisecond
+  stay distinct.
+
 ## [0.2.32] — 2026-11-16
 
 Runs can be traced: every agent, toolkit call, message and shell command
