@@ -8,9 +8,9 @@ Two siblings ``A`` and ``B`` are spawned under the same root. Without
 
 from __future__ import annotations
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools.primitives import introduce_impl, send_impl, spawn_impl
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools.primitives import introduce_impl, send_impl, spawn_impl
 
 
 def test_siblings_cannot_send_without_introduction():

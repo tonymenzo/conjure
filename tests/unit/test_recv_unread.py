@@ -9,9 +9,9 @@ import threading
 import time
 from types import SimpleNamespace
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools.primitives import recv_impl, send_impl, wait_for_impl
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools.primitives import recv_impl, send_impl, wait_for_impl
 
 
 def _session():
@@ -92,8 +92,8 @@ def test_wait_for_a_child_ends_when_it_goes_idle_without_replying():
 
 
 def test_waiting_parent_learns_a_live_child_stopped_after_a_progress_note():
-    from conjure.runtime import Runtime as LiveRuntime
-    from conjure.scripted import BehaviorRegistry
+    from hylo.runtime import Runtime as LiveRuntime
+    from hylo.scripted import BehaviorRegistry
     seen = {}
 
     def slow(engine, prompt, envelopes):

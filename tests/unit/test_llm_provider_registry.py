@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conjure.llm import (
+from hylo.llm import (
     SUPPORTED_PROVIDERS,
     api_key_present,
     key_env_for,

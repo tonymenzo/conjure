@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from conjure.agent import Agent
-from conjure.record import AgentRecord, AgentSpec
-from conjure.runtime import Runtime
+from hylo.agent import Agent
+from hylo.record import AgentRecord, AgentSpec
+from hylo.runtime import Runtime
 
 
 class MockEngine:
@@ -317,8 +317,8 @@ def test_driver_skips_messages_the_agent_already_pulled():
     be pushed to it again as a new message on its next turn."""
     import threading
 
-    from conjure import AgentSpec, Runtime
-    from conjure.tools.primitives import send_impl, wait_for_impl
+    from hylo import AgentSpec, Runtime
+    from hylo.tools.primitives import send_impl, wait_for_impl
 
     prompts: list[str] = []
     got_reply = threading.Event()
@@ -360,7 +360,7 @@ def test_driver_skips_messages_the_agent_already_pulled():
 
 
 def test_driver_drains_burst_larger_than_one_batch():
-    from conjure.driver import Driver
+    from hylo.driver import Driver
     rt = Runtime()
     addr = rt.root(AgentSpec(role_prompt="root"))
     record = rt.record_for(addr)

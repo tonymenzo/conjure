@@ -1,15 +1,15 @@
-"""Tests for conjure.engines.registry — tool group resolution."""
+"""Tests for hylo.engines.registry — tool group resolution."""
 
 from __future__ import annotations
 
 import pytest
 
-from conjure.engines.registry import (
+from hylo.engines.registry import (
     DEFAULT_TOOL_GROUPS,
     build_tools,
 )
-from conjure.tools.combinators import COMBINATOR_TOOL_CLASSES
-from conjure.tools.primitives import PRIMITIVE_TOOL_CLASSES
+from hylo.tools.combinators import COMBINATOR_TOOL_CLASSES
+from hylo.tools.primitives import PRIMITIVE_TOOL_CLASSES
 
 
 def test_primitive_group_resolves_to_primitive_tool_set():
@@ -27,9 +27,9 @@ def test_combinator_group_resolves_to_combinator_tool_set():
 def test_all_group_combines_both():
     """``all`` is the union of primitive + combinator + filesystem +
     toolkit."""
-    from conjure.tools.filesystem import FILESYSTEM_TOOL_CLASSES
-    from conjure.tools.models import MODEL_TOOL_CLASSES
-    from conjure.tools.toolkits import TOOLKIT_TOOL_CLASSES
+    from hylo.tools.filesystem import FILESYSTEM_TOOL_CLASSES
+    from hylo.tools.models import MODEL_TOOL_CLASSES
+    from hylo.tools.toolkits import TOOLKIT_TOOL_CLASSES
     tools = build_tools("token-abc", ["all"])
     expected = (
         len(PRIMITIVE_TOOL_CLASSES)

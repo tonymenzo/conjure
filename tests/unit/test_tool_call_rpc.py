@@ -1,5 +1,5 @@
 """End-to-end tests for the ``tool_call`` control RPC — the bridge
-the conjure-mcp subprocess uses to forward claude_agent's MCP
+the hylo-mcp subprocess uses to forward claude_agent's MCP
 calls into the daemon's tool surface."""
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from conjure.control import ControlClient, ControlServer
-from conjure.mcp_bridge import _build_bridge_tools
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.control import ControlClient, ControlServer
+from hylo.mcp_bridge import _build_bridge_tools
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 def test_bridge_tools_expose_pascalcase_display_names():
@@ -43,8 +43,8 @@ def test_daemon_registry_covers_every_bridged_tool():
     daemon's ``tool_call`` registry, or the call fails with
     ``unknown tool`` (the race/ensemble/critic/supervisor tools did,
     before they were registered)."""
-    from conjure.control import _TOOL_CLASS_REGISTRY
-    from conjure.mcp_bridge import _BRIDGE_TARGETS
+    from hylo.control import _TOOL_CLASS_REGISTRY
+    from hylo.mcp_bridge import _BRIDGE_TARGETS
 
     assert set(_BRIDGE_TARGETS) <= set(_TOOL_CLASS_REGISTRY)
 

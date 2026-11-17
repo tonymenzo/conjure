@@ -21,13 +21,13 @@ def test_claude_agent_sdk_importable_or_skip():
     """If the SDK is installed in this env, importing the engine
     module shouldn't crash."""
     pytest.importorskip("claude_agent_sdk")
-    from conjure.engines import claude_agent
+    from hylo.engines import claude_agent
     assert hasattr(claude_agent, "ClaudeAgentEngine")
 
 
 def test_extract_tool_calls_strips_mcp_prefix():
     """Tool calls bridged through MCP show up as
-    ``mcp__conjure__<name>`` on the wire. The chat pane expects the
+    ``mcp__hylo__<name>`` on the wire. The chat pane expects the
     user-friendly bare name."""
     pytest.importorskip("claude_agent_sdk")
     from claude_agent_sdk.types import (
@@ -35,7 +35,7 @@ def test_extract_tool_calls_strips_mcp_prefix():
         TextBlock,
         ToolUseBlock,
     )
-    from conjure.engines.claude_agent import (
+    from hylo.engines.claude_agent import (
         _extract_text,
         _extract_tool_calls,
     )
@@ -45,7 +45,7 @@ def test_extract_tool_calls_strips_mcp_prefix():
             TextBlock(text="spawning"),
             ToolUseBlock(
                 id="t1",
-                name="mcp__conjure__spawn",
+                name="mcp__hylo__spawn",
                 input={"role_prompt": "x", "label": "y"},
             ),
             ToolUseBlock(
@@ -69,7 +69,7 @@ def test_extract_tool_results_handles_str_and_list_bodies():
     content-block dicts. Both should reduce to a single text string."""
     pytest.importorskip("claude_agent_sdk")
     from claude_agent_sdk.types import ToolResultBlock, UserMessage
-    from conjure.engines.claude_agent import _extract_tool_results
+    from hylo.engines.claude_agent import _extract_tool_results
 
     msg = UserMessage(
         content=[
@@ -97,14 +97,14 @@ def test_default_system_frame_loads_and_templates():
     """The bundled system prompt loads as a ``string.Template`` whose
     ``safe_substitute`` doesn't choke on the JSON examples (literal
     ``{...}``) in the markdown."""
-    from conjure.engines.claude_agent import (
+    from hylo.engines.claude_agent import (
         ClaudeAgentEngine,
         _load_default_system_template,
     )
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
 
     template = _load_default_system_template()
     frame = template.template
@@ -143,12 +143,12 @@ def test_preapproved_tools_excludes_ask_and_deny(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.engines.claude_agent import ClaudeAgentEngine
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.engines.claude_agent import ClaudeAgentEngine
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
 
@@ -192,7 +192,7 @@ def test_preapproved_tools_excludes_ask_and_deny(tmp_path):
     assert "Read" in allowed
     assert "Grep" in allowed
     # Bridged MCP tools must stay (they're only callable when listed).
-    assert any(t.startswith("mcp__conjure__") for t in allowed)
+    assert any(t.startswith("mcp__hylo__") for t in allowed)
 
 
 def test_preapproved_tools_default_ask_set_held_back(tmp_path):
@@ -202,12 +202,12 @@ def test_preapproved_tools_default_ask_set_held_back(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.engines.claude_agent import ClaudeAgentEngine
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.engines.claude_agent import ClaudeAgentEngine
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-test", label="root")
@@ -248,12 +248,12 @@ def test_toolbase_loadout_stdio_fallback(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.engines.claude_agent import ClaudeAgentEngine
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.engines.claude_agent import ClaudeAgentEngine
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-tb", label="root")
@@ -293,12 +293,12 @@ def test_toolbase_loadout_absent_means_no_toolbase_server(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.engines.claude_agent import ClaudeAgentEngine
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.engines.claude_agent import ClaudeAgentEngine
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-no-tb", label="root")
@@ -325,8 +325,8 @@ def test_toolbase_loadout_absent_means_no_toolbase_server(tmp_path):
 def test_dispatch_rejects_unknown_engine(tmp_path):
     """``build_runtime`` dispatcher refuses unknown engine names with
     a clear error pointing at the supported set."""
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     cfg = load_config_from_mapping(
         {
@@ -353,12 +353,12 @@ def test_model_table_names_the_exact_model_before_any_reply(tmp_path, monkeypatc
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    import conjure.engines.claude_agent as ca
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    import hylo.engines.claude_agent as ca
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     monkeypatch.setattr(ca, "_MODEL_MAP", {})
     rt = Runtime(store_dir=tmp_path)
@@ -395,8 +395,8 @@ def _bare_engine(tmp_path, rt):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.engines.claude_agent import ClaudeAgentEngine
-    from conjure.record import AgentSpec
+    from hylo.engines.claude_agent import ClaudeAgentEngine
+    from hylo.record import AgentSpec
     root = rt.root(AgentSpec(role_prompt="r", engine="claude_agent"))
     with patch("claude_agent_sdk.ClaudeSDKClient"):
         return ClaudeAgentEngine(record=rt.record_for(root), runtime=rt, sandbox_dir=tmp_path)
@@ -406,9 +406,9 @@ def test_a_long_turn_is_not_cut_off(tmp_path, monkeypatch):
     """A delegating root's turn waits on its children; with no run deadline
     it runs to its end, however long (no fixed ceiling)."""
     import asyncio
-    import conjure.engines.claude_agent as ca
+    import hylo.engines.claude_agent as ca
 
-    from conjure.runtime import Runtime
+    from hylo.runtime import Runtime
     rt = Runtime()
     engine = _bare_engine(tmp_path, rt)
 
@@ -428,7 +428,7 @@ def test_a_turn_past_the_deadline_is_interrupted(tmp_path, monkeypatch):
     import asyncio
     import time as _time
 
-    from conjure.runtime import Runtime
+    from hylo.runtime import Runtime
     rt = Runtime()
     rt.deadline = _time.time() + 0.2
     engine = _bare_engine(tmp_path, rt)
@@ -444,23 +444,23 @@ def test_a_turn_past_the_deadline_is_interrupted(tmp_path, monkeypatch):
 
 
 def test_claude_code_subagents_are_disallowed(tmp_path):
-    """Delegation goes through conjure's Spawn: Claude Code's own subagent
+    """Delegation goes through hylo's Spawn: Claude Code's own subagent
     tools are disallowed, whatever tools the spec lists."""
-    from conjure.runtime import Runtime
+    from hylo.runtime import Runtime
     rt = Runtime()
     engine = _bare_engine(tmp_path, rt)
     assert {"Task", "Agent"} <= set(engine._options.disallowed_tools or [])
 
 
 def test_session_bound_tools_are_disallowed_and_background_bash_refused(tmp_path):
-    """A conjure agent's turn ends when it stops calling tools and only a
+    """A hylo agent's turn ends when it stops calling tools and only a
     message starts the next, so a Monitor or background command's later
     notification never reaches it: those tools are disallowed and a
     background Bash is refused by a PreToolUse hook."""
     import asyncio
 
-    from conjure.engines.claude_agent import _refuse_background_bash
-    from conjure.runtime import Runtime
+    from hylo.engines.claude_agent import _refuse_background_bash
+    from hylo.runtime import Runtime
 
     rt = Runtime()
     engine = _bare_engine(tmp_path, rt)
@@ -481,12 +481,12 @@ def test_messages_larger_than_the_sdk_default_are_accepted(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import patch
 
-    from conjure.address import Address
-    from conjure.capability import CapabilitySet
-    from conjure.engines.claude_agent import MAX_MESSAGE_BYTES, ClaudeAgentEngine
-    from conjure.mailbox import Mailbox
-    from conjure.record import AgentRecord, AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.address import Address
+    from hylo.capability import CapabilitySet
+    from hylo.engines.claude_agent import MAX_MESSAGE_BYTES, ClaudeAgentEngine
+    from hylo.mailbox import Mailbox
+    from hylo.record import AgentRecord, AgentSpec
+    from hylo.runtime import Runtime
 
     rt = Runtime(store_dir=tmp_path)
     addr = Address(id="ag-test", label="root")

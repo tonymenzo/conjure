@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from conjure.address import Address
-from conjure.persistence import Journal
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.address import Address
+from hylo.persistence import Journal
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 def test_journal_writes_and_reads_back(tmp_path: Path):
@@ -109,7 +109,7 @@ def test_replay_runtime_has_no_journal(tmp_path: Path):
 def test_concurrent_delivery_journals_in_mailbox_order(tmp_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
-    from conjure.tools.primitives import send_impl
+    from hylo.tools.primitives import send_impl
     rt = Runtime(store_dir=tmp_path)
     root = rt.root(AgentSpec(role_prompt="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))
@@ -153,7 +153,7 @@ def test_concurrent_delivery_journals_in_mailbox_order(tmp_path):
 
 def test_concurrent_retries_publish_once(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
-    from conjure.tools.primitives import send_impl
+    from hylo.tools.primitives import send_impl
     rt = Runtime(store_dir=tmp_path)
     root = rt.root(AgentSpec(role_prompt="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="child"))

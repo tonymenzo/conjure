@@ -1,4 +1,4 @@
-"""Smoke tests for the conjure CLI.
+"""Smoke tests for the hylo CLI.
 
 These tests exercise the command-line layer using a FakeLLM injected
 in-process; they do not invoke the binary as a subprocess.
@@ -16,15 +16,15 @@ from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 from rich.console import Console
 
-from conjure.cli import (
+from hylo.cli import (
     _handle_command,
     _print_tree,
     _run_one_shot,
 )
-from conjure.config import load_config_from_mapping
-from conjure.engines.orchestral import make_orchestral_engine_factory
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.config import load_config_from_mapping
+from hylo.engines.orchestral import make_orchestral_engine_factory
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 class _FakeLLM(LLM):
@@ -159,3 +159,27 @@ def test_config_loader_path_round_trip(tmp_path: Path):
     p.write_text(yaml.safe_dump(config_data), encoding="utf-8")
     cfg = load_config_from_mapping(config_data)
     assert cfg.root.label == "root"
+
+
+def test_store_defaults_to_hylo_and_falls_back_to_a_conjure_store(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from hylo.cli import default_store
+
+    monkeypatch.chdir(tmp_path)
+    assert default_store(None) == Path("./.hylo/store")
+    (tmp_path / ".conjure" / "store").mkdir(parents=True)
+    assert default_store(None) == Path("./.conjure/store")
+    (tmp_path / ".hylo" / "store").mkdir(parents=True)
+    assert default_store(None) == Path("./.hylo/store")
+    assert default_store(Path("elsewhere")) == Path("elsewhere")
+
+
+def test_the_conjure_command_says_it_is_now_hylo(capsys):
+    import pytest
+
+    from hylo.cli import legacy_main
+
+    with pytest.raises(SystemExit):
+        legacy_main(["--help"])
+    assert "conjure is now hylo" in capsys.readouterr().err

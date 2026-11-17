@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from conjure.control import ControlClient, ControlServer
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.control import ControlClient, ControlServer
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 @pytest.fixture

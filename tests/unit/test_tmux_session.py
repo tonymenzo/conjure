@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from conjure.tmux_session import TmuxSession, TmuxSessionError, tmux_available
+from hylo.tmux_session import TmuxSession, TmuxSessionError, tmux_available
 
 
 pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed")
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(not tmux_available(), reason="tmux not installed
 
 @pytest.fixture
 def session_name() -> str:
-    return f"conjure-test-{uuid.uuid4().hex[:8]}"
+    return f"hylo-test-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -89,6 +89,6 @@ def test_kill_session_is_idempotent(session_name: str):
 
 def test_init_raises_without_tmux(monkeypatch):
     """If tmux is missing, the constructor raises a clean error."""
-    monkeypatch.setattr("conjure.tmux_session.tmux_available", lambda: False)
+    monkeypatch.setattr("hylo.tmux_session.tmux_available", lambda: False)
     with pytest.raises(TmuxSessionError, match="tmux binary"):
         TmuxSession("anything")

@@ -23,6 +23,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+.hylo/
+hylo-store/
+# Before 0.3.0
 .conjure/
 conjure-store/
 # Legacy pre-rename artifact dirs — kept ignored so stale ``.spawn/`` and

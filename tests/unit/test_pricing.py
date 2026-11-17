@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from conjure.pricing import Price, PriceBook, list_price
+from hylo.pricing import Price, PriceBook, list_price
 
 
 def test_list_prices_match_by_id_or_prefix_at_a_separator():
@@ -35,8 +35,8 @@ def test_price_cost_counts_cached_input_at_its_rate():
 def _gateway_session(tmp_path, monkeypatch, model, pricing=None):
     from tests.unit.test_orchestral_tool_calls import ToolCallingGateway
 
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     gw = ToolCallingGateway("ModelCatalog")
     real = gw.server.RequestHandlerClass.do_POST
@@ -85,13 +85,13 @@ def test_a_gateway_model_with_a_list_price_is_charged(tmp_path, monkeypatch):
 
 
 def test_an_unknown_gateway_model_shows_unpriced_tokens_not_zero(tmp_path, monkeypatch):
-    from conjure.web.state import SessionView
+    from hylo.web.state import SessionView
 
     rt, rec, gw = _gateway_session(tmp_path, monkeypatch, "gpt-6-sol")
     try:
         u = rec.agent.engine.usage()
         assert u["cost"] == 0 and u["unpriced_tokens"] == 1_100_000
-        from conjure.control import ControlServer
+        from hylo.control import ControlServer
         from pathlib import Path
 
         view = SessionView.live_session(rt, ControlServer(runtime=rt, socket_path=Path("/nonexistent/x.sock")), name="t")
@@ -113,7 +113,7 @@ def test_a_configured_price_covers_a_model_without_a_list_price(tmp_path, monkey
 
 
 def test_model_catalog_shows_prices():
-    from conjure.models import ModelHub
+    from hylo.models import ModelHub
 
     hub = ModelHub(llm_configs={"gw": {"provider": "openai_compatible", "base_url": "http://x/v1", "model": "claude-opus-5-5"}},
                    claude=False, codex=False)

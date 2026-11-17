@@ -9,13 +9,13 @@
 # conversation.
 #
 # Setup (toolbase needs Python >= 3.12):
-#   pip install "conjure-agents[claude_agent,toolbase]"
+#   pip install "hylo[claude_agent,toolbase]"
 #   tb install heptapod            # or any toolkit; no activation needed
-#   conjure check examples/toolbase_agent.yaml
-#   conjure run examples/toolbase_agent.yaml
+#   hylo check examples/toolbase_agent.yaml
+#   hylo run examples/toolbase_agent.yaml
 
 runtime:
-  store_dir: ./.conjure/store
+  store_dir: ./.hylo/store
   max_depth: 3
 
 llms:

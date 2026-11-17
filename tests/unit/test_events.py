@@ -6,7 +6,7 @@ from orchestral.context.message import Message
 from orchestral.llm.base.response import Response
 from orchestral.llm.base.tool_call import ToolCall
 
-from conjure.events import (
+from hylo.events import (
     make_spawned_event,
     make_system_prompt_event,
     make_terminated_event,
@@ -87,7 +87,7 @@ def test_make_system_prompt_event_defaults():
 
 
 def test_token_usage_is_provider_neutral():
-    from conjure.provenance import add_usage, token_usage
+    from hylo.provenance import add_usage, token_usage
 
     # Anthropic: the cache is reported beside the input, so it is added back.
     anthropic = token_usage({"input_tokens": 10, "output_tokens": 5,

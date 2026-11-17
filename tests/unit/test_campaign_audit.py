@@ -24,11 +24,11 @@ from pathlib import Path
 
 import pytest
 
-from conjure.record import AgentRecord, AgentSpec
-from conjure.runtime import DEFAULT_MAX_WAIT_S, DEFAULT_TOOL_OUTPUT_MAX_CHARS, Runtime
-from conjure.tool_output import TOOL_OUTPUT_DIR, ToolOutputCap, cap_tool_output
-from conjure.tools.filesystem import bash_impl, read_impl, write_impl
-from conjure.tools.primitives import recv_impl, send_impl, spawn_impl, wait_for_impl
+from hylo.record import AgentRecord, AgentSpec
+from hylo.runtime import DEFAULT_MAX_WAIT_S, DEFAULT_TOOL_OUTPUT_MAX_CHARS, Runtime
+from hylo.tool_output import TOOL_OUTPUT_DIR, ToolOutputCap, cap_tool_output
+from hylo.tools.filesystem import bash_impl, read_impl, write_impl
+from hylo.tools.primitives import recv_impl, send_impl, spawn_impl, wait_for_impl
 
 from tests.unit.test_orchestral_tool_calls import ToolCallingGateway
 
@@ -73,7 +73,7 @@ def test_short_output_and_disabled_cap_pass_through(tmp_path):
 
 def test_default_cap_is_on():
     assert Runtime().tool_output_max_chars == DEFAULT_TOOL_OUTPUT_MAX_CHARS
-    from conjure.config import RuntimeConfig
+    from hylo.config import RuntimeConfig
 
     assert RuntimeConfig().tool_output_max_chars == DEFAULT_TOOL_OUTPUT_MAX_CHARS
 
@@ -102,8 +102,8 @@ def test_cap_hook_replaces_the_message_and_logs_the_cut(rt):
 def test_huge_bash_output_never_reaches_the_model(monkeypatch, tmp_path):
     """End to end through orchestral: the model's next request carries the
     capped result, and the full output is in the sandbox."""
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     gw = ToolCallingGateway("Bash")
     real = gw.server.RequestHandlerClass.do_POST
@@ -181,9 +181,9 @@ def test_bash_runs_bash_syntax(rt):
 
 
 def test_bash_shell_override(monkeypatch):
-    from conjure.tools import filesystem
+    from hylo.tools import filesystem
 
-    monkeypatch.setenv("CONJURE_SHELL", "/bin/sh")
+    monkeypatch.setenv("HYLO_SHELL", "/bin/sh")
     assert filesystem._shell() == "/bin/sh"
 
 
@@ -208,7 +208,7 @@ def test_spawn_task_comes_from_the_parent_and_caller_replies_to_it(rt):
 
 
 def test_caller_after_a_system_notice_is_the_parent(rt):
-    from conjure.address import SYSTEM
+    from hylo.address import SYSTEM
 
     root = rt.root(AgentSpec(role_prompt="r", label="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="w", label="w"))
@@ -230,7 +230,7 @@ def test_send_to_system_is_refused_not_lost(rt):
 
 
 def test_system_prompt_tells_workers_how_to_reply(rt):
-    from conjure.prompts import build_system_prompt
+    from hylo.prompts import build_system_prompt
 
     root = rt.root(AgentSpec(role_prompt="r", label="root"))
     child = rt._spawn(parent=root, spec=AgentSpec(role_prompt="w", label="w"))
@@ -293,7 +293,7 @@ def test_child_without_sandbox_dir_shares_the_parents(tmp_path):
         out = spawn_impl(token=rt.record_for(root).token, role_prompt="w", label="worker")
         child = rt.address_by_id(out["address"])
         assert rt.sandbox_of(child) == ws.resolve()
-        from conjure.prompts import build_system_prompt
+        from hylo.prompts import build_system_prompt
         assert str(ws.resolve()) in build_system_prompt(rt.record_for(child), rt, "orchestral")
     finally:
         rt.shutdown()
@@ -342,8 +342,8 @@ def test_bash_timeout_is_clipped_to_the_deadline(rt):
 
 
 def test_config_sets_the_deadline_and_max_wait(monkeypatch):
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import _deadline
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import _deadline
 
     base = {"llms": {"d": {"provider": "anthropic"}}, "root": {"role_prompt": "r", "llm": "d"}}
     cfg = load_config_from_mapping({**base, "runtime": {"wall_clock_s": 100}})

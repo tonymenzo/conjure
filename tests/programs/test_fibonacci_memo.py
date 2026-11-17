@@ -12,10 +12,10 @@ spawns rather than O(phi^n).
 
 from __future__ import annotations
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
-from conjure.tools.primitives import introduce_impl, send_impl, spawn_impl
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
+from hylo.tools.primitives import introduce_impl, send_impl, spawn_impl
 
 
 def cache_behavior(engine, prompt, envelopes):

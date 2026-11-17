@@ -4,9 +4,9 @@ root and any non-descendants untouched.
 
 from __future__ import annotations
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools.primitives import spawn_impl, terminate_impl
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools.primitives import spawn_impl, terminate_impl
 
 
 def test_terminate_middle_cascades_to_grandchild():

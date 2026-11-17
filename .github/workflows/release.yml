@@ -43,6 +43,6 @@ jobs:
         run: |
           python scripts/release_notes.py "$GITHUB_REF_NAME" > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "conjure $GITHUB_REF_NAME" \
+            --title "hylo $GITHUB_REF_NAME" \
             --notes-file notes.md \
             --verify-tag

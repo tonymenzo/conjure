@@ -17,9 +17,9 @@ import pytest
 
 pytest.importorskip("toolbase.skills")
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.toolbase import (
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.toolbase import (
     Catalog,
     SkillInfo,
     ToolbaseHub,
@@ -29,7 +29,7 @@ from conjure.toolbase import (
     ToolkitInfo,
     parse_toolkits,
 )
-from conjure.tools.toolkits import load_skill_impl
+from hylo.tools.toolkits import load_skill_impl
 
 
 def _write_toolkit(root: Path) -> Path:
@@ -166,7 +166,7 @@ def test_claude_engine_names_granted_skills_and_loads_only_the_sandbox_project(t
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from hylo.engines.claude_agent import ClaudeAgentEngine
 
     kit = _write_toolkit(tmp_path / "src")
     rt = Runtime(store_dir=tmp_path, toolbase=_hub(kit))
@@ -202,15 +202,15 @@ def test_in_process_server_is_named_to_match_its_allowlist(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import MagicMock, patch
 
-    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from hylo.engines.claude_agent import ClaudeAgentEngine
 
     rt = Runtime(store_dir=tmp_path)
     rec = rt.record_for(rt.root(AgentSpec(role_prompt="r")))
     with patch("claude_agent_sdk.ClaudeSDKClient", side_effect=lambda o: MagicMock(options=o)):
         engine = ClaudeAgentEngine(record=rec, runtime=rt, sandbox_dir=tmp_path)
     servers = engine._options.mcp_servers
-    assert "conjure" in servers and "spawn" not in servers
-    assert "mcp__conjure__Spawn" in engine._options.allowed_tools
+    assert "hylo" in servers and "spawn" not in servers
+    assert "mcp__hylo__Spawn" in engine._options.allowed_tools
     rt.shutdown()
 
 
@@ -284,7 +284,7 @@ def test_spawning_a_claude_child_with_toolkits_starts_its_servers(tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import MagicMock, patch
 
-    from conjure.runner import _build_claude_agent_engine
+    from hylo.runner import _build_claude_agent_engine
 
     kit = _write_toolkit(tmp_path / "src")
     servers = FakeServers()

@@ -14,10 +14,10 @@ from typing import Any
 
 import pytest
 
-from conjure.errors import ToolkitDenied
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.toolbase import (
+from hylo.errors import ToolkitDenied
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.toolbase import (
     Catalog,
     SkillInfo,
     ToolbaseHub,
@@ -199,7 +199,7 @@ def test_spawn_attenuates_down_the_tree():
 
 
 def test_attenuate_narrows_only_what_was_left_implicit():
-    from conjure.toolbase import attenuate
+    from hylo.toolbase import attenuate
 
     cat = _catalog()
     # The parent holds the llp bundle with one of its skills pinned.
@@ -224,7 +224,7 @@ def test_attenuate_narrows_only_what_was_left_implicit():
 
 
 def test_spawn_result_reports_the_narrowed_grant():
-    from conjure.tools.primitives import spawn_impl
+    from hylo.tools.primitives import spawn_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -295,7 +295,7 @@ def test_only_root_may_hand_out_a_named_loadout():
 
 
 def test_spawn_tool_reports_toolkit_denied():
-    from conjure.tools.primitives import spawn_impl
+    from hylo.tools.primitives import spawn_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -311,8 +311,8 @@ def test_spawn_tool_reports_toolkit_denied():
 
 
 def test_catalog_shows_only_what_the_caller_holds():
-    from conjure.tools.primitives import spawn_impl
-    from conjure.tools.toolkits import catalog_impl
+    from hylo.tools.primitives import spawn_impl
+    from hylo.tools.toolkits import catalog_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -336,7 +336,7 @@ def test_catalog_shows_only_what_the_caller_holds():
 
 
 def test_catalog_refresh_picks_up_new_toolkits():
-    from conjure.tools.toolkits import catalog_impl
+    from hylo.tools.toolkits import catalog_impl
 
     state = {"extra": False}
 
@@ -357,7 +357,7 @@ def test_catalog_refresh_picks_up_new_toolkits():
 
 
 def test_toolkit_tools_without_hub():
-    from conjure.tools.toolkits import catalog_impl, request_toolkits_impl
+    from hylo.tools.toolkits import catalog_impl, request_toolkits_impl
 
     rt = Runtime()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -368,8 +368,8 @@ def test_toolkit_tools_without_hub():
 
 
 def test_request_then_grant_round_trip(tmp_path):
-    from conjure.tools.primitives import spawn_impl
-    from conjure.tools.toolkits import grant_toolkits_impl, request_toolkits_impl
+    from hylo.tools.primitives import spawn_impl
+    from hylo.tools.toolkits import grant_toolkits_impl, request_toolkits_impl
 
     rt = _rt(tmp_path)
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -398,8 +398,8 @@ def test_request_then_grant_round_trip(tmp_path):
 
 
 def test_grant_is_bounded_and_ancestor_only():
-    from conjure.tools.primitives import spawn_impl
-    from conjure.tools.toolkits import grant_toolkits_impl
+    from hylo.tools.primitives import spawn_impl
+    from hylo.tools.toolkits import grant_toolkits_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -419,7 +419,7 @@ def test_grant_is_bounded_and_ancestor_only():
 
 
 def test_root_request_has_no_parent():
-    from conjure.tools.toolkits import request_toolkits_impl
+    from hylo.tools.toolkits import request_toolkits_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -429,8 +429,8 @@ def test_root_request_has_no_parent():
 
 
 def test_combinator_template_toolkits_are_checked():
-    from conjure.tools.combinators import AgentMapTool, AgentRaceTool
-    from conjure.tools.primitives import spawn_impl
+    from hylo.tools.combinators import AgentMapTool, AgentRaceTool
+    from hylo.tools.primitives import spawn_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -513,7 +513,7 @@ def test_empty_mount_starts_nothing():
 def test_orchestral_engine_serves_and_swaps_toolkits(tmp_path):
     from tests.unit.test_orchestral_engine import FakeLLM
 
-    from conjure.engines.orchestral import make_orchestral_engine_factory
+    from hylo.engines.orchestral import make_orchestral_engine_factory
 
     servers = FakeServers()
     fake = FakeLLM()
@@ -565,7 +565,7 @@ def _claude_engine(rt: Runtime, rec, tmp_path):
     pytest.importorskip("claude_agent_sdk")
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from conjure.engines.claude_agent import ClaudeAgentEngine
+    from hylo.engines.claude_agent import ClaudeAgentEngine
 
     def make_client(opts):
         client = MagicMock()
@@ -592,7 +592,7 @@ def test_claude_engine_wires_toolbase_server_and_resumes_on_grant(tmp_path):
     engine, patcher = _claude_engine(rt, rec, tmp_path)
     try:
         allowed = engine._options.allowed_tools
-        assert "mcp__conjure__ToolCatalog" in allowed
+        assert "mcp__hylo__ToolCatalog" in allowed
         assert "toolbase" not in (engine._options.mcp_servers or {})
 
         asyncio.run(engine._sync_toolkits())
@@ -647,7 +647,7 @@ def test_claude_engine_respects_explicit_permissions_on_toolkit_tools(tmp_path):
 
 def test_toolbase_sdk_server_forwards_calls():
     pytest.importorskip("claude_agent_sdk")
-    from conjure.mcp_in_process import _make_proxy_handler, build_toolbase_sdk_server
+    from hylo.mcp_in_process import _make_proxy_handler, build_toolbase_sdk_server
 
     calls = []
     tool = SimpleNamespace(
@@ -667,8 +667,8 @@ def test_toolbase_sdk_server_forwards_calls():
 
 
 def test_config_builds_root_toolkits(monkeypatch):
-    import conjure.runner as runner
-    from conjure.config import load_config_from_mapping
+    import hylo.runner as runner
+    from hylo.config import load_config_from_mapping
 
     monkeypatch.setattr(runner, "build_hub_from_config", lambda cfg: _hub())
     cfg = load_config_from_mapping(
@@ -693,7 +693,7 @@ def test_kit_config_resolves_against_the_session_project(tmp_path, monkeypatch):
     """Toolkit config (and so bundle gating) comes from the session's
     project, not the process's cwd; session overrides win."""
     pytest.importorskip("toolbase.envs.config")
-    from conjure.toolbase import resolve_kit_config
+    from hylo.toolbase import resolve_kit_config
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no user layer
     project = tmp_path / "proj"
@@ -720,7 +720,7 @@ def test_kit_config_resolves_against_the_session_project(tmp_path, monkeypatch):
     ],
 )
 def test_spawn_toolkits_accepts_every_shape_a_client_sends(raw):
-    from conjure.tools.primitives import spawn_impl
+    from hylo.tools.primitives import spawn_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -732,7 +732,7 @@ def test_spawn_toolkits_accepts_every_shape_a_client_sends(raw):
 
 
 def test_unreadable_toolkits_say_what_arrived_and_what_was_expected():
-    from conjure.tools.primitives import spawn_impl
+    from hylo.tools.primitives import spawn_impl
 
     rt = _rt()
     root = rt.root(AgentSpec(role_prompt="r"))
@@ -746,9 +746,9 @@ def test_unreadable_toolkits_say_what_arrived_and_what_was_expected():
 
 
 def test_toolkits_schema_is_typed_for_clients():
-    from conjure.mcp_in_process import _build_input_schema
-    from conjure.tools.primitives import SpawnTool
-    from conjure.tools.toolkits import GrantToolkitsTool, RequestToolkitsTool
+    from hylo.mcp_in_process import _build_input_schema
+    from hylo.tools.primitives import SpawnTool
+    from hylo.tools.toolkits import GrantToolkitsTool, RequestToolkitsTool
 
     for cls in (SpawnTool, GrantToolkitsTool, RequestToolkitsTool):
         types = {a.get("type") for a in _build_input_schema(cls)["properties"]["toolkits"]["anyOf"]}
@@ -781,7 +781,7 @@ def test_default_authority_is_the_active_loadout_not_everything_installed():
 
 
 def test_config_default_authority_is_loadout():
-    from conjure.config import ToolbaseConfig
+    from hylo.config import ToolbaseConfig
 
     assert ToolbaseConfig().authority == "loadout"
 

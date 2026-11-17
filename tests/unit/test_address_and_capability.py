@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from conjure.address import SYSTEM, USER, Address
-from conjure.capability import CapabilitySet
+from hylo.address import SYSTEM, USER, Address
+from hylo.capability import CapabilitySet
 
 
 def test_address_is_frozen():

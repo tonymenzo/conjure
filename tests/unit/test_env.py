@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from conjure import env as env_mod
+from hylo import env as env_mod
 
 
 def test_redact_passes_through_non_secret_keys():
@@ -78,3 +78,21 @@ def test_set_user_env_writes_to_file(tmp_path, monkeypatch):
 def test_list_user_env_returns_empty_when_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(env_mod, "USER_ENV_PATH", tmp_path / "missing.env")
     assert env_mod.list_user_env() == {}
+
+
+def test_conjure_variables_are_adopted_under_hylo_names():
+    environ = {"CONJURE_SHELL": "/bin/sh", "CONJURE_UVLOOP": "0", "HYLO_UVLOOP": "1"}
+    assert env_mod.adopt_legacy_variables(environ) == ["HYLO_SHELL"]
+    assert environ["HYLO_SHELL"] == "/bin/sh" and environ["HYLO_UVLOOP"] == "1"
+
+
+def test_the_conjure_user_env_is_read_and_carried_over_on_first_write(tmp_path, monkeypatch):
+    new, old = tmp_path / "hylo" / ".env", tmp_path / "conjure" / ".env"
+    old.parent.mkdir()
+    old.write_text("OLD_KEY=kept\n", encoding="utf-8")
+    monkeypatch.setattr(env_mod, "USER_ENV_PATH", new)
+    monkeypatch.setattr(env_mod, "LEGACY_USER_ENV_PATH", old)
+    assert env_mod.user_env_path() == old and env_mod.list_user_env() == {"OLD_KEY": "kept"}
+    env_mod.set_user_env("NEW_KEY", "v")
+    assert env_mod.user_env_path() == new
+    assert env_mod.list_user_env() == {"OLD_KEY": "kept", "NEW_KEY": "v"}

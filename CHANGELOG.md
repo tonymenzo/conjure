@@ -1,12 +1,40 @@
 # Changelog
 
-All notable changes to conjure are recorded here. The format follows
+All notable changes to hylo (named conjure before 0.3.0) are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
 follow [Semantic Versioning](https://semver.org/) (pre-1.0: a minor
 version may change behavior). Each GitHub release carries its section of
 this file as its notes.
 
 ## [Unreleased]
+
+## [0.3.0] — 2026-11-17
+
+conjure is now hylo, short for hylomorphism: the recursion scheme that
+unfolds a structure and folds it back, as a run unfolds a tree of agents
+by spawning and folds their results back through the mailboxes.
+
+### Changed
+- **Renamed.** The distribution is `hylo` (was `conjure-agents`), the
+  import package `hylo`, the commands `hylo`, `hylo-main`, `hylo-chat`,
+  `hylo-files`, `hylo-mcp`, `hylo-render` and `hylo-input`, the
+  environment variables `HYLO_*`, the project directory `.hylo/` (store,
+  tool output, `run.json`), `~/.hylo/sessions` and `~/.config/hylo/.env`.
+- Agents see hylo's tools as `mcp__hylo__<Name>` (was `mcp__conjure__`),
+  so traces from 0.3.0 on carry the new names.
+
+### Deprecated
+- The `conjure` command still runs, says it is now `hylo`, and goes
+  away in a later release.
+
+### Compatibility
+- `CONJURE_*` variables are read as their `HYLO_*` names when those are
+  unset.
+- `~/.config/conjure/.env` is read when hylo's is absent, and copied into
+  place before hylo first writes its own.
+- `hylo web --replay` and `hylo export` look in `./.conjure/store` when
+  there is no `./.hylo/store`, so sessions journaled before the rename
+  stay reachable.
 
 ## [0.2.33] — 2026-11-16
 

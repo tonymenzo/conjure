@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import re
 
-from conjure.combinators import agent_fixed_point
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
-from conjure.tools.primitives import send_impl
+from hylo.combinators import agent_fixed_point
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
+from hylo.tools.primitives import send_impl
 
 
 def normalize_step(engine, prompt, envelopes):

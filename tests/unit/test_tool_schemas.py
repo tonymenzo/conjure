@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import time
 
-from conjure import AgentSpec, BehaviorRegistry, Runtime
-from conjure.control import ControlServer
-from conjure.scripted import ScriptedEngine
-from conjure.tool_schemas import compact, from_tools
-from conjure.tools.filesystem import ReadTool
-from conjure.web import SessionView
+from hylo import AgentSpec, BehaviorRegistry, Runtime
+from hylo.control import ControlServer
+from hylo.scripted import ScriptedEngine
+from hylo.tool_schemas import compact, from_tools
+from hylo.tools.filesystem import ReadTool
+from hylo.web import SessionView
 
 
 def test_compact_keeps_order_required_and_small_defaults():
