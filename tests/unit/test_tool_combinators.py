@@ -1,4 +1,4 @@
-"""Smoke tests for conjure.tools.combinators — LLM-callable wrappers.
+"""Smoke tests for hylo.tools.combinators — LLM-callable wrappers.
 
 Heavy combinator behavior is covered in ``test_combinators.py``; here
 we just verify the tools construct correctly and delegate.
@@ -6,10 +6,10 @@ we just verify the tools construct correctly and delegate.
 
 from __future__ import annotations
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
-from conjure.tools.combinators import (
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
+from hylo.tools.combinators import (
     AgentCriticTool,
     AgentEnsembleTool,
     AgentFilterTool,
@@ -20,7 +20,7 @@ from conjure.tools.combinators import (
     COMBINATOR_TOOL_CLASSES,
     build_combinator_tools,
 )
-from conjure.tools.primitives import send_impl
+from hylo.tools.primitives import send_impl
 
 
 def _reply_with(transform):

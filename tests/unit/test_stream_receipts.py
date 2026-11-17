@@ -18,9 +18,9 @@ from orchestral.llm.base.response import Response
 from orchestral.llm.base.tool_call import ToolCall
 from orchestral.tools import define_tool
 
-from conjure.engines.orchestral import OrchestralEngine, _build_hook
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.engines.orchestral import OrchestralEngine, _build_hook
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 from tests.unit.test_orchestral_engine import FakeLLM
 

@@ -1,7 +1,7 @@
 """Tests for the input channel + input reader loop.
 
 The CLI's ``_start_input_reader`` tails a JSONL file appended by the
-``conjure-input`` window and dispatches each line. We test it
+``hylo-input`` window and dispatches each line. We test it
 in-process by writing lines manually and verifying the reader's
 behavior.
 """
@@ -13,9 +13,9 @@ import threading
 import time
 from pathlib import Path
 
-from conjure.cli import _start_input_reader
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.cli import _start_input_reader
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 def _append(path: Path, payload: dict) -> None:

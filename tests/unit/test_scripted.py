@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from conjure.envelope import Envelope
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry, ScriptedEngine
-from conjure.tools.primitives import send_impl
+from hylo.envelope import Envelope
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry, ScriptedEngine
+from hylo.tools.primitives import send_impl
 
 
 def test_behavior_registry_dispatches_by_role():

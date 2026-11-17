@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from conjure.event_log import EventLog, tail
+from hylo.event_log import EventLog, tail
 
 
 def test_emit_appends_jsonl_line(tmp_path: Path):

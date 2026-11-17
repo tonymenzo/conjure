@@ -3,7 +3,7 @@
 # Each agent is a Codex thread (``codex exec --json``, resumed turn to
 # turn) running under your ChatGPT subscription: OPENAI_API_KEY is
 # withheld from the CLI. Children spawned with engine ``auto`` stay on
-# Codex. conjure's tools (Spawn, Send, Call, the combinators, toolbase
+# Codex. hylo's tools (Spawn, Send, Call, the combinators, toolbase
 # curation) and each agent's granted toolkits reach Codex through a
 # loopback MCP server, authenticated per agent.
 #
@@ -14,7 +14,7 @@
 #
 # Setup:
 #   codex login               # ChatGPT account
-#   conjure web examples/codex_agent.yaml
+#   hylo web examples/codex_agent.yaml
 #
 # Codex's own shell commands and edits run in its sandbox
 # (``codex.sandbox``, default workspace-write: writes stay in the
@@ -22,7 +22,7 @@
 # so Codex agents don't use the permission panel.
 
 runtime:
-  store_dir: ./.conjure/store
+  store_dir: ./.hylo/store
   max_depth: 3
 
 llms:

@@ -11,12 +11,12 @@ from orchestral.context.message import Message
 from orchestral.llm.base.llm import LLM
 from orchestral.llm.base.response import Response
 
-from conjure.engines.orchestral import (
+from hylo.engines.orchestral import (
     OrchestralEngine,
     make_orchestral_engine_factory,
 )
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 class FakeLLM(LLM):

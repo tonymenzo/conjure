@@ -1,6 +1,6 @@
-"""Provenance trace: Conjure registers agents, hands each agent's
+"""Provenance trace: Hylo registers agents, hands each agent's
 orchestrators its own ``Trace`` handle, and records the trace and the
-served toolkits in ``.conjure/run.json``. Fake catalog and server
+served toolkits in ``.hylo/run.json``. Fake catalog and server
 factory: no toolkit servers start."""
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ import pytest
 
 pytest.importorskip("toolbase.trace")
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.toolbase import ToolbaseHub, ToolbaseMount, ToolbaseServing, parse_toolkits
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.toolbase import ToolbaseHub, ToolbaseMount, ToolbaseServing, parse_toolkits
 
 from tests.unit.test_toolbase import _catalog
 
@@ -67,7 +67,7 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _run_json(rt: Runtime, root) -> dict[str, Any]:
-    return json.loads((rt.sandbox_of(root) / ".conjure" / "run.json").read_text())
+    return json.loads((rt.sandbox_of(root) / ".hylo" / "run.json").read_text())
 
 
 def test_off_by_default_changes_nothing(tmp_path):
@@ -113,7 +113,7 @@ def test_on_registers_agents_hands_out_handles_and_records_the_run(tmp_path):
         assert by[root.id]["parent"] is None and by[root.id]["label"] == "lead"
         assert by[child.id]["parent"] == root.id
         assert by[child.id]["model"] == "gpt-5.5-mini" and by[child.id]["engine"] == "codex"
-        assert {e["harness"] for e in started} == {"conjure"}
+        assert {e["harness"] for e in started} == {"hylo"}
 
         run = _run_json(rt, root)
         assert RUN_KEYS <= set(run)
@@ -195,7 +195,7 @@ def test_configured_trace_dir_is_under_the_project(tmp_path):
 
 
 def test_toolbase_without_trace_runs_untraced_with_a_message(tmp_path, monkeypatch, capsys):
-    import conjure.trace as ct
+    import hylo.trace as ct
 
     def missing():
         raise ct.TraceUnavailable("toolbase.trace is requested but the installed toolbase has none")
@@ -219,7 +219,7 @@ def test_default_server_factory_passes_the_handle_to_each_orchestrator(tmp_path,
     import toolbase.serve.orchestrator as orchestrator
     from toolbase.trace import Trace
 
-    from conjure.toolbase import ToolkitGrant, _default_server_factory
+    from hylo.toolbase import ToolkitGrant, _default_server_factory
 
     built: list[dict[str, Any]] = []
 
@@ -254,7 +254,7 @@ def test_default_server_factory_passes_the_handle_to_each_orchestrator(tmp_path,
 def test_runner_registers_each_engines_default_model(tmp_path):
     from types import SimpleNamespace
 
-    from conjure.runner import _trace_agent_info
+    from hylo.runner import _trace_agent_info
 
     cfg = SimpleNamespace(codex=SimpleNamespace(child_model="gpt-child"),
                           llms={"default": SimpleNamespace(model="llm-model")})

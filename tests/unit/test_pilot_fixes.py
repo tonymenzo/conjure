@@ -9,11 +9,11 @@ import asyncio
 
 import pytest
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.toolbase import parse_toolkits, toolkit_brief
-from conjure.tools.primitives import ListInboxTool, RecvTool, SendTool, send_impl
-from conjure.tools.toolkits import catalog_impl, grant_toolkits_impl
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.toolbase import parse_toolkits, toolkit_brief
+from hylo.tools.primitives import ListInboxTool, RecvTool, SendTool, send_impl
+from hylo.tools.toolkits import catalog_impl, grant_toolkits_impl
 from tests.unit.test_toolbase import FakeServers, _hub
 
 
@@ -69,7 +69,7 @@ def test_only_the_root_may_grant_itself():
     rt.shutdown()
 
 
-@pytest.mark.parametrize("engine,prefix", [("claude_agent", "mcp__toolbase__"), ("codex", "mcp__conjure__"), ("orchestral", "")])
+@pytest.mark.parametrize("engine,prefix", [("claude_agent", "mcp__toolbase__"), ("codex", "mcp__hylo__"), ("orchestral", "")])
 def test_prompt_names_the_exact_tools_to_call(engine, prefix):
     hub = _hub(FakeServers())
     brief = toolkit_brief(hub, AgentSpec(role_prompt="c", toolkits=parse_toolkits(["hep/llp"])), engine)
@@ -80,13 +80,13 @@ def test_prompt_names_the_exact_tools_to_call(engine, prefix):
 
 
 def test_codex_prompt_lists_its_tools(tmp_path):
-    from conjure.engines.codex import build_system_prompt
+    from hylo.engines.codex import build_system_prompt
 
     rt = Runtime(store_dir=tmp_path, toolbase=_hub(FakeServers()))
     root = rt.root(AgentSpec(role_prompt="r"))
     kid = rt.record_for(rt._spawn(parent=root, spec=AgentSpec(role_prompt="c", toolkits=parse_toolkits(["hep/llp"]))))
     prompt = build_system_prompt(kid, rt)
-    assert "`mcp__conjure__hep__Pythia`" in prompt and "Wait on workers through your inbox" in prompt
+    assert "`mcp__hylo__hep__Pythia`" in prompt and "Wait on workers through your inbox" in prompt
     rt.shutdown()
 
 

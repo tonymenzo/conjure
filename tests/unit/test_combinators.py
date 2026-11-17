@@ -1,4 +1,4 @@
-"""Tests for conjure.combinators — agent_map / fold / filter / fixed_point.
+"""Tests for hylo.combinators — agent_map / fold / filter / fixed_point.
 
 Each test wires up a BehaviorRegistry with worker behaviors that read
 their inbox, compute a result, and send it to the ``reply_to`` address
@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from conjure.combinators import (
+from hylo.combinators import (
     agent_critic,
     agent_ensemble,
     agent_filter,
@@ -26,11 +26,11 @@ from conjure.combinators import (
     agent_map,
     agent_race,
 )
-from conjure.errors import Timeout
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
-from conjure.tools.primitives import call_impl, send_impl
+from hylo.errors import Timeout
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
+from hylo.tools.primitives import call_impl, send_impl
 
 
 def _idle_root(prompt, envelopes):

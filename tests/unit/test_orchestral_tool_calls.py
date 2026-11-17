@@ -1,7 +1,7 @@
 """An orchestral agent's tool call round-trips: the name the model is
 offered is the name the router dispatches. 0.2.1 offered ``catalog`` /
 ``listinbox`` while routing ``ToolCatalog`` / ``ListInbox``, so every
-conjure tool call failed with "Tool '...' not found"."""
+hylo tool call failed with "Tool '...' not found"."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from conjure.engines.registry import build_tools
+from hylo.engines.registry import build_tools
 
 
 def test_every_spec_is_offered_under_its_routed_name():
@@ -58,9 +58,9 @@ class ToolCallingGateway:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
 
-def test_an_orchestral_agent_calls_a_conjure_tool_through_a_gateway(monkeypatch):
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+def test_an_orchestral_agent_calls_a_hylo_tool_through_a_gateway(monkeypatch):
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     gw = ToolCallingGateway("ModelCatalog")
     monkeypatch.setenv("GW_KEY", "k")
@@ -88,9 +88,9 @@ def test_an_orchestral_agent_calls_a_conjure_tool_through_a_gateway(monkeypatch)
 def test_terminating_an_orchestral_agent_stops_its_command_and_its_turn(monkeypatch, tmp_path):
     """The model keeps calling ``Bash("sleep 30")``. Terminating the agent
     must stop the running command and end the turn: no further LLM calls."""
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
-    from conjure.tools.primitives import spawn_impl
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
+    from hylo.tools.primitives import spawn_impl
 
     gw = ToolCallingGateway("Bash")
     real = gw.server.RequestHandlerClass.do_POST

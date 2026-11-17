@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from conjure.engines.orchestral import make_orchestral_engine_factory
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.engines.orchestral import make_orchestral_engine_factory
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 from tests.unit.test_spawn_listener import _FakeLLM
 
@@ -77,8 +77,8 @@ def test_runner_dispatch_validates_orchestral_children_only(tmp_path, monkeypatc
     """build_runtime's per-engine dispatcher routes the check: orchestral
     children are held to tool groups; claude_agent tools are Claude Code
     tool names and are left for that engine."""
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     monkeypatch.setenv("FAKE_KEY", "x")
     cfg = load_config_from_mapping({

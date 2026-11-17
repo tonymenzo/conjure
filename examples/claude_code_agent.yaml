@@ -14,13 +14,13 @@
 # Setup:
 #   pip install -e .[claude_agent]
 #   claude /status            # confirm you're logged in
-#   conjure run examples/claude_agent.yaml
+#   hylo run examples/claude_agent.yaml
 #
 # Browse the agent's sandbox: Ctrl+B F inside the tmux session.
 # Approve permission requests: F3 (allow) / F4 (deny).
 
 runtime:
-  store_dir: ./.conjure/store
+  store_dir: ./.hylo/store
   max_workers: 32
   max_depth: 3
 

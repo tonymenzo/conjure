@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools._base import register_token, unregister_token
-from conjure.tools.filesystem import (
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools._base import register_token, unregister_token
+from hylo.tools.filesystem import (
     bash_impl,
     edit_impl,
     glob_impl,
@@ -96,9 +96,9 @@ def test_bash_hides_credentials(agent_token, monkeypatch):
 
 
 def test_bash_hides_configured_key_env_whatever_its_name(monkeypatch):
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import _secret_env_names
-    from conjure.tools.filesystem import _agent_env
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import _secret_env_names
+    from hylo.tools.filesystem import _agent_env
 
     cfg = load_config_from_mapping({
         "llms": {"gw": {"provider": "openai_compatible", "base_url": "http://x/v1",
@@ -306,7 +306,7 @@ def test_explicit_sandbox_dir(tmp_path):
 
 
 def test_permission_defaults_ask_for_changes_and_allow_reads(tmp_path):
-    from conjure.tools.filesystem import ASK_BY_DEFAULT, _check_permission
+    from hylo.tools.filesystem import ASK_BY_DEFAULT, _check_permission
 
     assert ASK_BY_DEFAULT == {"Bash", "Write", "Edit"}
     rt = Runtime(store_dir=tmp_path)
@@ -355,7 +355,7 @@ def test_terminating_an_agent_stops_its_running_command(tmp_path):
     assert not t.is_alive() and time.monotonic() - t0 < 6
     assert result["ok"] is False and result["code"] == "terminated"
     # Later calls from the terminated agent say so, rather than no_runtime.
-    from conjure.tools.primitives import SendTool
+    from hylo.tools.primitives import SendTool
 
     late = SendTool(runtime_token=kid.token, to="parent", body="done")._run()
     assert late["code"] == "terminated" and kid.addr.id in late["error"]

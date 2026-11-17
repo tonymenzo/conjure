@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from conjure.engines.registry import build_tools
-from conjure.prompts import build_system_prompt
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.engines.registry import build_tools
+from hylo.prompts import build_system_prompt
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 @pytest.mark.parametrize("engine,title,naming", [
-    ("claude_agent", "(Claude Code engine)", "mcp__conjure__<Name>"),
-    ("codex", "(Codex engine)", "`conjure` MCP server"),
+    ("claude_agent", "(Claude Code engine)", "mcp__hylo__<Name>"),
+    ("codex", "(Codex engine)", "`hylo` MCP server"),
     ("orchestral", "(orchestral engine)", "named as in this prompt"),
 ])
 def test_every_engine_builds_from_the_same_document(engine, title, naming):

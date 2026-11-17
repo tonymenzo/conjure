@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from conjure.web.state import SessionView, _log_tokens
+from hylo.web.state import SessionView, _log_tokens
 
 REMOTE = "/remote/fleet/trial/run"
 
@@ -40,17 +40,17 @@ def _usage_turns(*turns):
 
 
 def _pulled_run(tmp_path: Path, journal: list[dict], logs: dict[str, list[dict]]) -> Path:
-    """A run copied from another machine: <run>/conjure-native/sessions/s1
+    """A run copied from another machine: <run>/hylo-native/sessions/s1
     beside <run>/workspace, with the remote paths in its records."""
     run = tmp_path / "run"
-    session = run / "conjure-native" / "sessions" / "s1"
+    session = run / "hylo-native" / "sessions" / "s1"
     (session / "agents").mkdir(parents=True)
     (run / "workspace" / "work" / "w").mkdir(parents=True)
     (session / "journal.jsonl").write_text("".join(json.dumps(e) + "\n" for e in journal))
     for aid, events in logs.items():
         (session / "agents" / f"{aid}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
     (session / "manifest.json").write_text(json.dumps({"config": {
-        "runtime": {"store_dir": f"{REMOTE}/conjure-native"},
+        "runtime": {"store_dir": f"{REMOTE}/hylo-native"},
         "llms": {
             "gw": {"provider": "openai_compatible", "model": "mystery-model-1", "pricing": {}},
             "sonnet": {"provider": "openai_compatible", "model": "claude-sonnet-5-5", "pricing": {}},
@@ -116,9 +116,9 @@ def test_a_turn_journals_its_tokens_for_replay(tmp_path):
     from orchestral.llm.base.response import Response
     from orchestral.llm.base.usage import Usage
 
-    from conjure.engines.orchestral import make_orchestral_engine_factory
-    from conjure.record import AgentSpec
-    from conjure.runtime import Runtime
+    from hylo.engines.orchestral import make_orchestral_engine_factory
+    from hylo.record import AgentSpec
+    from hylo.runtime import Runtime
     from tests.unit.test_spawn_listener import _FakeLLM
 
     class CountingLLM(_FakeLLM):

@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from conjure import AgentSpec, BehaviorRegistry, Runtime
-from conjure.control import ControlServer
-from conjure.event_log import EventLog
-from conjure.events import make_system_prompt_event
-from conjure.tools.primitives import introduce_impl, send_impl, spawn_impl
-from conjure.web import ReplayCache, SessionView, WebServer
+from hylo import AgentSpec, BehaviorRegistry, Runtime
+from hylo.control import ControlServer
+from hylo.event_log import EventLog
+from hylo.events import make_system_prompt_event
+from hylo.tools.primitives import introduce_impl, send_impl, spawn_impl
+from hylo.web import ReplayCache, SessionView, WebServer
 
 
 def _wait(pred, timeout=3.0):
@@ -264,7 +264,7 @@ def _req(server, method, path, *, token=True, body=None, host=None):
     conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
     headers = {"Host": host or f"127.0.0.1:{server.port}"}
     if token:
-        headers["X-Conjure-Token"] = server.token if token is True else token
+        headers["X-Hylo-Token"] = server.token if token is True else token
     data = None
     if body is not None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -288,7 +288,7 @@ def server(session):
 
 def test_page_is_public_api_is_not(server):
     status, body = _req(server, "GET", "/", token=False)
-    assert status == 200 and b"conjure" in body
+    assert status == 200 and b"hylo" in body
     assert _req(server, "GET", "/static/app.js", token=False)[0] == 200
     assert _req(server, "GET", "/static/code.js", token=False)[0] == 200
     assert _req(server, "GET", "/static/vendor/highlight/highlight.min.js", token=False)[0] == 200
@@ -457,16 +457,16 @@ def test_port_fallback(session):
 
 
 def test_url_file_is_owner_only(tmp_path, monkeypatch):
-    from conjure.web import launch
+    from hylo.web import launch
 
     monkeypatch.setattr(launch, "session_dir", lambda: tmp_path)
-    launch._write_url("conjure-abc", "http://127.0.0.1:1/?token=t")
-    mode = stat.S_IMODE(os.stat(tmp_path / "conjure-abc.url").st_mode)
+    launch._write_url("hylo-abc", "http://127.0.0.1:1/?token=t")
+    mode = stat.S_IMODE(os.stat(tmp_path / "hylo-abc.url").st_mode)
     assert mode == 0o600
 
 
 def test_resolve_session_dir(session, tmp_path):
-    from conjure.web.launch import resolve_session_dir
+    from hylo.web.launch import resolve_session_dir
 
     session["rt"]._journal.flush()
     store = session["dir"].parent.parent
@@ -476,8 +476,8 @@ def test_resolve_session_dir(session, tmp_path):
 
 
 def test_cli_parses_web_flags(monkeypatch, tmp_path):
-    from conjure import cli
-    from conjure.web import launch
+    from hylo import cli
+    from hylo.web import launch
 
     seen = {}
     monkeypatch.setattr(launch, "cmd_web_replay", lambda target, **kw: seen.update(target=target, **kw) or 0)
@@ -491,7 +491,7 @@ def test_cli_parses_web_flags(monkeypatch, tmp_path):
 def test_model_info_provenance():
     from types import SimpleNamespace
 
-    from conjure.web.state import model_info
+    from hylo.web.state import model_info
 
     spec = SimpleNamespace(model=None)
     # A claude_agent root with nothing pinned: the CLI default, unknown
@@ -512,8 +512,8 @@ def test_model_info_provenance():
 
 
 def test_root_model_reaches_the_spec(monkeypatch):
-    from conjure import runner
-    from conjure.config import load_config_from_mapping
+    from hylo import runner
+    from hylo.config import load_config_from_mapping
 
     cfg = load_config_from_mapping(
         {
@@ -539,7 +539,7 @@ def test_root_model_reaches_the_spec(monkeypatch):
 
 
 def test_parsed_log_reads_only_appended_complete_lines(session, tmp_path, monkeypatch):
-    import conjure.web.state as state
+    import hylo.web.state as state
     path = tmp_path / "incremental.jsonl"
     path.write_bytes(b'{"n": 1}\n')
     parsed = []

@@ -3,11 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Distribution name on PyPI; the import package and CLI remain ``conjure``.
-# (Bare ``conjure`` is on PyPI's prohibited-names list — release request
-# pending at pypi/support.)
-name = "conjure-agents"
-version = "0.2.33"
+# Named conjure (distribution conjure-agents) before 0.3.0.
+name = "hylo"
+version = "0.3.0"
 description = "Agentic functional programming: a multi-agent runtime built on three primitives — recursive spawning, addressable mailboxes, and capability passing — with FP-style combinators on top."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,21 +35,21 @@ classifiers = [
 dependencies = [
     "orchestral-ai>=1.4",
     # orchestral.mcp.server imports ``mcp`` but orchestral-ai 1.4.0
-    # doesn't declare it; conjure-mcp needs it, so declare it here.
+    # doesn't declare it; hylo-mcp needs it, so declare it here.
     "mcp>=1.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "rich>=13.0",
     # uvloop powers the runtime's shared sync-from-async bridge — 2-4×
     # faster than stock asyncio for the SDK's IO-heavy workload. POSIX
-    # only; conjure already won't run on Windows (daemonize forks).
+    # only; hylo already won't run on Windows (daemonize forks).
     "uvloop>=0.19; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
-# The interactive cockpit: ``conjure run`` (tmux session, one window
-# per agent) and the textual apps it launches (conjure-main,
-# conjure-chat, conjure-files). The core library and ``conjure repl``
+# The interactive cockpit: ``hylo run`` (tmux session, one window
+# per agent) and the textual apps it launches (hylo-main,
+# hylo-chat, hylo-files). The core library and ``hylo repl``
 # work without it.
 ui = [
     "libtmux>=0.39",
@@ -82,23 +80,25 @@ test = [
 ]
 
 [project.urls]
-Repository = "https://github.com/tonymenzo/conjure"
-Changelog = "https://github.com/tonymenzo/conjure/blob/main/CHANGELOG.md"
+Repository = "https://github.com/tonymenzo/hylo"
+Changelog = "https://github.com/tonymenzo/hylo/blob/main/CHANGELOG.md"
 
 [project.scripts]
-conjure = "conjure.cli:main"
-conjure-main = "conjure.main_window:main"
-conjure-chat = "conjure.chat:main"
-conjure-files = "conjure.files_view:main"
-conjure-mcp = "conjure.mcp_bridge:main"
-conjure-render = "conjure.render:main"
-conjure-input = "conjure.cli_input:main"
+hylo = "hylo.cli:main"
+# The old command, kept for one release; it says to use hylo.
+conjure = "hylo.cli:legacy_main"
+hylo-main = "hylo.main_window:main"
+hylo-chat = "hylo.chat:main"
+hylo-files = "hylo.files_view:main"
+hylo-mcp = "hylo.mcp_bridge:main"
+hylo-render = "hylo.render:main"
+hylo-input = "hylo.cli_input:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-conjure = ["system_prompts/*.md", "py.typed", "web/static/*", "web/static/vendor/katex/*", "web/static/vendor/katex/fonts/*", "web/static/vendor/highlight/*"]
+hylo = ["system_prompts/*.md", "py.typed", "web/static/*", "web/static/vendor/katex/*", "web/static/vendor/katex/fonts/*", "web/static/vendor/highlight/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

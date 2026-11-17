@@ -9,9 +9,9 @@ from orchestral.llm.base.response import Response
 from orchestral.llm.base.tool_call import ToolCall
 from rich.console import Console
 
-from conjure._ui import make_display_hook_builder
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo._ui import make_display_hook_builder
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 class _Ctx:

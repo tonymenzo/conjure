@@ -13,12 +13,12 @@ import json
 import time
 from pathlib import Path
 
-from conjure.event_log import EventLog
-from conjure.export import export_session, open_export
-from conjure.provenance import read_manifest, summarize, write_manifest
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools.primitives import send_impl, spawn_impl
+from hylo.event_log import EventLog
+from hylo.export import export_session, open_export
+from hylo.provenance import read_manifest, summarize, write_manifest
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools.primitives import send_impl, spawn_impl
 
 
 class FakeEngine:
@@ -115,8 +115,8 @@ def test_export_is_scrubbed_complete_and_viewable(tmp_path):
     assert any(o["path"] == "big.bin" for o in manifest["export"]["contents"]["omitted_files"])
     assert rep["archive"] and Path(rep["archive"]).is_file()
 
-    # View the archive, read-only, as `conjure web --replay x.tar.gz` does.
-    from conjure.web.state import SessionView
+    # View the archive, read-only, as `hylo web --replay x.tar.gz` does.
+    from hylo.web.state import SessionView
 
     sdir = open_export(Path(rep["archive"]), tmp_path / "unpacked")
     view = SessionView.replay_session(sdir)

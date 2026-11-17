@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from conjure.address import Address
-from conjure.runtime import Runtime
+from hylo.address import Address
+from hylo.runtime import Runtime
 
 
 @pytest.fixture

@@ -2,14 +2,14 @@
 #
 # Setup:
 #   pip install -e .[env]
-#   conjure config set GROQ_API_KEY gsk-...
-#   conjure check examples/iota_groq.yaml
+#   hylo config set GROQ_API_KEY gsk-...
+#   hylo check examples/iota_groq.yaml
 #
 # Run:
-#   conjure run examples/iota_groq.yaml
+#   hylo run examples/iota_groq.yaml
 
 runtime:
-  store_dir: ./.conjure/store
+  store_dir: ./.hylo/store
   max_workers: 32
 
 llms:
@@ -20,7 +20,7 @@ llms:
 
 root:
   role_prompt: |
-    You are the root agent of a Conjure session.
+    You are the root agent of a Hylo session.
 
     You have tools to spawn child agents, send and receive messages with
     them, and invoke FP-style combinators (agent_map, agent_fold,

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conjure.engines.orchestral import check_tool_names, loop_guard
+from hylo.engines.orchestral import check_tool_names, loop_guard
 
 
 def ctx(*msgs):

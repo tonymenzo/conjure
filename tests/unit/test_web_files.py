@@ -1,4 +1,4 @@
-"""The web UI's files view backend (conjure.web.files): workspaces,
+"""The web UI's files view backend (hylo.web.files): workspaces,
 listing, search, recent files and reads, all confined to a workspace."""
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from conjure.web import files
-from conjure.web.files import FileAccessError
+from hylo.web import files
+from hylo.web.files import FileAccessError
 
 
 def _rec(id_, label, sandbox, spawned):
@@ -41,7 +41,7 @@ def ws(tmp_path):
         "results/fit.json": '{"p1": 9.87}',
         "results/figures/mjj_fit.png": "",
         "work/syst/NOTES.md": "notes\n",
-        ".conjure/tool-output/call_9.txt": "full output\n",
+        ".hylo/tool-output/call_9.txt": "full output\n",
         "__pycache__/analysis.cpython-312.pyc": "",
     }.items():
         p = root / rel
@@ -77,7 +77,7 @@ def test_listing_folders_first_dotfiles_hidden(ws):
     out = files.listing(ws, "")
     names = [e["name"] for e in out["entries"]]
     assert names == ["__pycache__", "results", "work", "analysis.py", "README.md"]
-    assert ".conjure" in [e["name"] for e in files.listing(ws, "", hidden=True)["entries"]]
+    assert ".hylo" in [e["name"] for e in files.listing(ws, "", hidden=True)["entries"]]
     sub = files.listing(ws, "results")
     assert [e["path"] for e in sub["entries"]] == ["results/figures", "results/fit.json"]
     assert sub["path"] == "results"
@@ -149,7 +149,7 @@ def test_find_matches_every_word_names_first(ws):
     assert [e["path"] for e in files.find(ws, "results png")["entries"]] == ["results/figures/mjj_fit.png"]
     # Dot-folders and caches are skipped unless asked for.
     assert files.find(ws, "call_9")["entries"] == []
-    assert files.find(ws, "call_9", hidden=True)["entries"][0]["path"] == ".conjure/tool-output/call_9.txt"
+    assert files.find(ws, "call_9", hidden=True)["entries"][0]["path"] == ".hylo/tool-output/call_9.txt"
     assert files.find(ws, "cpython")["entries"] == []
     assert files.find(ws, "   ")["entries"] == []
 

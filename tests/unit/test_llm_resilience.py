@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conjure import llm_resilience as lr
+from hylo import llm_resilience as lr
 
 
 class APIConnectionError(Exception):
@@ -87,7 +87,7 @@ def _drain(gen):
 def test_a_stream_that_breaks_midway_is_retried_and_the_engine_told():
     llm = lr.make_resilient(FakeLLM([APIConnectionError("peer closed")]), key="t1", max_retries=3)
     heard = []
-    llm.conjure_on_retry = lambda a, m, d, e: heard.append((a, m, type(e).__name__)) or True
+    llm.hylo_on_retry = lambda a, m, d, e: heard.append((a, m, type(e).__name__)) or True
     chunks, value = _drain(llm.stream_response(None))
     assert value == "final-response" and chunks == ["par", "par", "tial"]
     assert heard == [(1, 3, "APIConnectionError")]
@@ -106,7 +106,7 @@ def test_non_transient_errors_and_exhausted_retries_raise(no_sleep):
 
 def test_the_engine_can_stop_retries_for_a_terminated_agent():
     llm = lr.make_resilient(FakeLLM([RateLimitError("429")] * 3), key="t4", max_retries=5)
-    llm.conjure_on_retry = lambda *a: False
+    llm.hylo_on_retry = lambda *a: False
     with pytest.raises(RateLimitError):
         llm.get_response(None)
     assert llm.calls == 1
@@ -143,9 +143,9 @@ def test_an_orchestral_agent_rides_out_gateway_429s(monkeypatch):
     requests with 429 max_parallel_requests."""
     from tests.unit.test_models import Gateway
 
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
-    from conjure.tools.primitives import spawn_impl
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
+    from hylo.tools.primitives import spawn_impl
 
     gw = Gateway()
     monkeypatch.setenv("MAG_API_KEY", gw.key)

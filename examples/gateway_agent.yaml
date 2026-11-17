@@ -9,11 +9,11 @@
 # picks one. Keys are read from the environment, never from this file.
 #
 # Setup:
-#   export MAG_API_KEY=...            # or put it in ~/.config/conjure/.env
-#   conjure web examples/gateway_agent.yaml
+#   export MAG_API_KEY=...            # or put it in ~/.config/hylo/.env
+#   hylo web examples/gateway_agent.yaml
 
 runtime:
-  store_dir: ./.conjure/store
+  store_dir: ./.hylo/store
   max_depth: 3
 
 llms:

@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from conjure.engines.codex import CodexEngine, build_system_prompt
-from conjure.mcp_http import mcp_http_for
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.engines.codex import CodexEngine, build_system_prompt
+from hylo.mcp_http import mcp_http_for
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 EVENTS = [
     {"type": "thread.started", "thread_id": "thread-123"},
@@ -28,7 +28,7 @@ EVENTS = [
     {"type": "item.completed", "item": {"id": "i0", "type": "agent_message", "text": "Checking."}},
     {"type": "item.started", "item": {"id": "i1", "type": "command_execution", "command": "/bin/zsh -lc 'ls'", "status": "in_progress"}},
     {"type": "item.completed", "item": {"id": "i1", "type": "command_execution", "command": "/bin/zsh -lc 'ls'", "aggregated_output": "a.txt\n", "exit_code": 0}},
-    {"type": "item.completed", "item": {"id": "i2", "type": "mcp_tool_call", "server": "conjure", "tool": "ListInbox", "arguments": {}, "result": {"content": [{"type": "text", "text": "{\"ok\": true}"}]}}},
+    {"type": "item.completed", "item": {"id": "i2", "type": "mcp_tool_call", "server": "hylo", "tool": "ListInbox", "arguments": {}, "result": {"content": [{"type": "text", "text": "{\"ok\": true}"}]}}},
     {"type": "item.completed", "item": {"id": "i3", "type": "agent_message", "text": "All done."}},
     {"type": "turn.completed", "usage": {"input_tokens": 1200, "output_tokens": 42}},
 ]
@@ -42,7 +42,7 @@ def _fake_codex(tmp_path: Path, *, exit_code: int = 0) -> tuple[Path, Path]:
 import json, os, sys
 with open({str(calls)!r}, "a") as f:
     f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(),
-        "home": os.environ.get("CODEX_HOME"), "token": os.environ.get("CONJURE_MCP_TOKEN"),
+        "home": os.environ.get("CODEX_HOME"), "token": os.environ.get("HYLO_MCP_TOKEN"),
         "openai": os.environ.get("OPENAI_API_KEY")}}) + "\\n")
 home = os.environ["CODEX_HOME"]
 os.makedirs(os.path.join(home, "sessions", "2026"), exist_ok=True)
@@ -96,11 +96,11 @@ def test_first_turn_starts_a_thread_and_translates_events(tmp_path, monkeypatch)
         for flag in ("--json", "--skip-git-repo-check", "--ignore-user-config"):
             assert flag in argv
         assert "features.apps=false" in argv and ["-m", "gpt-x"] == argv[argv.index("-m"):argv.index("-m") + 2]
-        # No native subagents: delegation goes through conjure's Spawn.
+        # No native subagents: delegation goes through hylo's Spawn.
         assert "features.multi_agent=false" in argv and "features.multi_agent_v2=false" in argv
-        assert any(a.startswith("mcp_servers.conjure.url=\"http://127.0.0.1:") for a in argv)
-        assert 'mcp_servers.conjure.bearer_token_env_var="CONJURE_MCP_TOKEN"' in argv
-        assert 'mcp_servers.conjure.default_tools_approval_mode="approve"' in argv
+        assert any(a.startswith("mcp_servers.hylo.url=\"http://127.0.0.1:") for a in argv)
+        assert 'mcp_servers.hylo.bearer_token_env_var="HYLO_MCP_TOKEN"' in argv
+        assert 'mcp_servers.hylo.default_tools_approval_mode="approve"' in argv
         assert "be terse" in argv[-1] and argv[-1].endswith("hello")  # system prompt folded in
         # Isolation: the token travels by env, the API key doesn't.
         assert call["token"] == rec.token and rec.token not in " ".join(argv)
@@ -191,7 +191,7 @@ def test_system_prompt_is_the_shared_one_for_codex(tmp_path):
 
 
 def test_auto_children_of_a_codex_parent_stay_on_codex():
-    from conjure.runner import _engine_for
+    from hylo.runner import _engine_for
 
     rt = Runtime()
     root = rt.root(AgentSpec(role_prompt="r", engine="codex"))
@@ -310,7 +310,7 @@ def test_the_observed_model_reaches_the_run_record_during_the_turn(tmp_path):
     try:
         engine.step("hello")
         assert rec.meta["model"] == "gpt-test-1" and rec.meta["model_source"] == "observed"
-        record = json.loads((rt.sandbox_of(rec.addr) / ".conjure" / "run.json").read_text())
+        record = json.loads((rt.sandbox_of(rec.addr) / ".hylo" / "run.json").read_text())
         assert record["models"] == ["gpt-test-1"]
     finally:
         engine.shutdown()
@@ -333,7 +333,7 @@ def test_web_search_setting_reaches_codex(tmp_path):
 
 
 def test_web_search_setting_is_checked_in_the_config():
-    from conjure.config import CodexConfig
+    from hylo.config import CodexConfig
 
     assert CodexConfig(web_search="disabled").web_search == "disabled"
     assert CodexConfig().web_search is None

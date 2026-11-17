@@ -1,15 +1,19 @@
-# conjure
+# hylo
 
-**Agentic functional programming.** Conjure is a multi-agent runtime built
+**Agentic functional programming.** Hylo is a multi-agent runtime built
 on three primitives — **recursive agent spawning**, **addressable
 mailboxes**, and **capability passing** — with a library of FP-style
 combinators (`agent_map`, `agent_fold`, `agent_filter`, `agent_race`,
 `agent_ensemble`, `agent_critic`, `agent_supervisor`) built on top.
 Agents spawn agents; topology is ordinary code, not a framework choice.
 
+The name is short for *hylomorphism*, the recursion scheme that unfolds a
+structure and folds it back: a hylo run unfolds a tree of agents by
+spawning, and folds their results back up through the mailboxes.
+
 Most multi-agent frameworks bake in a topology — group chat,
 supervisor/worker, DAG — and you fight the framework when your problem has
-a different shape. Conjure inverts that: the primitives are the substrate,
+a different shape. Hylo inverts that: the primitives are the substrate,
 and topology is ordinary code. The composition vocabulary is borrowed from
 functional programming, where these problems have decades of prior art.
 
@@ -34,20 +38,28 @@ the user) terminates it.
 ## Install
 
 ```bash
-pip install conjure-agents                 # core library + headless CLI (repl)
-pip install "conjure-agents[ui]"           # + the tmux/textual cockpit (conjure run)
-pip install "conjure-agents[claude_agent]" # + claude-agent-sdk engine
-pip install "conjure-agents[toolbase]"     # + agent-curated toolbase toolkits (Python ≥ 3.12)
+pip install hylo                 # core library + headless CLI (repl)
+pip install "hylo[ui]"           # + the tmux/textual cockpit (hylo run)
+pip install "hylo[claude_agent]" # + claude-agent-sdk engine
+pip install "hylo[toolbase]"     # + agent-curated toolbase toolkits (Python ≥ 3.12)
 ```
 
-The distribution is named `conjure-agents`; the import package and CLI are
-plain `conjure`.
+The distribution, the import package and the CLI are all `hylo`.
+
+### Upgrading from conjure
+
+hylo was named conjure (distribution `conjure-agents`) before 0.3.0.
+Uninstall `conjure-agents`, install `hylo`, and change `import conjure`
+to `import hylo`. `CONJURE_*` variables, `~/.config/conjure/.env` and
+sessions journaled in `./.conjure/store` still work, and the `conjure`
+command runs hylo for one more release. Agents now see hylo's tools as
+`mcp__hylo__<Name>`.
 
 Requires Python ≥ 3.10 on POSIX (the daemon forks; Windows is unsupported).
 
 ## Quickstart — CLI
 
-Point `conjure` at a YAML config describing the root agent:
+Point `hylo` at a YAML config describing the root agent:
 
 ```yaml
 # agent.yaml
@@ -66,19 +78,19 @@ root:
 ```
 
 ```bash
-conjure config set ANTHROPIC_API_KEY sk-...   # stored in ~/.config/conjure/.env
-conjure check agent.yaml                      # validate config + keys, no LLM calls
-conjure repl agent.yaml                       # single-pane REPL, no tmux needed
-conjure run agent.yaml                        # tmux cockpit (requires the [ui] extra)
+hylo config set ANTHROPIC_API_KEY sk-...   # stored in ~/.config/hylo/.env
+hylo check agent.yaml                      # validate config + keys, no LLM calls
+hylo repl agent.yaml                       # single-pane REPL, no tmux needed
+hylo run agent.yaml                        # tmux cockpit (requires the [ui] extra)
 ```
 
 Or skip tmux and use the browser (no extra dependencies):
 
 ```bash
-conjure web agent.yaml                        # opens http://127.0.0.1:8765/?token=…
-conjure web agent.yaml --detach               # as a daemon; `conjure web --attach` reprints the URL
-conjure web --replay <session>                # read-only replay of a journaled session
-conjure run agent.yaml --web                  # tmux cockpit and web UI on one session
+hylo web agent.yaml                        # opens http://127.0.0.1:8765/?token=…
+hylo web agent.yaml --detach               # as a daemon; `hylo web --attach` reprints the URL
+hylo web --replay <session>                # read-only replay of a journaled session
+hylo run agent.yaml --web                  # tmux cockpit and web UI on one session
 ```
 
 The web UI has the cockpit's layout: an agent tree, an activity feed, and
@@ -100,7 +112,7 @@ needs the session token printed in the URL. On a remote host, use
 In tmux mode the session is daemonized: window 0 is your prompt to the
 root agent, every spawned agent gets its own live window, and `Ctrl+B M`
 opens a meta-view popup (spawn tree + inboxes + cost). Detach with
-`Ctrl+B d`, reattach with `conjure run --attach`, stop with `conjure quit`.
+`Ctrl+B d`, reattach with `hylo run --attach`, stop with `hylo quit`.
 
 ## Quickstart — library
 
@@ -110,8 +122,8 @@ mechanics — swap in the `orchestral` or `claude_agent` engine factories
 for LLM-backed agents (see `examples/`):
 
 ```python
-from conjure import AgentSpec, BehaviorRegistry, Runtime, agent_map
-from conjure.tools.primitives import send_impl
+from hylo import AgentSpec, BehaviorRegistry, Runtime, agent_map
+from hylo.tools.primitives import send_impl
 
 def squarer(engine, prompt, envelopes):
     for env in envelopes:
@@ -177,13 +189,13 @@ with a different body, thread, reply target, or kind returns
 
 - **`orchestral`** — wraps `orchestral.Agent`; multi-provider out of the
   box (Anthropic, OpenAI, Google, Groq, Ollama).
-- **`claude_agent`** (`pip install "conjure[claude_agent]"`) — agents run
+- **`claude_agent`** (`pip install "hylo[claude_agent]"`) — agents run
   as `claude-agent-sdk` sessions with Claude Code's full tool surface
   (Bash, Edit, Grep, …), per-agent sandbox directories, and permission
   routing.
 - **`codex`** — agents run as Codex CLI threads (`codex exec --json`,
   resumed turn to turn) on your ChatGPT subscription, with Codex's own
-  sandbox for shell and edits. conjure's tools and granted toolkits
+  sandbox for shell and edits. hylo's tools and granted toolkits
   reach them over a loopback MCP server. Children left on `auto` stay
   on Codex. See `examples/codex_agent.yaml`.
 - API models behind a **model access gateway** or any OpenAI-compatible
@@ -203,10 +215,10 @@ section sets the policy (`allow` globs, `default`, `notes`).
 
 Every session writes a manifest (frozen config, software and toolkit
 versions) and journals which engine and model each agent actually ran
-on. `conjure export <session> --archive` packs a session into a portable,
+on. `hylo export <session> --archive` packs a session into a portable,
 read-only record: per-agent rows (`agents.jsonl`), totals, the raw
 journal and event logs, and the agents' working files, with paths
-scrubbed. `conjure web --replay run.tar.gz` opens it in the browser with
+scrubbed. `hylo web --replay run.tar.gz` opens it in the browser with
 the full scrubber, graph, timeline and files; the **run** panel shows the
 totals, versions and config, and exports from the UI.
 
@@ -246,10 +258,10 @@ from the project's active loadout. See
 **Provenance trace.** `toolbase.trace: true` (or `TOOLBASE_TRACE=1`)
 records every toolkit call (agent, tool, toolkit version, arguments,
 outcome, files) in `<project>/.toolbase/traces/<session>/`, using
-toolbase's trace (a toolbase with `toolbase.trace`). Conjure registers each
+toolbase's trace (a toolbase with `toolbase.trace`). Hylo registers each
 agent at spawn with its parent, engine and model (`agents.jsonl`), ends it
 when it terminates, and logs spawns with their briefs, sends and
-terminations (`messages.jsonl`). `.conjure/run.json` then also carries
+terminations (`messages.jsonl`). `.hylo/run.json` then also carries
 `trace` (the directory) and `toolkits` (each served toolkit and its
 version). `toolbase.trace_dir` or `TOOLBASE_TRACE_DIR` moves it;
 `TOOLBASE_TRACE=0` turns it off. Off by default.
@@ -276,14 +288,14 @@ Honest boundaries, documented rather than discovered:
 ## Development
 
 ```bash
-git clone <repo-url> && cd conjure
+git clone <repo-url> && cd hylo
 pip install -e ".[test,ui]"
 pytest -q
 ```
 
 ## License
 
-[AGPL-3.0-only](LICENSE). You can use, modify, and redistribute conjure
+[AGPL-3.0-only](LICENSE). You can use, modify, and redistribute hylo
 freely — but any distributed or network-served derivative must publish its
 source under the same terms. For commercial licensing outside the AGPL,
 contact the author.

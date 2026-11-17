@@ -6,10 +6,10 @@ import io
 
 from rich.console import Console
 
-from conjure.cli import _handle_command, _print_cost
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
+from hylo.cli import _handle_command, _print_cost
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
 
 
 def _captured_console() -> Console:

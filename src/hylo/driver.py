@@ -1,0 +1,324 @@
+"""Per-agent driver thread.
+
+The driver waits on its agent's ``wakeup`` event. When triggered — by a
+new message landing in the inbox or by termination — it drains unread
+messages, formats them into a prompt, and calls ``agent.step(prompt)``.
+
+The driver maintains its own cursor (``_cursor``) over the inbox so it
+delivers each message to the engine exactly once. The agent's own
+``recv`` tool (Step 6) uses a separate per-tool-call cursor; the two are
+independent on purpose — the driver is the *push* path, ``recv`` is the
+*pull* path.
+
+Termination semantics: the runtime sets the record's status to
+``terminated`` and fires the wakeup. The driver wakes, sees the status,
+and exits. Any in-flight ``agent.step`` finishes first — v0.1 does not
+interrupt mid-LLM-call work.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from typing import Any
+
+from hylo.envelope import Envelope
+
+logger = logging.getLogger(__name__)
+
+
+class Driver:
+
+    def __init__(self, *, agent: Any, runtime: Any) -> None:
+        # ``agent`` is hylo.agent.Agent; ``runtime`` is
+        # hylo.runtime.Runtime. Typed as Any to avoid a circular
+        # import — Driver is constructed from Runtime which imports
+        # this module, so neither side can import the other at module
+        # load.
+        self.agent = agent
+        self.runtime = runtime
+        self._cursor = 0
+        # True from a wakeup until the loop sleeps again; with the cursor
+        # it tells a waiting parent the agent has nothing left to do.
+        self.busy = False
+        self._stop_requested = False
+        self._thread: threading.Thread | None = None
+        # One supervision event per exhaustion, not one per skipped
+        # message — the parent doesn't need a drumbeat.
+        self._budget_notified = False
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        record = self.agent.record
+        if record.wakeup is None:
+            record.wakeup = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"driver-{record.addr.id}",
+            daemon=True,
+        )
+        record.status = "idle"
+        self._thread.start()
+
+    def stop(self, *, timeout: float | None = 2.0) -> None:
+        self._stop_requested = True
+        record = self.agent.record
+        if record.wakeup is not None:
+            record.wakeup.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
+    def join(self, timeout: float | None = None) -> bool:
+        # Thread.start() can fail (for example, OS thread exhaustion). Cleanup
+        # must also work for a driver whose Thread object never started.
+        if self._thread is None or self._thread.ident is None:
+            return True
+        self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
+
+    # ----- internals -----
+
+    def _loop(self) -> None:
+        try:
+            self._run_loop()
+        finally:
+            # The loop only exits once any in-flight step has returned,
+            # so this can't pull tools out from under a running turn.
+            # Toolkit servers are per-agent subprocesses; without this a
+            # finished fan-out worker would hold them until shutdown.
+            engine = getattr(self.agent, "engine", None)
+            close = getattr(engine, "close_toolkits", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.exception(
+                        "closing toolkits for %s", self.agent.record.addr
+                    )
+
+    def _run_loop(self) -> None:
+        record = self.agent.record
+        while not self._stop_requested:
+            # An Event coalesces multiple sends. Never sleep while a previous
+            # bounded read left a backlog, including messages pulled by tools.
+            if record.inbox.latest_seq() <= self._cursor:
+                self.busy = False
+                record.wakeup.wait()
+            self.busy = True
+            record.wakeup.clear()
+            if self._stop_requested or record.status == "terminated":
+                return
+            envelopes = record.inbox.read(
+                since_seq=self._cursor,
+                max_n=1024,
+                timeout_s=0.0,
+            )
+            if not envelopes:
+                continue
+            self._cursor = envelopes[-1].seq
+            # Skip what the agent already consumed itself (recv /
+            # wait_for) during an earlier turn — pushing it again would
+            # read as a second, new message and invite a second reply.
+            pulled = record.pulled
+            if pulled:
+                envelopes = [e for e in envelopes if e.seq not in pulled]
+                pulled.difference_update([s for s in list(pulled) if s <= self._cursor])
+                if not envelopes:
+                    continue
+            # Budget gate: when a ceiling anywhere on this agent's
+            # ancestor chain is spent, skip the step (the messages are
+            # consumed but never reach the engine — no further tokens
+            # burn) and tell the parent once. ``budget_exceeded`` is a
+            # no-lock attribute read while no budgets exist.
+            exhausted_at = self.runtime.budget_exceeded(record.addr)
+            if exhausted_at is not None:
+                record.status = "error"
+                self._emit_engine_error(
+                    RuntimeError(f"budget exhausted at {exhausted_at}")
+                )
+                if not self._budget_notified:
+                    self._budget_notified = True
+                    try:
+                        self.runtime.notify_budget_exceeded(
+                            record.addr, exhausted_at
+                        )
+                    except Exception:
+                        pass
+                continue
+            # Power the ``"caller"`` address shortcut — tools that
+            # resolve ``to="caller"`` look up the agent's
+            # ``last_received_from``. Most-recent envelope wins when
+            # several arrive in one tick.
+            record.last_received_from = envelopes[-1].from_
+            record.status = "running"
+            prompt = self._build_prompt(envelopes)
+            errored = False
+            engine_exc: Exception | None = None
+            # Engine-agnostic turn boundaries for the event log — the
+            # web timeline draws turns from these. Renderers that don't
+            # know the kinds skip them.
+            self._emit_event({"kind": "turn_start"})
+            try:
+                self.agent.step(prompt)
+            except Exception as exc:
+                # Surface to the agent's event log so the chat pane
+                # shows the failure. Without this the user just sees
+                # the agent stop replying.
+                errored = True
+                engine_exc = exc
+                self._emit_engine_error(exc)
+                # One line on the console; the traceback goes to the
+                # session log (``hylo.log``) at debug level.
+                logger.warning(
+                    "agent %s errored: %s: %s",
+                    record.addr, type(exc).__name__, " ".join(str(exc).split())[:300],
+                )
+                logger.debug("engine traceback for %s", record.addr, exc_info=True)
+            finally:
+                self._emit_event({"kind": "turn_end", "errored": errored})
+                self.note_meta()
+                if record.status != "terminated":
+                    # Sticky ``error`` between turns so the tree's red
+                    # dot persists until the agent successfully
+                    # processes its next message.
+                    record.status = "error" if errored else "idle"
+            # Supervision: notify the parent (if any) that we errored
+            # so it can react without polling. Outside the ``finally``
+            # because we want it ordered after the status flip — the
+            # parent's handler may inspect the child's status.
+            if engine_exc is not None:
+                try:
+                    self.runtime.notify_child_errored(
+                        record.addr,
+                        f"{type(engine_exc).__name__}: {engine_exc}",
+                    )
+                except Exception:
+                    pass
+            # Oneshot lifecycle: after a successful step, auto-
+            # terminate so fire-and-forget workers clean themselves
+            # up. The runtime cascade kills any descendants the
+            # worker spawned. An errored turn does NOT auto-terminate
+            # — leaves the agent in ``status="error"`` for parental
+            # inspection / retry.
+            if (
+                record.spec.oneshot
+                and not errored
+                and record.status != "terminated"
+            ):
+                try:
+                    self.runtime.terminate(
+                        record.addr,
+                        requested_by="oneshot",
+                        cascade=True,
+                    )
+                except Exception:
+                    pass
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        event_log = getattr(self.agent.record, "event_log", None)
+        if event_log is None:
+            return
+        try:
+            event_log.emit(event)
+        except Exception:
+            pass
+
+    def note_meta(self) -> None:
+        """Journal what the agent ran as this turn (provenance for
+        replays and exports). Best-effort: never fails a turn.
+
+        Called at each turn end, by the engine during a long turn, and by
+        ``Runtime.shutdown`` (a run stopped mid-turn still records its
+        usage). Journals only what changed."""
+        try:
+            from hylo.web.state import _engine_kind, _engine_usage, model_info
+
+            record = self.agent.record
+            engine = getattr(self.agent, "engine", None)
+            model, source = model_info(engine, record.spec)
+            usage = _engine_usage(engine) or {}
+            prompt = getattr(engine, "system_prompt_text", None)
+            schemas = getattr(engine, "tool_schemas", None)
+            breakdown = api_equivalent = None
+            try:
+                breakdown = engine.usage().get("token_usage")
+            except Exception:
+                pass
+            try:
+                api_equivalent = float(engine.api_equivalent_cost())
+            except Exception:
+                pass
+            subscription = getattr(engine, "uses_subscription", None)
+            access = None if engine is None else (
+                "subscription" if callable(subscription) and subscription() else "api")
+            self.runtime.note_agent_meta(
+                record.addr,
+                {
+                    "engine": _engine_kind(engine, record.spec),
+                    "model": model,
+                    "model_source": source,
+                    "system_prompt": prompt if isinstance(prompt, str) else None,
+                    "cost_usd": _cost(engine),
+                    # A replay's tree and header show these.
+                    "tokens": usage.get("tokens"),
+                    "unpriced_tokens": usage.get("unpriced_tokens"),
+                    # {"input", "output", "cache_read", "cache_creation"}
+                    # summed over the agent (hylo.provenance.token_usage).
+                    "token_usage": breakdown,
+                    # How the model was paid for: "api" (cost_usd is spend) or
+                    # "subscription" (cost_usd is 0; the spend is flat).
+                    "access": access,
+                    # The tokens at API prices, where the engine reports it.
+                    "api_equivalent_cost_usd": api_equivalent,
+                    # Argument order, required and defaults per tool: the
+                    # UI's call previews, in a replay as live.
+                    "tool_schemas": (schemas() or None) if callable(schemas) else None,
+                },
+            )
+        except Exception:
+            pass
+
+    def _emit_engine_error(self, exc: Exception) -> None:
+        event_log = getattr(self.agent.record, "event_log", None)
+        if event_log is None:
+            return
+        try:
+            event_log.emit(
+                {"kind": "error", "text": f"{type(exc).__name__}: {exc}"}
+            )
+        except Exception:
+            pass
+
+    def _build_prompt(self, envelopes: list[Envelope]) -> str:
+        # Keep this prompt small: the full reply protocol lives in the
+        # system frame (where it stays in Anthropic's prompt cache
+        # across every turn). The per-turn text is just the envelopes
+        # plus a one-line tag flagging which senders need an explicit
+        # ``send`` reply — re-emitting the full protocol prose every
+        # turn was paying for tokens the model already had memorized.
+        lines = [f"You have {len(envelopes)} new message(s):"]
+        for env in envelopes:
+            lines.append(
+                f"  [seq={env.seq} thread={env.thread_id} from={env.from_.id}]: "
+                f"{env.body!r}"
+            )
+        agent_senders = sorted(
+            {e.from_.id for e in envelopes if not e.from_.id.startswith("@")}
+        )
+        if agent_senders:
+            lines.append(
+                f"\n↳ inter-agent senders: {', '.join(agent_senders)} — "
+                f"apply the reply protocol (Send to the sender address; "
+                f"no auto-forward via final assistant text)."
+            )
+        return "\n".join(lines)
+
+
+def _cost(engine) -> float | None:
+    fn = getattr(engine, "cost", None)
+    try:
+        value = fn() if callable(fn) else None
+    except Exception:
+        return None
+    return round(float(value), 6) if isinstance(value, (int, float)) else None

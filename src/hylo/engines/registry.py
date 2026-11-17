@@ -1,0 +1,92 @@
+"""Tool group registry — resolve ``spec.tools`` string names into bound
+tool instances.
+
+Engines call ``build_tools(token, names)`` to materialize the tool list
+for a freshly spawned agent. Each name resolves to a tuple of tool
+classes; the classes are instantiated with ``runtime_token=token`` so
+each agent's tools authenticate against the runtime as that agent.
+
+Default groups:
+
+- ``"primitive"`` — the seven capability tools (spawn, send, recv,
+  wait_for, terminate, introduce, list_inbox).
+- ``"mailbox"`` — send, recv, list_inbox and peek. The orchestral engine
+  adds it to every agent, so an agent can always reply.
+- ``"combinator"`` — the four FP-style combinator tools (agent_map,
+  agent_fold, agent_filter, agent_fixed_point).
+- ``"toolkit"`` — toolbase curation (tool_catalog, grant_toolkits,
+  request_toolkits). Added automatically when the runtime has toolbase
+  configured.
+- ``"all"`` — all of the above, plus ``"filesystem"``.
+"""
+
+from __future__ import annotations
+
+from typing import Mapping
+
+from hylo.tools._base import StatelessRuntimeTool
+from hylo.tools.combinators import COMBINATOR_TOOL_CLASSES
+from hylo.tools.filesystem import FILESYSTEM_TOOL_CLASSES
+from hylo.tools.primitives import MAILBOX_TOOL_CLASSES, PRIMITIVE_TOOL_CLASSES
+from hylo.tools.models import MODEL_TOOL_CLASSES
+from hylo.tools.toolkits import TOOLKIT_TOOL_CLASSES
+
+
+ToolGroupRegistry = Mapping[str, tuple[type[StatelessRuntimeTool], ...]]
+
+
+DEFAULT_TOOL_GROUPS: ToolGroupRegistry = {
+    "primitive": PRIMITIVE_TOOL_CLASSES,
+    "mailbox": MAILBOX_TOOL_CLASSES,
+    "combinator": COMBINATOR_TOOL_CLASSES,
+    "filesystem": tuple(FILESYSTEM_TOOL_CLASSES),
+    "toolkit": TOOLKIT_TOOL_CLASSES,
+    "models": MODEL_TOOL_CLASSES,
+    "all": (
+        PRIMITIVE_TOOL_CLASSES
+        + COMBINATOR_TOOL_CLASSES
+        + tuple(FILESYSTEM_TOOL_CLASSES)
+        + TOOLKIT_TOOL_CLASSES
+        + MODEL_TOOL_CLASSES
+    ),
+}
+
+
+def check_tool_groups(
+    names: list[str],
+    registry: ToolGroupRegistry | None = None,
+) -> None:
+    """Raise ``ValueError`` if any of ``names`` is not a tool group.
+
+    Spawn calls this before the child exists (see ``Runtime._spawn_batch``),
+    so a bad ``tools`` list is refused without leaving a record or journal
+    entry behind; ``build_tools`` calls it again as the last line of defence.
+    """
+    reg = registry if registry is not None else DEFAULT_TOOL_GROUPS
+    for name in names:
+        if name not in reg:
+            raise ValueError(
+                f"unknown tool group: {name!r} (known: {sorted(reg)})"
+            )
+
+
+def build_tools(
+    token: str,
+    names: list[str],
+    registry: ToolGroupRegistry | None = None,
+) -> list[StatelessRuntimeTool]:
+    """Instantiate the tools requested by ``names``, deduplicated."""
+    reg = registry if registry is not None else DEFAULT_TOOL_GROUPS
+    check_tool_groups(names, reg)
+    classes: list[type[StatelessRuntimeTool]] = []
+    for name in names:
+        classes.extend(reg[name])
+
+    # Preserve insertion order while deduplicating.
+    seen: set[type] = set()
+    unique: list[type[StatelessRuntimeTool]] = []
+    for cls in classes:
+        if cls not in seen:
+            seen.add(cls)
+            unique.append(cls)
+    return [cls(runtime_token=token) for cls in unique]

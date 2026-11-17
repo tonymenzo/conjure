@@ -11,12 +11,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from conjure.errors import ModelDenied
-from conjure.models import ModelHub, ModelsPolicy
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.tools.models import model_catalog_impl
-from conjure.tools.primitives import spawn_impl
+from hylo.errors import ModelDenied
+from hylo.models import ModelHub, ModelsPolicy
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.tools.models import model_catalog_impl
+from hylo.tools.primitives import spawn_impl
 
 
 class Gateway:
@@ -142,7 +142,7 @@ def test_policy_restricts_and_defaults(gateway):
 
 
 def test_without_a_default_an_implied_model_outside_policy_is_refused(gateway, monkeypatch):
-    monkeypatch.setattr("conjure.engines._claude_agent_available", lambda: True)
+    monkeypatch.setattr("hylo.engines._claude_agent_available", lambda: True)
     hub = _hub(gateway, allow=["mag/*"])
     with pytest.raises(ModelDenied, match="implied one \\(claude/haiku\\)"):
         hub.resolve_spec(AgentSpec(role_prompt="x"), parent_engine="claude_agent")
@@ -169,8 +169,8 @@ def test_spawn_tool_resolves_and_refuses_with_codes(gateway):
 def test_an_orchestral_agent_really_calls_the_gateway_model(gateway):
     """End to end: config → runtime → spawn on a discovered gateway model
     → its turn goes to the gateway with that model and the key."""
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     cfg = load_config_from_mapping({
         "llms": {"mag": {"provider": "openai_compatible", "base_url": gateway.url,
@@ -198,7 +198,7 @@ def test_an_orchestral_agent_really_calls_the_gateway_model(gateway):
 
 
 def test_an_exact_model_name_shared_by_two_aliases_resolves(monkeypatch):
-    from conjure.engines import claude_agent as ca
+    from hylo.engines import claude_agent as ca
 
     monkeypatch.setattr(ca, "_MODEL_MAP", {"default": "claude-opus-5-5", "opus": "claude-opus-5-5", "haiku": "claude-haiku-5-5"})
     hub = ModelHub(llm_configs={}, claude=True, codex=False)
@@ -218,8 +218,8 @@ def test_the_policy_default_is_for_children_not_the_root(gateway):
 
 
 def test_the_root_runs_on_its_entrys_model_end_to_end(gateway):
-    from conjure.config import load_config_from_mapping
-    from conjure.runner import build_runtime
+    from hylo.config import load_config_from_mapping
+    from hylo.runner import build_runtime
 
     cfg = load_config_from_mapping({
         "llms": {"mag": {"provider": "openai_compatible", "base_url": gateway.url,
@@ -281,8 +281,8 @@ def test_spawn_and_the_catalog_follow_the_depth_policy(gateway):
 
 
 def test_by_depth_keys_are_checked_in_the_config():
-    from conjure.config import ModelsConfig
-    from conjure.models import build_model_hub
+    from hylo.config import ModelsConfig
+    from hylo.models import build_model_hub
 
     cfg = ModelsConfig(allow=["claude/sonnet"], by_depth={"1": {"allow": ["claude/opus", "claude/sonnet"]}, "2+": {}})
     assert cfg.by_depth["1"].default is None

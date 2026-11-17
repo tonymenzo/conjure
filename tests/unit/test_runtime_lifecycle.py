@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from conjure.address import USER
-from conjure.errors import (
-    ConjureError,
+from hylo.address import USER
+from hylo.errors import (
+    HyloError,
     MaxDepthExceeded,
     NoSuchAddress,
     Terminated,
 )
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
 
 
 def test_root_creates_addressable_agent():
@@ -28,7 +28,7 @@ def test_root_creates_addressable_agent():
 def test_root_can_only_be_spawned_once():
     rt = Runtime()
     rt.root(AgentSpec(role_prompt="root"))
-    with pytest.raises(ConjureError):
+    with pytest.raises(HyloError):
         rt.root(AgentSpec(role_prompt="second-root"))
 
 
@@ -68,7 +68,7 @@ def test_send_external_to_root():
 
 
 def test_send_external_to_unknown_address_raises():
-    from conjure.address import Address
+    from hylo.address import Address
     rt = Runtime()
     with pytest.raises(NoSuchAddress):
         rt.send_external(to=Address(id="ag-bogus"), body="x")
@@ -214,7 +214,7 @@ def test_operations_after_shutdown_raise():
     rt = Runtime()
     rt.root(AgentSpec(role_prompt="root"))
     rt.shutdown()
-    with pytest.raises(ConjureError):
+    with pytest.raises(HyloError):
         rt.root(AgentSpec(role_prompt="another"))
 
 
@@ -272,7 +272,7 @@ def test_terminate_interrupts_engines_best_effort():
     ``claude_agent`` abort an in-flight LLM call instead of letting it
     drain. Cascade reaches descendants; engines without the hook are
     silently skipped."""
-    from conjure.scripted import BehaviorRegistry, ScriptedEngine
+    from hylo.scripted import BehaviorRegistry, ScriptedEngine
 
     class InterruptibleEngine(ScriptedEngine):
         def __init__(self, **kw):
@@ -324,9 +324,9 @@ def test_cleanup_spares_workers_that_delivered_their_reply():
     Workers that never replied — race losers, timeouts — still are."""
     import threading
 
-    from conjure import AgentSpec, Runtime
-    from conjure.combinators import agent_race
-    from conjure.tools.primitives import call_impl, send_impl
+    from hylo import AgentSpec, Runtime
+    from hylo.combinators import agent_race
+    from hylo.tools.primitives import call_impl, send_impl
 
     interrupted: list[str] = []
     release = threading.Event()
@@ -374,8 +374,8 @@ def test_cleanup_spares_workers_that_delivered_their_reply():
 
 @pytest.mark.parametrize("fail_listener", [False, True])
 def test_failed_batch_cleans_up_started_and_unstarted_children(tmp_path, fail_listener):
-    from conjure.event_log import EventLog
-    from conjure.tools._base import resolve_token
+    from hylo.event_log import EventLog
+    from hylo.tools._base import resolve_token
     closed = []
     class Engine:
         def step(self, prompt):
@@ -417,7 +417,7 @@ def test_failed_batch_cleans_up_started_and_unstarted_children(tmp_path, fail_li
 
 def test_failed_driver_thread_start_cleans_up_batch(monkeypatch):
     import threading
-    from conjure.tools._base import resolve_token
+    from hylo.tools._base import resolve_token
     closed = []
     class Engine:
         def step(self, prompt):
@@ -445,8 +445,8 @@ def test_failed_driver_thread_start_cleans_up_batch(monkeypatch):
 
 
 def test_max_workers_caps_the_agents_working_at_once():
-    from conjure.errors import WorkersBusy
-    from conjure.tools.primitives import spawn_impl
+    from hylo.errors import WorkersBusy
+    from hylo.tools.primitives import spawn_impl
 
     rt = Runtime(max_workers=2)
     root = rt.root(AgentSpec(role_prompt="root"))

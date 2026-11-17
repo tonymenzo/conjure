@@ -6,11 +6,11 @@ import time
 
 import pytest
 
-from conjure.errors import BudgetExceeded
-from conjure.record import AgentSpec
-from conjure.runtime import Runtime
-from conjure.scripted import BehaviorRegistry
-from conjure.tools.primitives import spawn_impl
+from hylo.errors import BudgetExceeded
+from hylo.record import AgentSpec
+from hylo.runtime import Runtime
+from hylo.scripted import BehaviorRegistry
+from hylo.tools.primitives import spawn_impl
 
 
 def _costing_factory(reg: BehaviorRegistry, costs: dict[str, float]):

@@ -13,7 +13,7 @@ from pathlib import Path
 
 def test_chat_app_constructs(tmp_path: Path):
     """``ChatApp(...)`` should construct cleanly given valid args."""
-    from conjure.chat import ChatApp
+    from hylo.chat import ChatApp
 
     app = ChatApp(
         log_path=tmp_path / "log.jsonl",
@@ -26,10 +26,10 @@ def test_chat_app_constructs(tmp_path: Path):
 
 
 def test_chat_main_help_does_not_raise():
-    """``conjure-chat --help`` exits cleanly with usage info."""
+    """``hylo-chat --help`` exits cleanly with usage info."""
     import sys
 
-    from conjure import chat
+    from hylo import chat
 
     with __import__("contextlib").suppress(SystemExit):
         chat.main(["--help"])
@@ -41,7 +41,7 @@ def test_format_event_system_prompt_renders_panel():
     initialization context as the first message."""
     from rich.panel import Panel
 
-    from conjure.chat import _format_event
+    from hylo.chat import _format_event
 
     block, classes = _format_event(
         {"kind": "system_prompt", "text": "you are a worker", "label": "alpha"}
@@ -64,7 +64,7 @@ def test_format_event_send_uses_response_body_layout():
     """A ``Send`` tool call should render its body as visible text
     rows (rather than only the compact ``● Send(args)`` line) so the
     user sees what the agent sent without going to the meta view."""
-    from conjure.chat import _format_event
+    from hylo.chat import _format_event
 
     block, _ = _format_event(
         {
@@ -88,7 +88,7 @@ def test_format_event_send_uses_response_body_layout():
 def test_format_event_non_send_tool_call_keeps_compact_form():
     """Non-``Send`` tool calls retain the existing compact form so
     we don't accidentally explode every tool's args into the chat."""
-    from conjure.chat import _format_event
+    from hylo.chat import _format_event
 
     block, _ = _format_event(
         {
@@ -107,7 +107,7 @@ def test_format_event_non_send_tool_call_keeps_compact_form():
 
 
 def _call_block(name, args):
-    from conjure.chat import _format_event
+    from hylo.chat import _format_event
 
     block, _ = _format_event({"kind": "response", "text": "", "tool_calls": [{"name": name, "args": args}]})
     return _render(block)
@@ -133,7 +133,7 @@ def test_edit_call_shows_a_diff():
 
 
 def test_shell_result_shows_exit_status_and_output_tail():
-    from conjure.chat import _format_event
+    from hylo.chat import _format_event
 
     payload = {"ok": True, "exit_code": 2, "stdout": "".join(f"line {i}\n" for i in range(20)), "stderr": "boom\n"}
     block, _ = _format_event({"kind": "tool", "text": str(payload), "failed": False})
@@ -145,8 +145,8 @@ def test_shell_result_shows_exit_status_and_output_tail():
 def test_capped_shell_result_still_parses():
     """A capped result has raw newlines from its truncation notice
     inside the repr; it should still render as a command result."""
-    from conjure.chat import _format_event
-    from conjure.tool_output import cap_tool_output
+    from hylo.chat import _format_event
+    from hylo.tool_output import cap_tool_output
 
     payload = {"ok": True, "exit_code": 0, "stdout": "y" * 5000, "stderr": ""}
     capped, info = cap_tool_output(str(payload), max_chars=1000, tool_name="Bash")

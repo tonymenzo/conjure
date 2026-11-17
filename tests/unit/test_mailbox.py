@@ -5,9 +5,9 @@ from __future__ import annotations
 import threading
 import time
 
-from conjure.address import SYSTEM, USER, Address
-from conjure.envelope import Envelope
-from conjure.mailbox import Mailbox
+from hylo.address import SYSTEM, USER, Address
+from hylo.envelope import Envelope
+from hylo.mailbox import Mailbox
 
 
 def _env(*, msg_id: str, from_: Address, to: Address, body=None,
