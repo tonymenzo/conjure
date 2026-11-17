@@ -18,7 +18,7 @@ def test_root_spawn_writes_the_record(tmp_path):
     try:
         root = rt.root(AgentSpec(role_prompt="r", label="lead", engine="claude", model="opus"))
         rec = _read(rt, root)
-        assert rec["harness"] == "Hylo"
+        assert rec["harness"] == "hylo"
         assert rec["version"] == __version__
         assert [a["label"] for a in rec["agents"]] == ["lead"]
         assert rec["agents"][0]["engine"] == "claude"
@@ -50,7 +50,7 @@ def test_no_sandbox_writes_nothing(tmp_path, monkeypatch):
     try:
         root = rt.root(AgentSpec(role_prompt="r"))
         assert rt.sandbox_of(root) is None
-        assert rt.run_record()["harness"] == "Hylo"
+        assert rt.run_record()["harness"] == "hylo"
         assert not list(tmp_path.rglob("run.json"))
     finally:
         rt.shutdown()

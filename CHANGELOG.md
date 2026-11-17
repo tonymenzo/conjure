@@ -8,6 +8,13 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-11-17
+
+### Changed
+- The name is written lowercase, hylo, as heptapod and phenomaton are: in
+  prose, the agents' prompts, and the run record's `harness` (`"hylo"`), so a
+  note's "Prepared with" reads `hylo@0.3.1`.
+
 ## [0.3.0] — 2026-11-17
 
 conjure is now hylo, short for hylomorphism: the recursion scheme that

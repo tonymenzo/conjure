@@ -78,7 +78,7 @@ def _template() -> string.Template:
         text = PROMPT_PATH.read_text(encoding="utf-8")
     except OSError:  # a packaging accident; keep agents usable
         text = (
-            "You are an agent in the Hylo multi-agent framework.\n\n"
+            "You are an agent in the hylo multi-agent framework.\n\n"
             "Identity: address $addr_id, label $label, depth $depth "
             "(max $max_depth), working directory $sandbox.\n\nRole: $role_prompt\n"
         )

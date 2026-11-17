@@ -1,6 +1,6 @@
 # hylo
 
-**Agentic functional programming.** Hylo is a multi-agent runtime built
+**Agentic functional programming.** hylo is a multi-agent runtime built
 on three primitives — **recursive agent spawning**, **addressable
 mailboxes**, and **capability passing** — with a library of FP-style
 combinators (`agent_map`, `agent_fold`, `agent_filter`, `agent_race`,
@@ -13,7 +13,7 @@ spawning, and folds their results back up through the mailboxes.
 
 Most multi-agent frameworks bake in a topology — group chat,
 supervisor/worker, DAG — and you fight the framework when your problem has
-a different shape. Hylo inverts that: the primitives are the substrate,
+a different shape. hylo inverts that: the primitives are the substrate,
 and topology is ordinary code. The composition vocabulary is borrowed from
 functional programming, where these problems have decades of prior art.
 
@@ -258,7 +258,7 @@ from the project's active loadout. See
 **Provenance trace.** `toolbase.trace: true` (or `TOOLBASE_TRACE=1`)
 records every toolkit call (agent, tool, toolkit version, arguments,
 outcome, files) in `<project>/.toolbase/traces/<session>/`, using
-toolbase's trace (a toolbase with `toolbase.trace`). Hylo registers each
+toolbase's trace (a toolbase with `toolbase.trace`). hylo registers each
 agent at spawn with its parent, engine and model (`agents.jsonl`), ends it
 when it terminates, and logs spawns with their briefs, sends and
 terminations (`messages.jsonl`). `.hylo/run.json` then also carries

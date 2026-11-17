@@ -1,4 +1,4 @@
-"""Hylo tools — orchestral-style tool definitions for the agent API.
+"""hylo tools — orchestral-style tool definitions for the agent API.
 
 Two namespaces:
 

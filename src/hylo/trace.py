@@ -1,9 +1,9 @@
-"""Provenance trace: Hylo's side of toolbase's call trace.
+"""Provenance trace: hylo's side of toolbase's call trace.
 
 With ``toolbase.trace: true`` (or ``TOOLBASE_TRACE=1``), a session writes
 one trace directory, by default ``<toolbase project>/.toolbase/traces/
 <session-id>/``. toolbase's orchestrators write ``calls.jsonl`` there, one
-record per toolkit call, stamped with the calling agent. Hylo registers
+record per toolkit call, stamped with the calling agent. hylo registers
 the agents (``agents.jsonl``: id, label, parent, model, engine, harness
 ``hylo``) and appends its own ``messages.jsonl`` (spawns with their
 briefs, sends, terminations) and ``commands.jsonl`` (each shell command an
@@ -67,7 +67,7 @@ def env_switch(environ: Mapping[str, str]) -> bool | None:
 def trace_wanted(configured: bool, environ: Mapping[str, str] | None = None) -> bool:
     """Whether this session traces. toolbase's order for ``serve`` is
     ``--trace``, then ``TOOLBASE_TRACE``, then the project's setting;
-    Hylo's ``toolbase.trace`` is the project-level setting, so
+    hylo's ``toolbase.trace`` is the project-level setting, so
     ``TOOLBASE_TRACE`` (either way) overrides it."""
     env = os.environ if environ is None else environ
     switch = env_switch(env)
