@@ -1,4 +1,4 @@
-"""Hylo — agentic functional programming on top of orchestral.
+"""hylo — agentic functional programming on top of orchestral.
 
 The name is short for hylomorphism, the recursion scheme that unfolds a
 structure and folds it back: a hylo run unfolds a tree of agents by
@@ -51,7 +51,7 @@ from hylo.tools.primitives import (
 )
 
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "__version__",

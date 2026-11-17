@@ -1,4 +1,4 @@
-"""Provenance trace: Hylo registers agents, hands each agent's
+"""Provenance trace: hylo registers agents, hands each agent's
 orchestrators its own ``Trace`` handle, and records the trace and the
 served toolkits in ``.hylo/run.json``. Fake catalog and server
 factory: no toolkit servers start."""

@@ -1555,7 +1555,7 @@ class Runtime:
                 "model": model,
             })
         out: dict[str, Any] = {
-            "harness": "Hylo",
+            "harness": "hylo",
             "version": __version__,
             "session": self._session_id,
             "agents": agents,

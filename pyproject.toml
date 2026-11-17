@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Named conjure (distribution conjure-agents) before 0.3.0.
 name = "hylo"
-version = "0.3.0"
+version = "0.3.1"
 description = "Agentic functional programming: a multi-agent runtime built on three primitives — recursive spawning, addressable mailboxes, and capability passing — with FP-style combinators on top."
 readme = "README.md"
 requires-python = ">=3.10"

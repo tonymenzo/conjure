@@ -37,7 +37,7 @@ llms:
 
 root:
   role_prompt: |
-    You are the root orchestrator of a Hylo session.
+    You are the root orchestrator of a hylo session.
 
     You have tools to:
       - spawn child agents (with chosen role prompts and tools),

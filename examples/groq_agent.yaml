@@ -20,7 +20,7 @@ llms:
 
 root:
   role_prompt: |
-    You are the root agent of a Hylo session.
+    You are the root agent of a hylo session.
 
     You have tools to spawn child agents, send and receive messages with
     them, and invoke FP-style combinators (agent_map, agent_fold,
