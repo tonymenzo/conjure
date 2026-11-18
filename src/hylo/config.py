@@ -234,6 +234,15 @@ class CodexConfig(BaseModel):
     # ``workspace-write`` (writes confined to the agent's sandbox dir),
     # ``read-only``, or ``danger-full-access``.
     sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "workspace-write"
+    # A filesystem permission profile in place of ``sandbox``: each key a path
+    # (``~`` expanded; absolute after expansion) or one of Codex's special
+    # roots (``:minimal`` the system files a process needs, ``:project_roots``
+    # the agent's sandbox dir, ``:tmpdir``, ``:slash_tmp``, ``:root``), each
+    # value ``read``, ``write`` or ``none``. Anything not listed is unreadable,
+    # so an agent can be kept out of the rest of the disk. Network stays off.
+    # Set, it replaces ``sandbox``; e.g. {":minimal": "read",
+    # ":project_roots": "write", ":tmpdir": "write", "~/tools": "read"}.
+    permissions: dict[str, Literal["read", "write", "none"]] | None = None
     # ``-m`` for children that don't name a model (the root uses
     # ``root.model``). ``None``: Codex's default.
     child_model: str | None = None

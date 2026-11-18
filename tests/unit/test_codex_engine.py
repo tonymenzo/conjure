@@ -339,3 +339,32 @@ def test_web_search_setting_is_checked_in_the_config():
     assert CodexConfig().web_search is None
     with pytest.raises(ValueError):
         CodexConfig(web_search="off")
+
+
+def test_a_permission_profile_replaces_the_sandbox_mode(tmp_path):
+    perms = {":minimal": "read", ":project_roots": "write", "~/tools": "read", "/opt/x": "none"}
+    rt, rec, engine, events, calls = _engine(tmp_path, permissions=perms)
+    try:
+        engine.step("one")
+        engine.step("two")
+        first, second = (json.loads(line)["argv"] for line in calls.read_text().splitlines()[:2])
+        home = str(Path("~/tools").expanduser())
+        for argv in (first, second):
+            assert "-s" not in argv and not any(a.startswith("sandbox_mode=") for a in argv)
+            table = next(a for a in argv if a.startswith("permissions.hylo.filesystem="))
+            assert f'"{home}"="read"' in table and '":minimal"="read"' in table and '"/opt/x"="none"' in table
+            assert 'default_permissions="hylo"' in argv
+        assert first[:2] == ["exec", "-C"] and second[:3] == ["exec", "resume", "thread-123"]
+    finally:
+        engine.shutdown()
+        rt.shutdown()
+
+
+def test_a_permission_profile_refuses_relative_paths_and_unknown_access(tmp_path):
+    import pytest
+    from hylo.engines.codex import _permission_profile
+    with pytest.raises(ValueError, match="absolute"):
+        _permission_profile({"tools": "read"})
+    with pytest.raises(ValueError, match="read, write or none"):
+        _permission_profile({":minimal": "exec"})
+    assert _permission_profile(None) is None and _permission_profile({}) is None
