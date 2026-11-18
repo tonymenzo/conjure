@@ -264,6 +264,7 @@ def _build_codex_engine(
         stream_emit=stream_emit,
         model=model,
         sandbox_mode=codex_config.sandbox,
+        permissions=codex_config.permissions,
         reasoning_effort=codex_config.reasoning_effort,
         web_search=codex_config.web_search,
         toolbase_mount=mount,

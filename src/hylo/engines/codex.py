@@ -61,6 +61,28 @@ def codex_available() -> bool:
 # friends). Off for every hylo agent; see ``_command``.
 _NATIVE_SUBAGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 
+_PROFILE = "hylo"
+
+
+def _permission_profile(permissions: dict[str, str] | None) -> str | None:
+    """The ``filesystem`` table of a Codex permission profile, as an inline
+    TOML table for ``-c``, or None. Paths are expanded and must be absolute;
+    special roots (``:minimal``, ``:project_roots``, ...) pass as they are."""
+    if not permissions:
+        return None
+    entries = []
+    for key, access in permissions.items():
+        if access not in ("read", "write", "none"):
+            raise ValueError(f"codex.permissions[{key!r}]: {access!r} is not read, write or none")
+        if not key.startswith(":"):
+            path = Path(key).expanduser()
+            if not path.is_absolute():
+                raise ValueError(f"codex.permissions: {key!r} is not an absolute path or a special root (:minimal, ...)")
+            key = str(path)
+        entries.append(f"{json.dumps(key)}={json.dumps(access)}")
+    return "{" + ",".join(entries) + "}"
+
+
 class CodexEngine:
     """See the module docstring."""
 
@@ -74,6 +96,7 @@ class CodexEngine:
         stream_emit: Callable[[dict[str, Any]], None] | None = None,
         model: str | None = None,
         sandbox_mode: str = DEFAULT_SANDBOX,
+        permissions: dict[str, str] | None = None,
         reasoning_effort: str | None = None,
         web_search: str | None = None,
         toolbase_mount: "ToolbaseMount | None" = None,
@@ -91,6 +114,7 @@ class CodexEngine:
         # Summed from each turn.completed (hylo.provenance.token_usage).
         self._token_usage: dict[str, int] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         self._sandbox_mode = sandbox_mode or DEFAULT_SANDBOX
+        self._permissions = _permission_profile(permissions)
         self._effort = reasoning_effort
         self._web_search = web_search
         self._toolbase = toolbase_mount
@@ -298,9 +322,15 @@ class CodexEngine:
         if self.thread_id:
             cmd = [self._bin, "exec", "resume", self.thread_id]
         else:
-            cmd = [self._bin, "exec", "-C", str(self._sandbox), "-s", self._sandbox_mode]
+            cmd = [self._bin, "exec", "-C", str(self._sandbox)]
+            if self._permissions is None:
+                cmd += ["-s", self._sandbox_mode]
         cmd += ["--json", "--skip-git-repo-check", "--ignore-user-config"]
-        if self.thread_id:
+        if self._permissions is not None:
+            # A named permission profile; Codex refuses it beside sandbox_mode.
+            cmd += ["-c", f"permissions.{_PROFILE}.filesystem={self._permissions}",
+                    "-c", f"default_permissions={json.dumps(_PROFILE)}"]
+        elif self.thread_id:
             # ``resume`` takes no -s; carry the sandbox policy as config.
             cmd += ["-c", f"sandbox_mode={json.dumps(self._sandbox_mode)}"]
         cmd += ["-c", "features.apps=false"]

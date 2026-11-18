@@ -8,6 +8,11 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-11-18
+
+### Added
+- `codex.permissions`: a Codex filesystem permission profile in place of `codex.sandbox`. Each key is a path (`~` expanded, absolute) or a special root (`:minimal`, `:project_roots`, `:tmpdir`, ...), each value `read`, `write` or `none`; anything not listed is unreadable and the network stays off. hylo passes it as a named profile (`permissions.hylo.filesystem`, `default_permissions`) on every `codex exec` and `exec resume`, without `-s`, which Codex refuses beside it. Lets a run keep each agent out of the rest of the disk (an evaluation's expected values, other runs).
+
 ## [0.3.1] — 2026-11-17
 
 ### Changed
