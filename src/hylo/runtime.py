@@ -1066,14 +1066,29 @@ class Runtime:
     def grant_toolkits(
         self, *, granter: Address, target: Address, toolkits: "Toolset"
     ) -> "Toolset":
+        """:meth:`grant_with_notice`, returning only the new toolset."""
+        return self.grant_with_notice(granter=granter, target=target, toolkits=toolkits)[0]
+
+    def grant_with_notice(
+        self, *, granter: Address, target: Address, toolkits: "Toolset"
+    ) -> "tuple[Toolset, dict[str, Any] | None]":
         """Add ``toolkits`` to a live descendant's toolset.
 
         The granter must be an ancestor of ``target`` and hold every
         grant itself. Grants are additive — a child's authority only
         widens, within its ancestor's — so the subset invariant holds
-        down the whole tree without touching grandchildren. The
-        target's engine picks the change up at its next step.
-        Returns the target's new toolset.
+        down the whole tree without touching grandchildren.
+
+        No engine can add tools to a turn already running (Codex and
+        Claude list a session's tools when it opens, the orchestral
+        engine when the step starts), so the tools are callable from
+        the target's next turn. The target is sent a ``toolkit_grant``
+        notice from ``@system`` saying so: it shows on the target's
+        tool results mid-turn, and, because the driver pushes it even
+        when the target already read it with ``Recv``, it starts that
+        next turn as soon as the current one ends, or at once when the
+        target is idle. Returns the target's new toolset and the notice's body
+        (``None`` when the grant added nothing, so none was sent).
         """
         from hylo.toolbase import merge_toolsets
 
@@ -1098,6 +1113,7 @@ class Runtime:
                     raise NotPermitted(
                         f"{granter.id} is not an ancestor of {target.id}"
                     )
+            before = hub.toolset_of(record.spec)
             merged = merge_toolsets(record.spec.toolkits, toolkits)
             record.spec = record.spec.model_copy(update={"toolkits": merged})
             self._journal.write(
@@ -1108,7 +1124,32 @@ class Runtime:
                     "toolkits": {k: v.model_dump() for k, v in merged.items()},
                 },
             )
-        return merged
+            new_tools = granted_tool_names(self, record, before)
+            if not new_tools and _skill_names(hub, hub.toolset_of(record.spec)) == _skill_names(hub, before):
+                # Nothing new (already held): no notice, no extra turn.
+                return merged, None
+            body = {
+                "kind": "toolkit_grant",
+                "note": grant_timing_note(new_tools, granter, target),
+                "tools": new_tools,
+                "granted_by": granter.label or granter.id,
+            }
+            msg_id = new_message_id()
+            env = Envelope(
+                seq=0,
+                msg_id=msg_id,
+                from_=SYSTEM,
+                to=target,
+                thread_id=msg_id,
+                body=body,
+                headers={"kind": GRANT_NOTICE},
+                ts=time.time(),
+            )
+            record.inbox.put(env, before_publish=self._journal_send)
+            wakeup = record.wakeup
+        if wakeup is not None:
+            wakeup.set()
+        return merged, body
 
     def _replay_toolkits(self, payload: dict[str, Any]) -> None:
         addr = Address.model_validate(payload["addr"])
@@ -1720,3 +1761,56 @@ class Runtime:
         addr = Address.model_validate(payload["addr"])
         if addr in self._records:
             self._records[addr].status = "terminated"
+
+
+# ---------- live grants ----------
+
+# Header kind of the ``@system`` notice a live grant sends its target.
+# The driver pushes it even when ``Recv`` / ``WaitFor`` already read it,
+# which is what starts the turn the granted tools are callable in.
+GRANT_NOTICE = "toolkit_grant"
+
+
+def granted_tool_names(runtime: Any, record: AgentRecord, before: Any) -> list[str]:
+    """The tools ``record`` gained over ``before``, named as its engine
+    shows them to its model."""
+    try:
+        from hylo.engines import effective_engine
+        from hylo.toolbase import CALL_PREFIX, servable_tools
+
+        hub = runtime.toolbase
+        catalog = hub.catalog()
+
+        def names(toolset: Any) -> set[str]:
+            return {
+                f"{kit}__{tool}"
+                for kit, tools in servable_tools(toolset or {}, catalog).items()
+                for tool in tools
+            }
+
+        prefix = CALL_PREFIX.get(effective_engine(record, runtime), "")
+        added = names(hub.toolset_of(record.spec)) - names(before)
+    except Exception:
+        return []
+    return [f"{prefix}{name}" for name in sorted(added)]
+
+
+def _skill_names(hub: Any, toolset: Any) -> set[str]:
+    try:
+        return {f"{kit}__{skill.slug}" for kit, skill in hub.skills_for(toolset or {})}
+    except Exception:
+        return set()
+
+
+def grant_timing_note(tools: list[str], granter: Address, target: Address) -> str:
+    """What the grant notice tells its target: when the tools become
+    callable. First, so the inbox preview on a tool result carries it."""
+    who = "you granted yourself" if granter == target else f"{granter.label or granter.id} granted you"
+    what = ", ".join(tools) if tools else "toolkit access (no new tools; skills may have changed)"
+    return (
+        f"[hylo] {who} {what}. A running turn can't gain tools: if you read "
+        "this mid-turn, they become callable from your next turn, which this "
+        "notice starts as soon as the current one ends, so finish what you "
+        "can without them and end the turn (don't re-request them or search "
+        "for them meanwhile). If this notice started your turn, call them now."
+    )
