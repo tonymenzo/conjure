@@ -122,7 +122,12 @@ class Driver:
             # read as a second, new message and invite a second reply.
             pulled = record.pulled
             if pulled:
-                envelopes = [e for e in envelopes if e.seq not in pulled]
+                # A grant notice is pushed even when already read: its
+                # tools are callable only from the turn it starts.
+                envelopes = [
+                    e for e in envelopes
+                    if e.seq not in pulled or (e.headers or {}).get("kind") == "toolkit_grant"
+                ]
                 pulled.difference_update([s for s in list(pulled) if s <= self._cursor])
                 if not envelopes:
                     continue

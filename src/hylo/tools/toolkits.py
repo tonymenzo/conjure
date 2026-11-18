@@ -85,7 +85,8 @@ def catalog_impl(
                 "of work with the tools it needs (Spawn(..., toolkits=[...])), "
                 "give it the context it lacks, and check what it returns. To "
                 "call one yourself, GrantToolkits(child=\"self\", toolkits=[...]); "
-                "it's served to you from your next turn."
+                "it's callable from your next turn, which starts as soon as "
+                "you end this one."
             )
     return out
 
@@ -107,7 +108,7 @@ def grant_toolkits_impl(
         return _err("no_such_address", f"unknown address: {child}")
     try:
         grant = parse_toolkits(toolkits)
-        merged = runtime.grant_toolkits(
+        merged, notice = runtime.grant_with_notice(
             granter=caller, target=target, toolkits=grant
         )
     except ToolkitDenied as e:
@@ -120,8 +121,38 @@ def grant_toolkits_impl(
         "ok": True,
         "child": target.id,
         "toolkits": {k: v.model_dump(exclude_none=True) for k, v in merged.items()},
-        "note": "takes effect at the child's next turn",
+        "new_tools": notice["tools"] if notice else [],
+        "note": _grant_note_for_granter(runtime, caller, target, notice),
     }
+
+
+def _grant_note_for_granter(runtime: Any, caller: Any, target: Any, notice: Any) -> str:
+    """When the granted tools become callable, said plainly: no engine
+    adds tools to a turn already running, so it is the target's next
+    turn, which the grant notice hylo sent the target starts."""
+    name = target.label or target.id
+    if notice is None:
+        return f"nothing new: {name} already held all of this, so nothing changed and no notice was sent."
+    if target == caller:
+        return (
+            "Callable by you from your next turn, NOT this one: no running turn "
+            "gains tools. End this turn to use them; the grant notice sent to "
+            "your inbox starts your next turn at once, with the tools."
+        )
+    driver = getattr(runtime.record_for(target), "driver", None)
+    if getattr(driver, "busy", False):
+        return (
+            f"{name} is mid-turn, and a running turn can't gain tools: they are "
+            f"callable from its next turn, not this one. hylo sent {name} a grant "
+            "notice saying so, which starts its next turn as soon as the current "
+            "one ends; you don't need to message it for that, only to tell it "
+            "what to do with them if its brief doesn't."
+        )
+    return (
+        f"{name} was idle: the grant notice hylo sent it starts its next turn "
+        "now, and that turn has the tools. Message it if its brief doesn't say "
+        "what to do with them."
+    )
 
 
 def load_skill_impl(*, token: str, name: str, file: str = "") -> dict[str, Any]:
@@ -234,8 +265,9 @@ def request_toolkits_impl(
         "ok": True,
         "msg_id": stored.msg_id,
         "note": (
-            "request sent to your parent; granted toolkits appear at your "
-            "next turn"
+            "request sent to your parent. If it grants them you get a grant "
+            "notice; the tools are callable from your next turn, which that "
+            "notice starts as soon as your current turn ends, not in this one"
         ),
     }
 
@@ -274,12 +306,13 @@ class ToolCatalogTool(StatelessRuntimeTool):
 
 class GrantToolkitsTool(StatelessRuntimeTool):
     """Give a live descendant more toolbase toolkits. Additive, and
-    bounded by your own: you can grant only what you hold. The child
-    sees the new tools from its next turn, with its conversation
-    intact. Use this to answer a child's ``toolkit_request``. The root
+    bounded by your own: you can grant only what you hold. A running
+    turn can't gain tools, so the child can call them from its next
+    turn (conversation intact), which hylo starts for it as soon as its
+    current turn ends: it is sent a grant notice that says so. Use this to answer a child's ``toolkit_request``. The root
     may also grant itself (``child="self"``) from what it may grant, to
-    call those tools directly; its toolkits are mainly for the agents it
-    spawns.
+    call those tools directly from its next turn; its toolkits are
+    mainly for the agents it spawns.
 
     Error codes: ``toolkit_denied`` (you don't hold it / not installed),
     ``not_permitted`` (target isn't your descendant)."""
@@ -298,8 +331,10 @@ class GrantToolkitsTool(StatelessRuntimeTool):
 
 class RequestToolkitsTool(StatelessRuntimeTool):
     """Ask your parent for toolbase toolkits you need but weren't given.
-    Sends a ``toolkit_request`` message; if granted, the tools appear at
-    your next turn. Say why in ``reason`` — the parent decides."""
+    Sends a ``toolkit_request`` message; if granted, you get a grant
+    notice and the tools are callable from your next turn (not the one
+    running), which that notice starts. Say why in ``reason`` — the
+    parent decides."""
 
     toolkits: str | list[str] | dict[str, Any] = RuntimeField(description=_TOOLKITS_FIELD_HELP)
     reason: str = RuntimeField(

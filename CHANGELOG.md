@@ -8,6 +8,11 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-11-18
+
+### Changed
+- A live toolkit grant is delivered explicitly. No engine can add tools to a running turn, so the grantee now gets a `toolkit_grant` system message naming the new tools (as its engine calls them) and saying they are callable from its next turn; that turn starts as soon as the current one ends, or at once if the grantee is idle, even when the notice was read with `Recv`. A grant that adds nothing sends no notice. `GrantToolkits` returns `new_tools` and a note saying when they become callable (mid-turn, idle, self).
+
 ## [0.3.2] — 2026-11-18
 
 ### Added

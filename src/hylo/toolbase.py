@@ -950,10 +950,13 @@ check of a child's result.
   (one tool). **Curate**: give each child only what its task needs. A
   short, relevant tool list is used far better than a long one, and a
   child can always ask for more.
-- `GrantToolkits(child, toolkits)` — add toolkits to a live descendant;
-  it sees them from its next turn, conversation intact.
+- `GrantToolkits(child, toolkits)` — add toolkits to a live descendant
+  (or `child="self"`). A running turn never gains tools: the grantee
+  can call them from its next turn, conversation intact, which hylo
+  starts as soon as its current turn ends (it gets a grant notice).
 - `RequestToolkits(toolkits, reason)` — ask your parent for tools you
-  lack. You'll get them (from your next turn) or a reply saying why not.
+  lack. You'll get a grant notice, then the tools from your next turn,
+  or a reply saying why not.
 
 When a child's message has `"request": "toolkits"`, decide: grant it
 (`GrantToolkits`) if it serves the task and you hold it; if you don't
